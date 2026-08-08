@@ -20,8 +20,11 @@ from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, get_wandb_vi
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string('run_group', 'Debug', 'Run group.')
+flags.DEFINE_enum('wandb_mode', 'online', ['online', 'offline', 'disabled'], 'Weights & Biases mode.')
 flags.DEFINE_integer('seed', 0, 'Random seed.')
 flags.DEFINE_string('env_name', 'antmaze-large-navigate-v0', 'Environment (dataset) name.')
+flags.DEFINE_string('dataset_path', None, 'Optional NPZ or LeWM Lance dataset path.')
+flags.DEFINE_float('validation_fraction', 0.05, 'Episode fraction reserved for validation.')
 flags.DEFINE_string('save_dir', 'exp/', 'Save directory.')
 flags.DEFINE_string('restore_path', None, 'Restore path.')
 flags.DEFINE_integer('restore_epoch', None, 'Restore epoch.')
@@ -45,7 +48,12 @@ config_flags.DEFINE_config_file('agent', 'agents/gciql.py', lock_config=False)
 def main(_):
     # Set up logger.
     exp_name = get_exp_name(FLAGS.seed)
-    setup_wandb(project='OGBench', group=FLAGS.run_group, name=exp_name)
+    setup_wandb(
+        project='OGBench',
+        group=FLAGS.run_group,
+        name=exp_name,
+        mode=FLAGS.wandb_mode,
+    )
 
     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, exp_name)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
@@ -55,15 +63,30 @@ def main(_):
 
     # Set up environment and dataset.
     config = FLAGS.agent
-    env, train_dataset, val_dataset = make_env_and_datasets(FLAGS.env_name, frame_stack=config['frame_stack'])
+    env, train_dataset, val_dataset = make_env_and_datasets(
+        FLAGS.env_name,
+        frame_stack=config['frame_stack'],
+        dataset_path=FLAGS.dataset_path,
+        validation_fraction=FLAGS.validation_fraction,
+    )
 
     dataset_class = {
         'GCDataset': GCDataset,
         'HGCDataset': HGCDataset,
     }[config['dataset_class']]
-    train_dataset = dataset_class(Dataset.create(**train_dataset), config)
+    train_base = train_dataset if getattr(train_dataset, 'lazy', False) else Dataset.create(**train_dataset)
+    train_dataset = dataset_class(
+        train_base,
+        config,
+        preprocess_frame_stack=not getattr(train_base, 'lazy', False),
+    )
     if val_dataset is not None:
-        val_dataset = dataset_class(Dataset.create(**val_dataset), config)
+        val_base = val_dataset if getattr(val_dataset, 'lazy', False) else Dataset.create(**val_dataset)
+        val_dataset = dataset_class(
+            val_base,
+            config,
+            preprocess_frame_stack=not getattr(val_base, 'lazy', False),
+        )
 
     # Initialize agent.
     random.seed(FLAGS.seed)
@@ -110,7 +133,8 @@ def main(_):
             train_logger.log(train_metrics, step=i)
 
         # Evaluate agent.
-        if i == 1 or i % FLAGS.eval_interval == 0:
+        should_evaluate = FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0
+        if should_evaluate and (i == 1 or i % FLAGS.eval_interval == 0):
             if FLAGS.eval_on_cpu:
                 eval_agent = jax.device_put(agent, device=jax.devices('cpu')[0])
             else:
@@ -122,7 +146,7 @@ def main(_):
             num_tasks = FLAGS.eval_tasks if FLAGS.eval_tasks is not None else len(task_infos)
             for task_id in tqdm.trange(1, num_tasks + 1):
                 task_name = task_infos[task_id - 1]['task_name']
-                eval_info, trajs, cur_renders = evaluate(
+                eval_info, _trajs, cur_renders = evaluate(
                     agent=eval_agent,
                     env=env,
                     task_id=task_id,

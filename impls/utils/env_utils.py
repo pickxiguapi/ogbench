@@ -1,7 +1,6 @@
 import collections
-import os
-import platform
 import time
+from typing import ClassVar
 
 import gymnasium
 import numpy as np
@@ -9,6 +8,37 @@ from gymnasium.spaces import Box
 
 import ogbench
 from utils.datasets import Dataset
+from utils.lewm_dataset import make_lewm_lance_datasets
+
+
+class DatasetSpecEnv(gymnasium.Env):
+    """Space-only environment used when training and evaluation are separate."""
+
+    metadata: ClassVar[dict] = {}
+
+    def __init__(self, observation_shape, observation_dtype, action_dim):
+        self.observation_space = Box(
+            low=0,
+            high=255,
+            shape=tuple(observation_shape),
+            dtype=observation_dtype,
+        )
+        self.action_space = Box(
+            low=-1.0, high=1.0, shape=(int(action_dim),), dtype=np.float32
+        )
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        observation = np.zeros(
+            self.observation_space.shape, dtype=self.observation_space.dtype
+        )
+        return observation, {'goal': observation.copy()}
+
+    def step(self, action):
+        raise RuntimeError(
+            'DatasetSpecEnv is training-only. Use the separate dataset-goal '
+            'evaluator for Stable WM environments.'
+        )
 
 
 class EpisodeMonitor(gymnasium.Wrapper):
@@ -76,7 +106,12 @@ class FrameStackWrapper(gymnasium.Wrapper):
         return self.get_observation(), reward, terminated, truncated, info
 
 
-def make_env_and_datasets(dataset_name, frame_stack=None):
+def make_env_and_datasets(
+    dataset_name,
+    frame_stack=None,
+    dataset_path=None,
+    validation_fraction=0.05,
+):
     """Make OGBench environment and datasets.
 
     Args:
@@ -86,10 +121,22 @@ def make_env_and_datasets(dataset_name, frame_stack=None):
     Returns:
         A tuple of the environment, training dataset, and validation dataset.
     """
-    # Use compact dataset to save memory.
-    env, train_dataset, val_dataset = ogbench.make_env_and_datasets(dataset_name, compact_dataset=True)
-    train_dataset = Dataset.create(**train_dataset)
-    val_dataset = Dataset.create(**val_dataset)
+    if dataset_path is not None and dataset_path.endswith('.lance'):
+        train_dataset, val_dataset = make_lewm_lance_datasets(
+            dataset_path, validation_fraction=validation_fraction
+        )
+        env = DatasetSpecEnv(
+            train_dataset.observations.shape[1:],
+            train_dataset.observations.dtype,
+            train_dataset.actions.shape[-1],
+        )
+    else:
+        # Use compact dataset to save memory.
+        env, train_dataset, val_dataset = ogbench.make_env_and_datasets(
+            dataset_name, dataset_path=dataset_path, compact_dataset=True
+        )
+        train_dataset = Dataset.create(**train_dataset)
+        val_dataset = Dataset.create(**val_dataset)
 
     if frame_stack is not None:
         env = FrameStackWrapper(env, frame_stack)
