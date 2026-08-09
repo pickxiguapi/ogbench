@@ -58,7 +58,11 @@ def _unpack_array(value):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--task', choices=('cube', 'pusht'), required=True)
+    parser.add_argument(
+        '--task',
+        choices=('cube', 'pusht', 'tworoom', 'reacher'),
+        required=True,
+    )
     parser.add_argument('--method', choices=('gciql', 'hiql'), required=True)
     parser.add_argument('--checkpoint-dir', required=True)
     parser.add_argument('--checkpoint-step', type=int, default=100000)
@@ -110,18 +114,61 @@ def task_spec(task, data_root):
                 },
             ],
         }
-    return {
-        'hdf5': data_root / 'pusht_expert_train.h5',
-        'lance': data_root / 'pusht_expert_train.lance',
-        'world': {'env_name': 'swm/PushT-v1'},
-        'callables': [
-            {'method': '_set_state', 'args': {'state': {'value': 'state'}}},
-            {
-                'method': '_set_goal_state',
-                'args': {'goal_state': {'value': 'goal_state'}},
+    if task == 'pusht':
+        return {
+            'hdf5': data_root / 'pusht_expert_train.h5',
+            'lance': data_root / 'pusht_expert_train.lance',
+            'world': {'env_name': 'swm/PushT-v1'},
+            'callables': [
+                {
+                    'method': '_set_state',
+                    'args': {'state': {'value': 'state'}},
+                },
+                {
+                    'method': '_set_goal_state',
+                    'args': {'goal_state': {'value': 'goal_state'}},
+                },
+            ],
+        }
+    if task == 'tworoom':
+        return {
+            'hdf5': data_root / 'tworoom.h5',
+            'lance': data_root / 'tworoom.lance',
+            'world': {'env_name': 'swm/TwoRoom-v1'},
+            'callables': [
+                {
+                    'method': '_set_state',
+                    'args': {'state': {'value': 'pos_agent'}},
+                },
+                {
+                    'method': '_set_goal_state',
+                    'args': {'goal_state': {'value': 'goal_pos_agent'}},
+                },
+            ],
+        }
+    if task == 'reacher':
+        return {
+            'hdf5': data_root / 'reacher.h5',
+            'lance': data_root / 'reacher.lance',
+            'world': {
+                'env_name': 'swm/ReacherDMControl-v0',
+                'task': 'qpos_match',
             },
-        ],
-    }
+            'callables': [
+                {
+                    'method': 'set_state',
+                    'args': {
+                        'qpos': {'value': 'qpos'},
+                        'qvel': {'value': 'qvel'},
+                    },
+                },
+                {
+                    'method': 'set_target_qpos',
+                    'args': {'target_qpos': {'value': 'goal_qpos'}},
+                },
+            ],
+        }
+    raise ValueError(f'Unknown task: {task}')
 
 
 def agent_config(method):
