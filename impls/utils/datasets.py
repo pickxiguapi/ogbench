@@ -398,3 +398,124 @@ class HGCDataset(GCDataset):
                 )
 
         return batch
+
+
+@dataclasses.dataclass
+class HIQLChunkDataset(HGCDataset):
+    """Trajectory sampler for hierarchical implicit Q-learning with action chunks.
+
+    In addition to the fields produced by :class:`HGCDataset`, this sampler provides
+    the temporally abstracted transitions required by HIQL-Chunk:
+
+    - ``high_value_next_observations`` is the state ``c`` steps after the current state.
+    - ``action_chunks`` is the flattened sequence ``a[t:t + k]``.
+    - ``chunk_next_observations`` is the state ``k`` steps after the current state.
+
+    Only indices with both a complete action chunk and a complete high-level
+    transition inside the same trajectory are sampled. This is important because
+    both temporal abstractions use fixed-horizon Bellman targets.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        chunk_size = self.config['chunk_size']
+        if chunk_size < 1:
+            raise ValueError(f'chunk_size must be positive, got {chunk_size}.')
+
+        sample_horizon = max(chunk_size, self.config['subgoal_steps'])
+        all_idxs = np.arange(self.size)
+        final_state_idxs = self.terminal_locs[np.searchsorted(self.terminal_locs, all_idxs)]
+        valid = all_idxs + sample_horizon <= final_state_idxs
+        if 'valids' in self.dataset:
+            valid &= self.dataset['valids'] > 0
+        self.chunk_valid_idxs = all_idxs[valid]
+        if len(self.chunk_valid_idxs) == 0:
+            raise ValueError(
+                f'Dataset does not contain any samples with chunk horizon {chunk_size} '
+                f'and subgoal horizon {self.config["subgoal_steps"]}.'
+            )
+
+    def sample(self, batch_size, idxs=None, evaluation=False):
+        """Sample hierarchical goals, high-level transitions, and low-level chunks."""
+        if idxs is None:
+            idxs = self.chunk_valid_idxs[np.random.randint(len(self.chunk_valid_idxs), size=batch_size)]
+        else:
+            idxs = np.asarray(idxs)
+            final_state_idxs = self.terminal_locs[np.searchsorted(self.terminal_locs, idxs)]
+            sample_horizon = max(self.config['chunk_size'], self.config['subgoal_steps'])
+            if np.any(idxs + sample_horizon > final_state_idxs):
+                raise ValueError('Explicit sample indices must leave room for both fixed-horizon transitions.')
+
+        batch = self.dataset.sample(batch_size, idxs)
+        if self.config['frame_stack'] is not None:
+            batch['observations'] = self.get_observations(idxs)
+            batch['next_observations'] = self.get_observations(idxs + 1)
+
+        final_state_idxs = self.terminal_locs[np.searchsorted(self.terminal_locs, idxs)]
+
+        # Goals used to train both the high-level IVL value and the low-level IQL critic/value.
+        value_goal_idxs = self.sample_goals(
+            idxs,
+            self.config['value_p_curgoal'],
+            self.config['value_p_trajgoal'],
+            self.config['value_p_randomgoal'],
+            self.config['value_geom_sample'],
+        )
+        batch['value_goals'] = self.get_observations(value_goal_idxs)
+        successes = (idxs == value_goal_idxs).astype(float)
+        batch['masks'] = 1.0 - successes
+        batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
+
+        # High-level c-step transition.
+        high_next_idxs = idxs + self.config['subgoal_steps']
+        batch['high_value_next_observations'] = self.get_observations(high_next_idxs)
+
+        # Low-level dataset action and k-step transition.
+        chunk_offsets = np.arange(self.config['chunk_size'])
+        chunk_idxs = idxs[:, None] + chunk_offsets[None, :]
+        batch['action_chunks'] = jax.tree_util.tree_map(
+            lambda arr: arr[chunk_idxs].reshape(batch_size, -1), self.dataset['actions']
+        )
+        batch['chunk_next_observations'] = self.get_observations(idxs + self.config['chunk_size'])
+
+        # The low-level policy is trained to reach the same c-step subgoal used by HIQL.
+        batch['low_actor_goals'] = self.get_observations(high_next_idxs)
+
+        # Sample high-level actor goals and their c-step prediction targets.
+        if self.config['actor_geom_sample']:
+            offsets = np.random.geometric(p=1 - self.config['discount'], size=batch_size)
+            high_traj_goal_idxs = np.minimum(idxs + offsets, final_state_idxs)
+        else:
+            distances = np.random.rand(batch_size)
+            high_traj_goal_idxs = np.round(
+                (np.minimum(idxs + 1, final_state_idxs) * distances + final_state_idxs * (1 - distances))
+            ).astype(int)
+        high_traj_target_idxs = np.minimum(idxs + self.config['subgoal_steps'], high_traj_goal_idxs)
+
+        high_random_goal_idxs = self.dataset.get_random_idxs(batch_size)
+        high_random_target_idxs = high_next_idxs
+
+        pick_random = np.random.rand(batch_size) < self.config['actor_p_randomgoal']
+        high_goal_idxs = np.where(pick_random, high_random_goal_idxs, high_traj_goal_idxs)
+        high_target_idxs = np.where(pick_random, high_random_target_idxs, high_traj_target_idxs)
+        batch['high_actor_goals'] = self.get_observations(high_goal_idxs)
+        batch['high_actor_targets'] = self.get_observations(high_target_idxs)
+
+        if self.config['p_aug'] is not None and not evaluation:
+            if np.random.rand() < self.config['p_aug']:
+                self.augment(
+                    batch,
+                    [
+                        'observations',
+                        'next_observations',
+                        'high_value_next_observations',
+                        'chunk_next_observations',
+                        'value_goals',
+                        'low_actor_goals',
+                        'high_actor_goals',
+                        'high_actor_targets',
+                    ],
+                )
+
+        return batch

@@ -8,7 +8,6 @@ from gymnasium.spaces import Box
 
 import ogbench
 from utils.datasets import Dataset
-from utils.lewm_dataset import make_lewm_lance_datasets
 
 
 class DatasetSpecEnv(gymnasium.Env):
@@ -122,6 +121,8 @@ def make_env_and_datasets(
         A tuple of the environment, training dataset, and validation dataset.
     """
     if dataset_path is not None and dataset_path.endswith('.lance'):
+        from utils.lewm_dataset import make_lewm_lance_datasets
+
         train_dataset, val_dataset = make_lewm_lance_datasets(
             dataset_path, validation_fraction=validation_fraction
         )

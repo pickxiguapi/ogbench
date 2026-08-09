@@ -11,7 +11,7 @@ import wandb
 from absl import app, flags
 from agents import agents
 from ml_collections import config_flags
-from utils.datasets import Dataset, GCDataset, HGCDataset
+from utils.datasets import Dataset, GCDataset, HGCDataset, HIQLChunkDataset
 from utils.env_utils import make_env_and_datasets
 from utils.evaluation import evaluate
 from utils.flax_utils import restore_agent, save_agent
@@ -28,6 +28,7 @@ flags.DEFINE_float('validation_fraction', 0.05, 'Episode fraction reserved for v
 flags.DEFINE_string('save_dir', 'exp/', 'Save directory.')
 flags.DEFINE_string('restore_path', None, 'Restore path.')
 flags.DEFINE_integer('restore_epoch', None, 'Restore epoch.')
+flags.DEFINE_bool('eval_only', False, 'Evaluate a restored checkpoint without training.')
 
 flags.DEFINE_integer('train_steps', 1000000, 'Number of training steps.')
 flags.DEFINE_integer('log_interval', 5000, 'Logging interval.')
@@ -73,6 +74,7 @@ def main(_):
     dataset_class = {
         'GCDataset': GCDataset,
         'HGCDataset': HGCDataset,
+        'HIQLChunkDataset': HIQLChunkDataset,
     }[config['dataset_class']]
     train_base = train_dataset if getattr(train_dataset, 'lazy', False) else Dataset.create(**train_dataset)
     train_dataset = dataset_class(
@@ -109,18 +111,23 @@ def main(_):
     if FLAGS.restore_path is not None:
         agent = restore_agent(agent, FLAGS.restore_path, FLAGS.restore_epoch)
 
-    # Train agent.
+    if FLAGS.eval_only and (FLAGS.restore_path is None or FLAGS.restore_epoch is None):
+        raise ValueError('--eval_only requires --restore_path and --restore_epoch.')
+
+    # Train or evaluate agent.
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
     first_time = time.time()
     last_time = time.time()
-    for i in tqdm.tqdm(range(1, FLAGS.train_steps + 1), smoothing=0.1, dynamic_ncols=True):
+    steps = (FLAGS.restore_epoch,) if FLAGS.eval_only else range(1, FLAGS.train_steps + 1)
+    for i in tqdm.tqdm(steps, smoothing=0.1, dynamic_ncols=True):
         # Update agent.
-        batch = train_dataset.sample(config['batch_size'])
-        agent, update_info = agent.update(batch)
+        if not FLAGS.eval_only:
+            batch = train_dataset.sample(config['batch_size'])
+            agent, update_info = agent.update(batch)
 
         # Log metrics.
-        if i % FLAGS.log_interval == 0:
+        if not FLAGS.eval_only and i % FLAGS.log_interval == 0:
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
             if val_dataset is not None:
                 val_batch = val_dataset.sample(config['batch_size'])
@@ -133,8 +140,8 @@ def main(_):
             train_logger.log(train_metrics, step=i)
 
         # Evaluate agent.
-        should_evaluate = FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0
-        if should_evaluate and (i == 1 or i % FLAGS.eval_interval == 0):
+        should_evaluate = FLAGS.eval_only or FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0
+        if should_evaluate and (FLAGS.eval_only or i == 1 or i % FLAGS.eval_interval == 0):
             if FLAGS.eval_on_cpu:
                 eval_agent = jax.device_put(agent, device=jax.devices('cpu')[0])
             else:
@@ -176,7 +183,7 @@ def main(_):
             eval_logger.log(eval_metrics, step=i)
 
         # Save agent.
-        if i % FLAGS.save_interval == 0:
+        if not FLAGS.eval_only and i % FLAGS.save_interval == 0:
             save_agent(agent, FLAGS.save_dir, i)
 
     train_logger.close()

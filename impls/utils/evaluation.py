@@ -75,10 +75,18 @@ def evaluate(
         goal_frame = info.get('goal_rendered')
         done = False
         step = 0
+        action_chunk = []
         render = []
         while not done:
-            action = actor_fn(observations=observation, goals=goal, temperature=eval_temperature)
-            action = np.array(action)
+            if not action_chunk:
+                sampled_actions = actor_fn(observations=observation, goals=goal, temperature=eval_temperature)
+                sampled_actions = np.array(sampled_actions)
+                chunk_size = config.get('chunk_size', 1)
+                if chunk_size > 1:
+                    action_chunk = list(sampled_actions.reshape(chunk_size, -1))
+                else:
+                    action_chunk = [sampled_actions]
+            action = action_chunk.pop(0)
             if not config.get('discrete'):
                 if eval_gaussian is not None:
                     action = np.random.normal(action, eval_gaussian)

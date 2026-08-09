@@ -270,8 +270,8 @@ ogbench.download_datasets(
 
 # Reference Implementations
 
-OGBench also provides JAX-based reference implementations of six offline goal-conditioned RL algorithms
-(GCBC, GCIVL, GCIQL, QRL, CRL and HIQL).
+OGBench also provides JAX-based reference implementations of seven offline goal-conditioned RL algorithms
+(GCBC, GCIVL, GCIQL, QRL, CRL, HIQL, and the local HIQL-Chunk extension).
 They are provided in the `impls` directory as a **standalone** codebase.
 You can safely remove the other parts of the repository if you only need the reference implementations
 and do not want to modify the environments.
@@ -301,6 +301,7 @@ We provide implementations of the following offline goal-conditioned RL algorith
 - `qrl.py`: Quasimetric Reinforcement Learning (QRL)
 - `crl.py`: Contrastive Reinforcement Learning (CRL)
 - `hiql.py`: Hierarchical Implicit Q-Learning (HIQL)
+- `hiql_chunk.py`: Gaussian-policy Hierarchical Implicit Q-Learning with action chunks (HIQL-Chunk)
 
 To train an agent, you can run the `main.py` script.
 Training metrics, evaluation metrics, and videos are logged via `wandb` by default.
@@ -319,7 +320,16 @@ python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/qrl.py --agen
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/crl.py --agent.alpha=0.1
 # antmaze-large-navigate-v0 (HIQL)
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/hiql.py --agent.high_alpha=3.0 --agent.low_alpha=3.0
+# visual-cube-single-play-v0 (HIQL-Chunk)
+python main.py --env_name=visual-cube-single-play-v0 --agent=agents/hiql_chunk.py --agent.encoder=impala_small --agent.subgoal_steps=10 --agent.chunk_size=5 --agent.expectile=0.93
 ```
+
+HIQL-Chunk is continuous-action only. Its low-level policy predicts a flattened action chunk with the same constant-
+standard-deviation Gaussian actor used by HIQL; evaluation executes the chunk open-loop and replans at each chunk
+boundary. The fixed launchers in `scripts/launch_hiql_chunk_visual_*.sh` target the visual AntMaze, HumanoidMaze,
+Cube, Scene, and Puzzle environments on server 23. They use the small Impala encoder and representation gradients
+for the low-level actor. Random-crop augmentation is enabled only for visual manipulation environments, matching
+the OGBench visual HIQL settings.
 
 Each run typically takes 2-5 hours (on state-based tasks)
 or 5-12 hours (on pixel-based tasks) on a single A5000 GPU.
