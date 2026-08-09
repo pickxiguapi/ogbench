@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  echo "Usage: bash scripts/eval_lewm.sh <cube|pusht> <gciql|hiql> <checkpoint_dir>" >&2
+  echo "Usage: bash scripts/eval_lewm.sh <cube|pusht|tworoom|reacher> <gciql|hiql> <checkpoint_dir>" >&2
   exit 2
 fi
 
@@ -11,8 +11,8 @@ METHOD=$2
 CHECKPOINT_DIR=$3
 
 case "$TASK" in
-  cube|pusht) ;;
-  *) echo "Unknown task: $TASK (expected cube or pusht)" >&2; exit 2 ;;
+  cube|pusht|tworoom|reacher) ;;
+  *) echo "Unknown task: $TASK (expected cube, pusht, tworoom, or reacher)" >&2; exit 2 ;;
 esac
 
 case "$METHOD" in
