@@ -4,7 +4,7 @@ set -euo pipefail
 mkdir -p /data/dzb/ogbench-runs/hiql_chunk/visual-humanoidmaze-medium-navigate /home/dzb/ogbench/logs/hiql_chunk/visual-humanoidmaze-medium-navigate
 
 tmux new-session -d -s hiql-chunk-visual-humanoidmaze-medium -c /home/dzb/ogbench/impls \
-  "CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_PREALLOCATE=false MUJOCO_GL=egl \
+  "CUDA_VISIBLE_DEVICES=5 XLA_PYTHON_CLIENT_PREALLOCATE=false MUJOCO_GL=egl \
   /home/dzb/ogbench/.venv/bin/python /home/dzb/ogbench/impls/main.py \
   --env_name=visual-humanoidmaze-medium-navigate-v0 \
   --agent=/home/dzb/ogbench/impls/agents/hiql_chunk.py \
