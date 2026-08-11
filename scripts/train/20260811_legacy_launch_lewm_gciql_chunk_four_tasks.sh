@@ -2,15 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+REPO_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 DASHBOARD_ROOT="${DASHBOARD_ROOT:-/root/data/yyf/experiment-dashboard}"
 DATASETS_DIR="${DATASETS_DIR:-/root/data/yyf/stable-worldmodel/datasets}"
 RUNS_ROOT="${RUNS_ROOT:-/root/data/yyf/lewm-runs}"
-GPU_IDS_CSV="${GPU_IDS:-0,1,2,3}"
+GPU_IDS_CSV="${GPU_IDS:-0,1,3,7}"
 BATCH_SIZE="${BATCH_SIZE:-256}"
 TRAIN_STEPS="${TRAIN_STEPS:-100000}"
+CHUNK_SIZE="${CHUNK_SIZE:-5}"
 SEED="${SEED:-0}"
-EXPERIMENT_ID="${EXPERIMENT_ID:-EXP-009}"
+EXPERIMENT_ID="${EXPERIMENT_ID:-EXP-011}"
 LAUNCH_TAG="${LAUNCH_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 if (( TRAIN_STEPS % 1000 == 0 )); then
   TRAIN_LABEL="$((TRAIN_STEPS / 1000))k"
@@ -21,6 +22,7 @@ fi
 TASKS=(tworoom reacher pusht cube)
 DATASETS=(tworoom.lance reacher.lance pusht_expert_train.lance cube_single_expert.lance)
 ENV_NAMES=(visual-lewm-tworoom-v0 visual-lewm-reacher-v0 visual-lewm-pusht-expert-train-v0 visual-lewm-cube-single-expert-v0)
+BASELINES=(EXP-006 EXP-008 EXP-002 EXP-002)
 IFS=',' read -r -a GPU_ARRAY <<< "${GPU_IDS_CSV}"
 
 [[ "${#GPU_ARRAY[@]}" -eq "${#TASKS[@]}" ]] || {
@@ -48,7 +50,7 @@ for dataset in "${DATASETS[@]}"; do
 done
 
 for task in "${TASKS[@]}"; do
-  session="yb-gciql-lewm-${task}-${LAUNCH_TAG}"
+  session="yb-gciql-chunk-lewm-${task}-${LAUNCH_TAG}"
   if tmux has-session -t "${session}" 2>/dev/null; then
     echo "ERROR: tmux session already exists: ${session}" >&2
     exit 1
@@ -60,23 +62,24 @@ mkdir -p "${RUNS_ROOT}/logs"
 for i in "${!TASKS[@]}"; do
   task="${TASKS[$i]}"
   gpu="${GPU_ARRAY[$i]}"
-  session="yb-gciql-lewm-${task}-${LAUNCH_TAG}"
+  session="yb-gciql-chunk-lewm-${task}-${LAUNCH_TAG}"
   run_id="${EXPERIMENT_ID}-${task}-${LAUNCH_TAG}"
-  exp_name="GCIQL_ogbench_lewm_${task}_impalasmall_bs${BATCH_SIZE}_s${TRAIN_LABEL}_seed${SEED}"
+  exp_name="GCIQLChunk_ogbench_lewm_${task}_gaussian_ddpgbc_k${CHUNK_SIZE}_impalasmall_bs${BATCH_SIZE}_s${TRAIN_LABEL}_seed${SEED}"
   log_file="${RUNS_ROOT}/logs/${session}.log"
-  payload="$(ENV_NAME="${ENV_NAMES[$i]}" DATASET="${DATASETS_DIR}/${DATASETS[$i]}" LOG_FILE="${log_file}" RUNS_ROOT="${RUNS_ROOT}" BATCH_SIZE="${BATCH_SIZE}" TRAIN_STEPS="${TRAIN_STEPS}" SEED="${SEED}" python3 -c 'import json,os; print(json.dumps({"dataset":os.environ["DATASET"],"log_path":os.environ["LOG_FILE"],"output_dir":os.environ["RUNS_ROOT"],"seed":int(os.environ["SEED"]),"parameters":{"algorithm":"OGBench GCIQL","environment":os.environ["ENV_NAME"],"batch_size":int(os.environ["BATCH_SIZE"]),"train_steps":int(os.environ["TRAIN_STEPS"]),"encoder":"impala_small","alpha":1.0,"p_aug":0.5}},ensure_ascii=False))')"
+  payload="$(ENV_NAME="${ENV_NAMES[$i]}" BASELINE="${BASELINES[$i]}" DATASET="${DATASETS_DIR}/${DATASETS[$i]}" LOG_FILE="${log_file}" RUNS_ROOT="${RUNS_ROOT}" BATCH_SIZE="${BATCH_SIZE}" TRAIN_STEPS="${TRAIN_STEPS}" CHUNK_SIZE="${CHUNK_SIZE}" SEED="${SEED}" python3 -c 'import json,os; print(json.dumps({"dataset":os.environ["DATASET"],"log_path":os.environ["LOG_FILE"],"output_dir":os.environ["RUNS_ROOT"],"seed":int(os.environ["SEED"]),"parameters":{"algorithm":"GCIQL-Chunk-Gaussian","baseline":os.environ["BASELINE"],"environment":os.environ["ENV_NAME"],"chunk_size":int(os.environ["CHUNK_SIZE"]),"actor_loss":"ddpgbc","alpha":1.0,"batch_size":int(os.environ["BATCH_SIZE"]),"train_steps":int(os.environ["TRAIN_STEPS"]),"encoder":"impala_small","p_aug":0.5}},ensure_ascii=False))')"
 
   printf -v command '%q ' env \
     "CUDA_VISIBLE_DEVICES=${gpu}" \
     "BATCH_SIZE=${BATCH_SIZE}" \
     "TRAIN_STEPS=${TRAIN_STEPS}" \
+    "CHUNK_SIZE=${CHUNK_SIZE}" \
     "SEED=${SEED}" \
     "DATASETS_DIR=${DATASETS_DIR}" \
     "RUNS_ROOT=${RUNS_ROOT}" \
     "EXPERIMENT_EXTRA_PAYLOAD_JSON=${payload}" \
     bash "${DASHBOARD_ROOT}/scripts/recorded_run.sh" \
       "${EXPERIMENT_ID}" "${exp_name}" "${run_id}" -- \
-      bash "${SCRIPT_DIR}/0811_yb_train_lewm_gciql_task.sh" "${task}"
+      bash "${SCRIPT_DIR}/20260811_legacy_train_lewm_gciql_chunk_task.sh" "${task}"
   command+="2>&1 | tee $(printf '%q' "${log_file}")"
 
   tmux new-session -d -s "${session}" -c "${REPO_ROOT}" "${command}"
@@ -84,5 +87,5 @@ for i in "${!TASKS[@]}"; do
 done
 
 echo
-echo "All four GCIQL runs launched with experiment recording enabled."
-tmux list-sessions | grep "^yb-gciql-lewm-.*-${LAUNCH_TAG}:" || true
+echo "All four GCIQL-Chunk-Gaussian runs launched with experiment recording enabled."
+tmux list-sessions | grep "^yb-gciql-chunk-lewm-.*-${LAUNCH_TAG}:" || true

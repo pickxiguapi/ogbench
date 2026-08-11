@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 IMPLS_DIR="${IMPLS_DIR:-${REPO_ROOT}/impls}"
 DATASETS_DIR="${DATASETS_DIR:-/root/data/yyf/stable-worldmodel/datasets}"
 RUNS_ROOT="${RUNS_ROOT:-/root/data/yyf/lewm-runs}"

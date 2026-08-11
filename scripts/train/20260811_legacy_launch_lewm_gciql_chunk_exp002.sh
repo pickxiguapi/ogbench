@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+REPO_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 DASHBOARD_ROOT="${DASHBOARD_ROOT:-/root/data/yyf/experiment-dashboard}"
 DATASETS_DIR="${DATASETS_DIR:-/root/data/yyf/stable-worldmodel/datasets}"
 RUNS_ROOT="${RUNS_ROOT:-/root/data/yyf/lewm-runs}"
@@ -75,7 +75,7 @@ for i in "${!TASKS[@]}"; do
     "EXPERIMENT_EXTRA_PAYLOAD_JSON=${payload}" \
     bash "${DASHBOARD_ROOT}/scripts/recorded_run.sh" \
       "${EXPERIMENT_ID}" "${exp_name}" "${run_id}" -- \
-      bash "${SCRIPT_DIR}/0811_yb_train_lewm_gciql_chunk_task.sh" "${task}"
+      bash "${SCRIPT_DIR}/20260811_legacy_train_lewm_gciql_chunk_task.sh" "${task}"
   command+="2>&1 | tee $(printf '%q' "${log_file}")"
 
   tmux new-session -d -s "${session}" -c "${REPO_ROOT}" "${command}"

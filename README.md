@@ -326,7 +326,7 @@ python main.py --env_name=visual-cube-single-play-v0 --agent=agents/hiql_chunk.p
 
 HIQL-Chunk is continuous-action only. Its low-level policy predicts a flattened action chunk with the same constant-
 standard-deviation Gaussian actor used by HIQL; evaluation executes the chunk open-loop and replans at each chunk
-boundary. The fixed launchers in `scripts/launch_hiql_chunk_visual_*.sh` target the visual AntMaze, HumanoidMaze,
+boundary. The archived launchers in `scripts/train/20260809_legacy_train_hiql_chunk_visual_*_s500k.sh` target the visual AntMaze, HumanoidMaze,
 Cube, Scene, and Puzzle environments on server 23. They use the small Impala encoder and representation gradients
 for the low-level actor. Random-crop augmentation is enabled only for visual manipulation environments, matching
 the OGBench visual HIQL settings.

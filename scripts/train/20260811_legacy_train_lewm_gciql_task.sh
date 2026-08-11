@@ -2,13 +2,13 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: bash scripts/0811_yb_train_lewm_gciql_task.sh {tworoom|reacher|pusht|cube}" >&2
+  echo "Usage: bash scripts/train/20260811_legacy_train_lewm_gciql_task.sh {tworoom|reacher|pusht|cube}" >&2
   exit 2
 fi
 
 TASK="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+REPO_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 IMPLS_DIR="${IMPLS_DIR:-${REPO_ROOT}/impls}"
 DATASETS_DIR="${DATASETS_DIR:-/root/data/yyf/stable-worldmodel/datasets}"
 RUNS_ROOT="${RUNS_ROOT:-/root/data/yyf/lewm-runs}"

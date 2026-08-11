@@ -2,16 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OGBENCH_ROOT="${OGBENCH_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
-STABLEWM_ROOT="${STABLEWM_ROOT:-/root/data/yyf/stable-worldmodel}"
-CHECKPOINT_DIR="${CHECKPOINT_DIR:-/root/data/yyf/lewm-runs/OGBench/lewm-tworoom-visual-gciql-bs256-100k/sd000_20260810_183714}"
-CHECKPOINT_STEP="${CHECKPOINT_STEP:-100000}"
-GPU_ID="${GPU_ID:-5}"
-SEED="${SEED:-42}"
-NUM_EVAL="${NUM_EVAL:-50}"
-GOAL_OFFSET_STEPS="${GOAL_OFFSET_STEPS:-25}"
-EVAL_BUDGET="${EVAL_BUDGET:-50}"
-OUTPUT_DIR="${OUTPUT_DIR:-${CHECKPOINT_DIR}/eval_ff/seed_${SEED}}"
+OGBENCH_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+STABLEWM_ROOT="/root/data/yyf/stable-worldmodel"
+CHECKPOINT_DIR="/root/data/yyf/lewm-runs/OGBench/lewm-tworoom-visual-gciql-bs256-100k/sd000_20260810_183714"
+CHECKPOINT_STEP=100000
+GPU_ID=5
+SEED=42
+NUM_EVAL=50
+GOAL_OFFSET_STEPS=25
+EVAL_BUDGET=50
+OUTPUT_DIR="${CHECKPOINT_DIR}/eval_ff/seed_${SEED}"
 
 [[ -x "${STABLEWM_ROOT}/.venv/bin/python" ]] || {
   echo "ERROR: StableWM Python not found: ${STABLEWM_ROOT}/.venv/bin/python" >&2

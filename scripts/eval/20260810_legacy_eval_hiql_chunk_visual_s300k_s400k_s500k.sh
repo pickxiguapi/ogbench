@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=/home/dzb/ogbench
 PYTHON="$ROOT/.venv/bin/python"
 MAIN="$ROOT/impls/main.py"
-SCRIPT="$ROOT/scripts/eval_hiql_chunk_visual_300k_400k_500k.sh"
+SCRIPT="$ROOT/scripts/eval/20260810_legacy_eval_hiql_chunk_visual_s300k_s400k_s500k.sh"
 EVAL_ROOT=/data/dzb/ogbench-evals/hiql_chunk
 LOG_ROOT="$ROOT/logs/hiql_chunk_eval"
 

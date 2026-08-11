@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  echo "Usage: bash scripts/eval_lewm.sh <cube|pusht|tworoom|reacher> <gciql|hiql> <checkpoint_dir>" >&2
+  echo "Usage: bash scripts/eval/20260809_legacy_eval_lewm_parameterized.sh <cube|pusht|tworoom|reacher> <gciql|hiql> <checkpoint_dir>" >&2
   exit 2
 fi
 
