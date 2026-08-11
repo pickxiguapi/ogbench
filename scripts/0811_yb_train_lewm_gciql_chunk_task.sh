@@ -71,8 +71,8 @@ exec "${PYTHON_BIN}" main.py \
   "--dataset_path=${DATASETS_DIR}/${DATASET_NAME}" \
   --agent=agents/gciql_chunk.py \
   "--agent.chunk_size=${CHUNK_SIZE}" \
-  --agent.actor_loss=awr \
-  --agent.alpha=3.0 \
+  --agent.actor_loss=ddpgbc \
+  --agent.alpha=1.0 \
   "--agent.batch_size=${BATCH_SIZE}" \
   --agent.encoder=impala_small \
   --agent.p_aug=0.5 \

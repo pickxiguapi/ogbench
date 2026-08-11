@@ -5,7 +5,7 @@ from agents.gciql import get_config as get_gciql_config
 
 
 class GCIQLChunkAgent(GCIQLAgent):
-    """Flat GCIQL with a chunk-conditioned critic and Gaussian AWR actor.
+    """Flat GCIQL with a chunk-conditioned critic and Gaussian DDPG+BC actor.
 
     The actor and critic operate on flattened length-k action sequences.  The
     dataset supplies the exact discounted reward accumulated by the sequence,
@@ -40,12 +40,12 @@ class GCIQLChunkAgent(GCIQLAgent):
 
 
 def get_config():
-    """Return GCIQL defaults with action chunking and AWR enabled."""
+    """Return GCIQL defaults with action chunking enabled."""
     config = get_gciql_config()
     config.agent_name = 'gciql_chunk'
     config.dataset_class = 'GCChunkDataset'
     config.chunk_size = 5
-    config.actor_loss = 'awr'
-    config.alpha = 3.0
+    config.actor_loss = 'ddpgbc'
+    config.alpha = 1.0
     config.discrete = False
     return config

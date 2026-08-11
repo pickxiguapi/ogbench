@@ -102,15 +102,15 @@ class GCChunkDatasetTest(unittest.TestCase):
         np.testing.assert_array_equal(batch['actions'], np.asarray([[1.0, 2.0]]))
         np.testing.assert_array_equal(batch['next_observations'], np.asarray([[3.0]]))
 
-    def test_default_agent_is_gaussian_awr_chunking(self):
+    def test_default_agent_matches_gciql_baseline_actor(self):
         base_config = get_gciql_config()
         config = get_config()
 
         self.assertEqual(config.agent_name, 'gciql_chunk')
         self.assertEqual(config.dataset_class, 'GCChunkDataset')
         self.assertEqual(config.chunk_size, 5)
-        self.assertEqual(config.actor_loss, 'awr')
-        self.assertEqual(config.alpha, 3.0)
+        self.assertEqual(config.actor_loss, 'ddpgbc')
+        self.assertEqual(config.alpha, 1.0)
         self.assertFalse(config.discrete)
         self.assertEqual(set(config.keys()), set(base_config.keys()) | {'chunk_size'})
         intended_changes = {'agent_name', 'dataset_class', 'actor_loss', 'alpha'}
@@ -167,8 +167,8 @@ class GCChunkDatasetTest(unittest.TestCase):
     def test_k_one_losses_match_original_gciql(self):
         base_config = get_gciql_config()
         base_config.encoder = None
-        base_config.actor_loss = 'awr'
-        base_config.alpha = 3.0
+        base_config.actor_loss = 'ddpgbc'
+        base_config.alpha = 1.0
         base_config.actor_hidden_dims = (16, 16)
         base_config.value_hidden_dims = (16, 16)
         chunk_config = get_config()
