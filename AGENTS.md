@@ -21,3 +21,7 @@
 - 所有新建的训练/评测/复现/消融 Bash 都必须带八位日期前缀。
 - `README.md`、纯工具代码（例如数据转换 `.py`）不属于实验 Bash，可以不带日期；如果某个工具 Bash 会直接启动实验，则仍按实验 Bash 规则命名。
 - 不再新增 `eval.sh`、`launch.sh`、`run_all.sh`、`train_<task>.sh` 这类无日期、可复用但无法对应具体实验的名字。
+
+## Github
+
+固定拉最新的https://github.com/pickxiguapi/ogbench
