@@ -198,7 +198,12 @@ def main():
         {'params': params_key, 'dropout': dropout_key},
         jnp.asarray(example['pixels']),
         jnp.asarray(example['action']),
-        train=True,
+        # PyTorch constructs BatchNorm with running mean=0 and variance=1;
+        # neither module initialization nor Lightning's validation sanity
+        # check mutates those statistics before the first training batch.
+        # Initializing Flax in training mode would otherwise consume this
+        # two-example shape probe as an extra BatchNorm update.
+        train=False,
     )
     state = LeWMTrainState.create(
         apply_fn=model.apply,

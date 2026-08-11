@@ -328,7 +328,10 @@ class LeWM(nn.Module):
         context_embeddings = embeddings[:, : self.history_size]
         context_actions = actions[:, : self.history_size]
         predictions = self.predict_embeddings(context_embeddings, context_actions, train=train)
-        return embeddings.astype(jnp.float32), predictions.astype(jnp.float32)
+        # Lightning runs the complete reference forward/loss under bf16 mixed
+        # precision.  In particular, the elementwise prediction MSE keeps the
+        # bf16 dtype emitted by the model instead of being promoted to fp32.
+        return embeddings, predictions
 
     def rollout_cost(self, pixels, goals, action_candidates):
         """LeWM's official final-embedding planning cost.
@@ -391,9 +394,19 @@ def sigreg_loss(embeddings, key, *, knots=17, num_proj=1024):
     weights = jnp.full((knots,), 2.0 * dt, dtype=jnp.float32).at[edge_indices].set(dt)
     phi = jnp.exp(-(t**2) / 2.0)
     weights = weights * phi
-    x_t = jnp.einsum('tbd,dp->tbp', projection, directions)[..., None] * t
+    # PyTorch creates the random directions and quadrature buffers in fp32,
+    # but autocast executes both matrix multiplications in bf16.  The multiply
+    # by fp32 ``t`` promotes the trigonometric part back to fp32 in between.
+    projected = jnp.einsum(
+        'tbd,dp->tbp', projection, directions.astype(projection.dtype)
+    )
+    x_t = projected[..., None] * t
     error = (jnp.cos(x_t).mean(axis=1) - phi) ** 2 + jnp.sin(x_t).mean(axis=1) ** 2
-    statistic = jnp.einsum('tpk,k->tp', error, weights) * projection.shape[1]
+    statistic = jnp.einsum(
+        'tpk,k->tp',
+        error.astype(projection.dtype),
+        weights.astype(projection.dtype),
+    ) * projection.shape[1]
     return statistic.mean()
 
 

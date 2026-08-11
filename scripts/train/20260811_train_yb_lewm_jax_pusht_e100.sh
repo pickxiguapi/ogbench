@@ -4,7 +4,7 @@ set -euo pipefail
 OGBENCH_ROOT="/root/data/yyf/ogbench"
 DATA_ROOT="/root/data/yyf/stable-worldmodel/datasets"
 RUNS_ROOT="/root/data/yyf/lewm-runs"
-GPU_ID=1
+GPU_ID=3
 EXP_NAME="LeWMJAX_lance_pusht_expert_bs128_e100_seed3072_fs5_h3_sigreg009_cem300x30"
 RUN_DIR="${RUNS_ROOT}/${EXP_NAME}"
 LOG_PATH="${RUN_DIR}/train.log"
