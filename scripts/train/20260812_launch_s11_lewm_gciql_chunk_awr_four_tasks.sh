@@ -8,7 +8,7 @@ VENV_DIR="${VENV_DIR:-/data/yyf/H-LeWM/envs/ogbench}"
 RUN_STAMP="${RUN_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 SOURCE_GIT_COMMIT="${SOURCE_GIT_COMMIT:-unknown}"
 
-[[ -x "${DASHBOARD_ROOT}/scripts/recorded_run.sh" ]] || { echo "ERROR: dashboard recorder unavailable" >&2; exit 1; }
+[[ -f "${DASHBOARD_ROOT}/scripts/recorded_run.sh" ]] || { echo "ERROR: dashboard recorder unavailable" >&2; exit 1; }
 [[ -x "${VENV_DIR}/bin/python" ]] || { echo "ERROR: OGBench environment unavailable" >&2; exit 1; }
 
 tasks=(tworoom reacher pusht cube)
