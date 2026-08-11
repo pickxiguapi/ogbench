@@ -22,6 +22,7 @@ fi
 TASKS=(tworoom reacher pusht cube)
 DATASETS=(tworoom.lance reacher.lance pusht_expert_train.lance cube_single_expert.lance)
 ENV_NAMES=(visual-lewm-tworoom-v0 visual-lewm-reacher-v0 visual-lewm-pusht-expert-train-v0 visual-lewm-cube-single-expert-v0)
+BASELINES=(EXP-006 EXP-008 EXP-002 EXP-002)
 IFS=',' read -r -a GPU_ARRAY <<< "${GPU_IDS_CSV}"
 
 [[ "${#GPU_ARRAY[@]}" -eq "${#TASKS[@]}" ]] || {
@@ -65,7 +66,7 @@ for i in "${!TASKS[@]}"; do
   run_id="${EXPERIMENT_ID}-${task}-${LAUNCH_TAG}"
   exp_name="GCIQLChunk_ogbench_lewm_${task}_gaussian_ddpgbc_k${CHUNK_SIZE}_impalasmall_bs${BATCH_SIZE}_s${TRAIN_LABEL}_seed${SEED}"
   log_file="${RUNS_ROOT}/logs/${session}.log"
-  payload="$(ENV_NAME="${ENV_NAMES[$i]}" DATASET="${DATASETS_DIR}/${DATASETS[$i]}" LOG_FILE="${log_file}" RUNS_ROOT="${RUNS_ROOT}" BATCH_SIZE="${BATCH_SIZE}" TRAIN_STEPS="${TRAIN_STEPS}" CHUNK_SIZE="${CHUNK_SIZE}" SEED="${SEED}" python3 -c 'import json,os; print(json.dumps({"dataset":os.environ["DATASET"],"log_path":os.environ["LOG_FILE"],"output_dir":os.environ["RUNS_ROOT"],"seed":int(os.environ["SEED"]),"parameters":{"algorithm":"GCIQL-Chunk-Gaussian","baseline":"EXP-002 OGBench GCIQL","environment":os.environ["ENV_NAME"],"chunk_size":int(os.environ["CHUNK_SIZE"]),"actor_loss":"ddpgbc","alpha":1.0,"batch_size":int(os.environ["BATCH_SIZE"]),"train_steps":int(os.environ["TRAIN_STEPS"]),"encoder":"impala_small","p_aug":0.5}},ensure_ascii=False))')"
+  payload="$(ENV_NAME="${ENV_NAMES[$i]}" BASELINE="${BASELINES[$i]}" DATASET="${DATASETS_DIR}/${DATASETS[$i]}" LOG_FILE="${log_file}" RUNS_ROOT="${RUNS_ROOT}" BATCH_SIZE="${BATCH_SIZE}" TRAIN_STEPS="${TRAIN_STEPS}" CHUNK_SIZE="${CHUNK_SIZE}" SEED="${SEED}" python3 -c 'import json,os; print(json.dumps({"dataset":os.environ["DATASET"],"log_path":os.environ["LOG_FILE"],"output_dir":os.environ["RUNS_ROOT"],"seed":int(os.environ["SEED"]),"parameters":{"algorithm":"GCIQL-Chunk-Gaussian","baseline":os.environ["BASELINE"],"environment":os.environ["ENV_NAME"],"chunk_size":int(os.environ["CHUNK_SIZE"]),"actor_loss":"ddpgbc","alpha":1.0,"batch_size":int(os.environ["BATCH_SIZE"]),"train_steps":int(os.environ["TRAIN_STEPS"]),"encoder":"impala_small","p_aug":0.5}},ensure_ascii=False))')"
 
   printf -v command '%q ' env \
     "CUDA_VISIBLE_DEVICES=${gpu}" \
