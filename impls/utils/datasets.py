@@ -7,6 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import FrozenDict
 
+from utils.chunk_utils import compute_goal_conditioned_chunk_returns
+
 
 def get_size(data):
     """Return the size of the dataset."""
@@ -307,6 +309,92 @@ class GCDataset:
             cur_idxs = np.maximum(idxs - i, initial_state_idxs)
             rets.append(jax.tree_util.tree_map(lambda arr: arr[cur_idxs], self.dataset['observations']))
         return jax.tree_util.tree_map(lambda *args: np.concatenate(args, axis=-1), *rets)
+
+
+@dataclasses.dataclass
+class GCChunkDataset(GCDataset):
+    """Goal-conditioned dataset over fixed-length action chunks.
+
+    This sampler requires the repository's compact trajectory representation.
+    Each sampled transition is lifted from the atomic action space to a
+    temporally extended action space.  ``actions`` contains the flattened
+    sequence ``a[t:t + k]``, ``next_observations`` is ``s[t + k]``, and the
+    reward is the exact discounted return over the chunk.  Samples never cross
+    trajectory boundaries and never contain invalid atomic actions.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        chunk_size = self.config['chunk_size']
+        if chunk_size < 1:
+            raise ValueError(f'chunk_size must be positive, got {chunk_size}.')
+        if 'valids' not in self.dataset or 'next_observations' in self.dataset:
+            raise ValueError('GCChunkDataset requires a compact dataset with a valids field.')
+
+        all_idxs = np.arange(self.size)
+        valid = all_idxs + chunk_size < self.size
+        atomic_valids = np.asarray(self.dataset['valids'])
+        for offset in range(chunk_size):
+            offset_idxs = np.minimum(all_idxs + offset, self.size - 1)
+            valid &= atomic_valids[offset_idxs] > 0
+
+        self.chunk_valid_mask = valid
+        self.chunk_valid_idxs = all_idxs[valid]
+        if len(self.chunk_valid_idxs) == 0:
+            raise ValueError(f'Dataset does not contain any complete action chunks of length {chunk_size}.')
+
+    def sample(self, batch_size, idxs=None, evaluation=False):
+        """Sample goal-conditioned macro-transitions in the chunk action space."""
+        if idxs is None:
+            idxs = self.chunk_valid_idxs[np.random.randint(len(self.chunk_valid_idxs), size=batch_size)]
+        else:
+            idxs = np.asarray(idxs)
+            if np.any(idxs < 0) or np.any(idxs >= self.size) or np.any(~self.chunk_valid_mask[idxs]):
+                raise ValueError('Explicit sample indices must identify complete, valid action chunks.')
+
+        batch = self.dataset.sample(batch_size, idxs)
+        batch['observations'] = self.get_observations(idxs)
+
+        value_goal_idxs = self.sample_goals(
+            idxs,
+            self.config['value_p_curgoal'],
+            self.config['value_p_trajgoal'],
+            self.config['value_p_randomgoal'],
+            self.config['value_geom_sample'],
+        )
+        actor_goal_idxs = self.sample_goals(
+            idxs,
+            self.config['actor_p_curgoal'],
+            self.config['actor_p_trajgoal'],
+            self.config['actor_p_randomgoal'],
+            self.config['actor_geom_sample'],
+        )
+        batch['value_goals'] = self.get_observations(value_goal_idxs)
+        batch['actor_goals'] = self.get_observations(actor_goal_idxs)
+
+        chunk_size = self.config['chunk_size']
+        chunk_offsets = np.arange(chunk_size)
+        chunk_idxs = idxs[:, None] + chunk_offsets[None, :]
+        batch['actions'] = jax.tree_util.tree_map(
+            lambda arr: arr[chunk_idxs].reshape(batch_size, -1), self.dataset['actions']
+        )
+        batch['next_observations'] = self.get_observations(idxs + chunk_size)
+
+        # Compute the exact goal-conditioned k-step return.  Rewards after a
+        # relabeled goal is reached are excluded, and the macro mask disables
+        # bootstrapping whenever the goal occurs inside the chunk.
+        batch['rewards'], batch['masks'] = compute_goal_conditioned_chunk_returns(
+            chunk_idxs,
+            value_goal_idxs,
+            self.config['discount'],
+            self.config['gc_negative'],
+        )
+
+        if self.config['p_aug'] is not None and not evaluation and np.random.rand() < self.config['p_aug']:
+            self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
+
+        return batch
 
 
 @dataclasses.dataclass
