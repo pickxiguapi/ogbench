@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OGBENCH_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STABLEWM_ROOT="/root/data/yyf/stable-worldmodel"
-CHECKPOINT_DIR="/root/data/yyf/ogbench/checkpoints/lewm_gciql_s100k/reacher"
+CHECKPOINT_DIR="/root/data/yyf/ogbench/checkpoints/lewm_gciql_s100k/cube_single"
 CHECKPOINT_STEP=100000
 GPU_ID=7
 SEED=42
@@ -14,27 +14,12 @@ EVAL_BUDGET=50
 OUTPUT_DIR="${CHECKPOINT_DIR}/eval_ff/seed_${SEED}"
 EGL_LIB_DIR="${OGBENCH_ROOT}/.runtime/libegl1/usr/lib/x86_64-linux-gnu"
 
-[[ -x "${STABLEWM_ROOT}/.venv/bin/python" ]] || {
-  echo "ERROR: StableWM Python not found: ${STABLEWM_ROOT}/.venv/bin/python" >&2
-  exit 1
-}
-[[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || {
-  echo "ERROR: OGBench Python not found: ${OGBENCH_ROOT}/.venv/bin/python" >&2
-  exit 1
-}
-[[ -s "${CHECKPOINT_DIR}/params_${CHECKPOINT_STEP}.pkl" ]] || {
-  echo "ERROR: checkpoint not found: ${CHECKPOINT_DIR}/params_${CHECKPOINT_STEP}.pkl" >&2
-  exit 1
-}
-[[ -s "${EGL_LIB_DIR}/libEGL.so.1" ]] || {
-  echo "ERROR: user-level libEGL not found: ${EGL_LIB_DIR}/libEGL.so.1" >&2
-  exit 1
-}
-for dataset in reacher.h5 reacher.lance; do
-  [[ -e "${STABLEWM_ROOT}/datasets/${dataset}" ]] || {
-    echo "ERROR: dataset not found: ${STABLEWM_ROOT}/datasets/${dataset}" >&2
-    exit 1
-  }
+[[ -x "${STABLEWM_ROOT}/.venv/bin/python" ]] || { echo "ERROR: StableWM Python not found" >&2; exit 1; }
+[[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || { echo "ERROR: OGBench Python not found" >&2; exit 1; }
+[[ -s "${CHECKPOINT_DIR}/params_${CHECKPOINT_STEP}.pkl" ]] || { echo "ERROR: Cube checkpoint not found" >&2; exit 1; }
+[[ -s "${EGL_LIB_DIR}/libEGL.so.1" ]] || { echo "ERROR: user-level libEGL not found" >&2; exit 1; }
+for dataset in cube_single_expert.h5 cube_single_expert.lance; do
+  [[ -e "${STABLEWM_ROOT}/datasets/${dataset}" ]] || { echo "ERROR: Cube dataset not found: ${dataset}" >&2; exit 1; }
 done
 
 mkdir -p "${OUTPUT_DIR}/videos"
@@ -49,7 +34,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" \
   LD_LIBRARY_PATH="${EGL_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
   PYTHONPATH="${STABLEWM_ROOT}:${OGBENCH_ROOT}/impls" \
   "${STABLEWM_ROOT}/.venv/bin/python" eval_lewm.py \
-    --task reacher \
+    --task cube \
     --method gciql \
     --checkpoint-dir "${CHECKPOINT_DIR}" \
     --checkpoint-step "${CHECKPOINT_STEP}" \
@@ -60,7 +45,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" \
     --goal-offset-steps "${GOAL_OFFSET_STEPS}" \
     --eval-budget "${EVAL_BUDGET}" \
     --video-dir "${OUTPUT_DIR}/videos" \
-    --output "${OUTPUT_DIR}/reacher_gciql_step${CHECKPOINT_STEP}.json" \
+    --output "${OUTPUT_DIR}/cube_gciql_step${CHECKPOINT_STEP}.json" \
     2>&1 | tee "${OUTPUT_DIR}/eval.log"
 status="${PIPESTATUS[0]}"
 set -e
