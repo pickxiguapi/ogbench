@@ -22,6 +22,8 @@ from utils.lewm_sequence_dataset import LeWMSequenceDataset
 
 @dataclass(frozen=True)
 class LeWMConfig:
+    reference_lewm_commit: str = '8edfeb3'
+    reference_stable_pretraining_version: str = '0.1.8'
     seed: int = 3072
     epochs: int = 100
     batch_size: int = 128

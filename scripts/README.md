@@ -60,7 +60,7 @@ bash scripts/recorded_run.sh EXP-002 'GCIQL_ogbench_cube_single_bs256_s100k_seed
 
 ## 英博云：JAX LeWM 原版四任务复现
 
-该组实验对应 `lucas-maes/le-wm` 的模型、损失与官方超参数：ViT-Tiny/14、history 3、frameskip 5、batch 128、100 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）、bf16。训练从 Lance 懒加载像素序列；评测使用 dataset-goal 协议和原生 JAX CEM（300 samples、30 iterations、top-30），但仍保持官方 CEM 更新规则。
+该组实验对应 `lucas-maes/le-wm@8edfeb3` 的模型、损失与官方超参数，并以该代码实际使用的 `stable-pretraining==0.1.8` 为依赖语义基准：ViT-Tiny/14、history 3、frameskip 5、batch 128、100 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）、bf16。训练从 Lance 懒加载像素序列；评测使用 dataset-goal 协议和原生 JAX CEM（300 samples、30 iterations、top-30），但仍保持官方 CEM 更新规则。
 
 每个训练与评测必须作为同一个 pipeline Run 启动，HTML 中只占一行：
 
