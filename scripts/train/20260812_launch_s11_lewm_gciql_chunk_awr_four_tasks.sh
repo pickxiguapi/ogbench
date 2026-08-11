@@ -7,6 +7,7 @@ DATA_ROOT="${DATA_ROOT:-/data/yyf/H-LeWM/datasets}"
 VENV_DIR="${VENV_DIR:-/data/yyf/H-LeWM/envs/ogbench}"
 RUN_STAMP="${RUN_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 SOURCE_GIT_COMMIT="${SOURCE_GIT_COMMIT:-unknown}"
+RETRY_TAG="${RETRY_TAG:-r1_wandboffline}"
 
 [[ -f "${DASHBOARD_ROOT}/scripts/recorded_run.sh" ]] || { echo "ERROR: dashboard recorder unavailable" >&2; exit 1; }
 [[ -x "${VENV_DIR}/bin/python" ]] || { echo "ERROR: OGBench environment unavailable" >&2; exit 1; }
@@ -27,8 +28,8 @@ for i in "${!tasks[@]}"; do
   gpu="${gpus[$i]}"
   session="s11-gciql-chunk-awr-${task}"
   run_id="EXP-010-s11-${task}-${RUN_STAMP}"
-  exp_name="GCIQLChunkAWR_ogbench_lewm_${task}_k5_bs256_s100k_seed0_alpha3_expectile09_aug05_s11"
-  payload="{\"dataset\":\"${DATA_ROOT}/${datasets[$i]}\",\"output_dir\":\"/data/yyf/H-LeWM/ogbench-runs\",\"source_repository\":\"https://github.com/pickxiguapi/ogbench\",\"source_git_commit\":\"${SOURCE_GIT_COMMIT}\",\"seed\":0,\"parameters\":{\"algorithm\":\"GCIQL-Chunk-Gaussian\",\"environment\":\"${task}\",\"chunk_size\":5,\"actor_loss\":\"awr\",\"alpha\":3.0,\"batch_size\":256,\"train_steps\":100000,\"encoder\":\"impala_small\",\"expectile\":0.9,\"p_aug\":0.5}}"
+  exp_name="GCIQLChunkAWR_ogbench_lewm_${task}_k5_bs256_s100k_seed0_alpha3_expectile09_aug05_s11_${RETRY_TAG}"
+  payload="{\"dataset\":\"${DATA_ROOT}/${datasets[$i]}\",\"output_dir\":\"/data/yyf/H-LeWM/ogbench-runs\",\"source_repository\":\"https://github.com/pickxiguapi/ogbench\",\"source_git_commit\":\"${SOURCE_GIT_COMMIT}\",\"seed\":0,\"parameters\":{\"algorithm\":\"GCIQL-Chunk-Gaussian\",\"environment\":\"${task}\",\"chunk_size\":5,\"actor_loss\":\"awr\",\"alpha\":3.0,\"batch_size\":256,\"train_steps\":100000,\"encoder\":\"impala_small\",\"expectile\":0.9,\"p_aug\":0.5,\"wandb_mode\":\"offline\",\"retry\":1}}"
 
   if tmux has-session -t "${session}" 2>/dev/null; then
     echo "ERROR: tmux session already exists: ${session}" >&2

@@ -6,6 +6,7 @@ OGBENCH_ROOT="${OGBENCH_ROOT:-/home/yyf/ogbench}"
 DATA_ROOT="${DATA_ROOT:-/data/yyf/H-LeWM/datasets}"
 RUNS_ROOT="${RUNS_ROOT:-/data/yyf/H-LeWM/ogbench-runs}"
 VENV_DIR="${VENV_DIR:-/data/yyf/H-LeWM/envs/ogbench}"
+WANDB_MODE="${WANDB_MODE:-offline}"
 
 case "${TASK}" in
   tworoom)
@@ -69,7 +70,7 @@ WANDB_DIR="${RUNS_ROOT}/wandb" \
   --log_interval=5000 \
   --save_interval=100000 \
   --run_group=lewm-gciql-chunk-awr-k5-bs256-s100k-s11 \
-  --wandb_mode=online \
+  --wandb_mode="${WANDB_MODE}" \
   --seed=0 \
   --eval_episodes=0 \
   --video_episodes=0 \
