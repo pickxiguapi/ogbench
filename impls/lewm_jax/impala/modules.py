@@ -1,4 +1,4 @@
-"""LeWM-specific trainable Flax modules.
+"""Trainable LeWM predictor modules shared by the IMPALA variant.
 
 Ordinary affine, normalization, dropout, and attention operations use Flax
 directly.  The custom modules below only express LeWM-specific compositions:

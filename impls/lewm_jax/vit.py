@@ -1,4 +1,4 @@
-"""JAX/Flax port of the official LeWM architecture and objective.
+"""Verified JAX/Flax port of the official LeWM ViT architecture and objective.
 
 The module follows lucas-maes/le-wm at commit ``8edfeb3`` and the
 ``stable-pretraining==0.1.8`` ViT helper used by that repository.  In

@@ -13,7 +13,7 @@ Use `--encoder=vit_tiny14` for paper reproduction and
 stored in every checkpoint and evaluation reconstructs the matching model;
 there is no implicit fallback between them.
 
-The formal `vit_tiny14` reproduction uses `reference.py`, restored from the
+The formal `vit_tiny14` reproduction uses `vit.py`, restored from the
 Server-23-proven commit `66d47b6`: TwoRoom completed 10 epochs and the other
 three tasks completed five epochs at true batch 128 before interruption. The
 JEPA, predictor, rollout, and SIGReg organization also follows

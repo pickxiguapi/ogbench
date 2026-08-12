@@ -8,10 +8,9 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from lewm_jax.losses import lewm_loss as variant_lewm_loss
-from lewm_jax.model import LeWM as VariantLeWM
-from lewm_jax.reference import LeWM as ReferenceLeWM
-from lewm_jax.reference import lewm_loss as reference_lewm_loss
+from lewm_jax.impala import ImpalaLeWM, lewm_loss as impala_lewm_loss
+from lewm_jax.vit import LeWM as ViTLeWM
+from lewm_jax.vit import lewm_loss as vit_lewm_loss
 
 REFERENCE_ARCHITECTURE = 'reference_vit_66d47b6'
 VARIANT_ARCHITECTURE = 'lewm_impala_variant'
@@ -46,12 +45,10 @@ def build_model(config, *, dtype=jnp.bfloat16):
         dtype=dtype,
     )
     if architecture == REFERENCE_ARCHITECTURE:
-        return ReferenceLeWM(**common)
+        return ViTLeWM(**common)
     if architecture == VARIANT_ARCHITECTURE:
-        return VariantLeWM(
+        return ImpalaLeWM(
             **common,
-            encoder_name=values.get('encoder', 'impala_small'),
-            patch_size=int(values.get('patch_size', 14)),
             projector_hidden_dim=int(values.get('projector_hidden_dim', 2048)),
             action_smoothed_dim=int(values.get('action_smoothed_dim', 10)),
             action_mlp_scale=int(values.get('action_mlp_scale', 4)),
@@ -67,9 +64,9 @@ def build_model(config, *, dtype=jnp.bfloat16):
 
 def loss_for_architecture(architecture: str):
     if architecture == REFERENCE_ARCHITECTURE:
-        return reference_lewm_loss
+        return vit_lewm_loss
     if architecture == VARIANT_ARCHITECTURE:
-        return variant_lewm_loss
+        return impala_lewm_loss
     raise ValueError(f'Unsupported LeWM loss architecture: {architecture}')
 
 

@@ -1,4 +1,4 @@
-"""Trainable ViT/IMPALA encoders with LeWM latent prediction and rollout."""
+"""LeWM latent predictor using OGBench's IMPALA-small visual encoder."""
 
 from __future__ import annotations
 
@@ -7,18 +7,16 @@ from typing import Any
 import flax.linen as nn
 import jax.numpy as jnp
 
-from lewm_jax.encoders import make_encoder
-from lewm_jax.modules import ARPredictor, ActionEmbedder, ProjectionMLP
+from lewm_jax.impala.encoder import ImpalaSmallEncoder
+from lewm_jax.impala.modules import ARPredictor, ActionEmbedder, ProjectionMLP
 
 
-class LeWM(nn.Module):
-    """End-to-end trainable visual encoder plus LeWM predictor."""
+class ImpalaLeWM(nn.Module):
+    """End-to-end IMPALA-small encoder plus LeWM predictor."""
 
     image_size: int = 224
     embed_dim: int = 192
     history_size: int = 3
-    encoder_name: str = 'vit_tiny14'
-    patch_size: int = 14
     projector_hidden_dim: int = 2048
     action_smoothed_dim: int = 10
     action_mlp_scale: int = 4
@@ -31,13 +29,7 @@ class LeWM(nn.Module):
     dtype: Any = jnp.bfloat16
 
     def setup(self):
-        self.encoder = make_encoder(
-            self.encoder_name,
-            image_size=self.image_size,
-            embed_dim=self.embed_dim,
-            patch_size=self.patch_size,
-            dtype=self.dtype,
-        )
+        self.encoder = ImpalaSmallEncoder()
         self.projector = ProjectionMLP(
             self.embed_dim, hidden_dim=self.projector_hidden_dim, dtype=self.dtype
         )
