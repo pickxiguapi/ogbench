@@ -16,16 +16,19 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.training import train_state
-from lewm_jax import LeWM as VariantLeWM
-from lewm_jax import lewm_loss as variant_lewm_loss
-from lewm_jax.reference import LeWM as ReferenceLeWM
-from lewm_jax.reference import lewm_loss as reference_lewm_loss
+from lewm_jax import (
+    REFERENCE_ARCHITECTURE,
+    architecture_for_encoder,
+    build_model,
+    loss_for_architecture,
+    uses_imagenet_preprocessing,
+)
 from utils.lewm_sequence_dataset import LeWMSequenceDataset
 
 
 @dataclass(frozen=True)
 class LeWMConfig:
-    architecture: str = 'reference_vit_66d47b6'
+    architecture: str = REFERENCE_ARCHITECTURE
     encoder: str = 'vit_tiny14'
     seed: int = 3072
     epochs: int = 10
@@ -159,11 +162,7 @@ def save_model(state, path, epoch, config):
 def main():
     args = parse_args()
     config = LeWMConfig(
-        architecture=(
-            'reference_vit_66d47b6'
-            if args.encoder == 'vit_tiny14'
-            else 'lewm_impala_variant'
-        ),
+        architecture=architecture_for_encoder(args.encoder),
         encoder=args.encoder,
         seed=args.seed,
         epochs=args.epochs,
@@ -188,7 +187,7 @@ def main():
         train_fraction=config.train_fraction,
         seed=config.seed,
         decode_workers=config.decode_workers,
-        normalize_pixels=config.encoder == 'vit_tiny14',
+        normalize_pixels=uses_imagenet_preprocessing(config),
     )
     steps_per_epoch = len(dataset.train_indices) // config.batch_size
     if steps_per_epoch < 1:
@@ -200,33 +199,8 @@ def main():
         optax.adamw(lr_schedule, weight_decay=config.weight_decay),
     )
 
-    if config.encoder == 'vit_tiny14':
-        model = ReferenceLeWM(
-            image_size=config.image_size,
-            embed_dim=config.embed_dim,
-            history_size=config.history_size,
-            dtype=jnp.bfloat16,
-        )
-        loss_function = reference_lewm_loss
-    else:
-        model = VariantLeWM(
-            image_size=config.image_size,
-            embed_dim=config.embed_dim,
-            history_size=config.history_size,
-            encoder_name=config.encoder,
-            patch_size=config.patch_size,
-            projector_hidden_dim=config.projector_hidden_dim,
-            action_smoothed_dim=config.action_smoothed_dim,
-            action_mlp_scale=config.action_mlp_scale,
-            predictor_depth=config.predictor_depth,
-            predictor_heads=config.predictor_heads,
-            predictor_dim_head=config.predictor_dim_head,
-            predictor_mlp_dim=config.predictor_mlp_dim,
-            predictor_dropout=config.predictor_dropout,
-            predictor_emb_dropout=config.predictor_emb_dropout,
-            dtype=jnp.bfloat16,
-        )
-        loss_function = variant_lewm_loss
+    model = build_model(config, dtype=jnp.bfloat16)
+    loss_function = loss_for_architecture(config.architecture)
     rng = jax.random.PRNGKey(config.seed)
     rng, params_key, dropout_key = jax.random.split(rng, 3)
     example = dataset.get_batch(dataset.train_indices[:2])

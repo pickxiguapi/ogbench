@@ -80,39 +80,11 @@ def worker_main(args):
         import flax
         import jax
         import jax.numpy as jnp
-        from lewm_jax import LeWM as VariantLeWM
-        from lewm_jax.reference import LeWM as ReferenceLeWM
+        from lewm_jax import build_model
 
         payload = flax.serialization.msgpack_restore(Path(args.checkpoint).read_bytes())
         config = payload['config']
-        model_class = (
-            ReferenceLeWM
-            if config.get('architecture') == 'reference_vit_66d47b6'
-            else VariantLeWM
-        )
-        model_kwargs = dict(
-            image_size=int(config['image_size']),
-            embed_dim=int(config['embed_dim']),
-            history_size=int(config['history_size']),
-            dtype=jnp.float32,
-        )
-        if model_class is VariantLeWM:
-            model_kwargs.update(
-            encoder_name=config.get('encoder', 'vit_tiny14'),
-            patch_size=int(config.get('patch_size', 14)),
-            projector_hidden_dim=int(config.get('projector_hidden_dim', 2048)),
-            action_smoothed_dim=int(config.get('action_smoothed_dim', 10)),
-            action_mlp_scale=int(config.get('action_mlp_scale', 4)),
-            predictor_depth=int(config.get('predictor_depth', 6)),
-            predictor_heads=int(config.get('predictor_heads', 16)),
-            predictor_dim_head=int(config.get('predictor_dim_head', 64)),
-            predictor_mlp_dim=int(config.get('predictor_mlp_dim', 2048)),
-            predictor_dropout=float(config.get('predictor_dropout', 0.1)),
-            predictor_emb_dropout=float(config.get('predictor_emb_dropout', 0.0)),
-            )
-        model = model_class(
-            **model_kwargs,
-        )
+        model = build_model(config, dtype=jnp.float32)
         variables = {'params': payload['params'], 'batch_stats': payload['batch_stats']}
 
         def plan_one(key, pixels, goals, initial_mean):
@@ -338,7 +310,9 @@ def main(args):
     actions = dataset.get_col_data('action')
     actions = actions[~np.isnan(actions).any(axis=1)]
     action_scaler = StandardScaler().fit(actions)
-    if checkpoint_payload['config'].get('architecture') == 'reference_vit_66d47b6':
+    from lewm_jax import uses_imagenet_preprocessing
+
+    if uses_imagenet_preprocessing(checkpoint_payload['config']):
         image_transforms = [
             transforms.ToImage(),
             transforms.ToDtype(torch.float32, scale=True),

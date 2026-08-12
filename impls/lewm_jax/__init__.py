@@ -1,12 +1,32 @@
-"""Trainable Flax LeWM components for reference ViT and OGBench encoders.
+"""Final trainable LeWM JAX API.
 
-The JEPA/predictor/rollout organization follows ``dhidary/le-wm-jax`` at
-commit e52c1a0, whose inference port is parity-tested against released LeWM
-checkpoints. ``lewm_jax.reference`` preserves the Server-23-proven reference
-ViT training backend. The default exports below are the OGBench variants.
+The default exports are the Server-23-proven reference ViT implementation.
+The OGBench IMPALA implementation remains available under explicit ``Variant``
+names so it cannot be selected accidentally for a reproduction run.
 """
 
-from lewm_jax.losses import lewm_loss, sigreg_loss
-from lewm_jax.model import LeWM
+from lewm_jax.factory import (
+    REFERENCE_ARCHITECTURE,
+    VARIANT_ARCHITECTURE,
+    architecture_for_encoder,
+    build_model,
+    loss_for_architecture,
+    uses_imagenet_preprocessing,
+)
+from lewm_jax.losses import lewm_loss as variant_lewm_loss
+from lewm_jax.model import LeWM as VariantLeWM
+from lewm_jax.reference import LeWM, lewm_loss, sigreg_loss
 
-__all__ = ['LeWM', 'lewm_loss', 'sigreg_loss']
+__all__ = [
+    'LeWM',
+    'lewm_loss',
+    'sigreg_loss',
+    'VariantLeWM',
+    'variant_lewm_loss',
+    'REFERENCE_ARCHITECTURE',
+    'VARIANT_ARCHITECTURE',
+    'architecture_for_encoder',
+    'build_model',
+    'loss_for_architecture',
+    'uses_imagenet_preprocessing',
+]

@@ -1,10 +1,17 @@
-# Trainable LeWM variants
+# LeWM JAX: verified ViT reproduction and explicit CNN variant
 
-This package provides one LeWM action-conditioned latent predictor with two
-visual encoder choices:
+The public default (`from lewm_jax import LeWM`) is the verified reference
+ViT implementation. The model factory supports two explicit architectures:
 
-- `vit_tiny14`: ViT-Tiny/14 corresponding to the original LeWM architecture.
-- `impala_small`: the same OGBench IMPALA-small CNN used by visual GCIQL/HIQL.
+- `reference_vit_66d47b6`: ViT-Tiny/14 corresponding to the original LeWM
+  architecture and proven on Server 23 at a true batch size of 128.
+- `lewm_impala_variant`: the OGBench IMPALA-small CNN used by visual
+  GCIQL/HIQL, paired with the same LeWM predictor and objective.
+
+Use `--encoder=vit_tiny14` for paper reproduction and
+`--encoder=impala_small` for the CNN experiment. The architecture identifier is
+stored in every checkpoint and evaluation reconstructs the matching model;
+there is no implicit fallback between them.
 
 The formal `vit_tiny14` reproduction uses `reference.py`, restored from the
 Server-23-proven commit `66d47b6`: TwoRoom completed 10 epochs and the other
@@ -26,7 +33,7 @@ Equinox `Linear`, `LayerNorm`, and `BatchNorm1dEval` wrappers.
 - `impala_small` performs `/255` internally through the shared OGBench encoder.
 
 The ViT keeps the attention execution path proven by the first working JAX
-port: standard Flax Dense layers produce Q/K/V, tensors are explicitly laid
+port: explicit linear layers produce Q/K/V, tensors are explicitly laid
 out as `B,H,Q,D`, QK logits are bf16, softmax is evaluated in float32 and cast
 back to bf16, and probability-times-V is bf16. This avoids the much larger XLA
 backward temporary produced by the generic `B,Q,H,D` attention path at
