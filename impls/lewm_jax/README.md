@@ -46,6 +46,10 @@ projections, bf16 compute, and a 1%-warmup cosine schedule advanced once per
 optimizer update. All architecture and optimization values are written into
 the checkpoint config and restored explicitly by evaluation.
 
+The prediction MSE and SIGReg follow PyTorch bf16 autocast boundaries rather
+than converting all embeddings to fp32. SIGReg uses bf16 projected embeddings,
+fp32 trigonometric quadrature, then returns to bf16 for its final contraction.
+
 The reference dataset-goal evaluation uses the published configuration's
 default `history_len=1`, even though training clips contain three frames. This
 is kept deliberately for paper-protocol reproduction; a real-history-3 planner

@@ -8,9 +8,10 @@ import jax.numpy as jnp
 
 def sigreg_loss(embeddings, key, *, knots=17, num_proj=1024):
     """Single-device Sketch Isotropic Gaussian Regularizer."""
-    # PyTorch's transcendental reductions and MSE loss are accumulated in
-    # float32 under bf16 mixed precision. Make that boundary explicit in JAX.
-    projection = embeddings.astype(jnp.float32).transpose(1, 0, 2)
+    # Match PyTorch bf16 autocast: the projection matmul runs in bf16, the
+    # multiply by fp32 quadrature points promotes the trigonometric section to
+    # fp32, and the final matrix multiply returns to the embedding dtype.
+    projection = embeddings.transpose(1, 0, 2)
     directions = jax.random.normal(
         key, (projection.shape[-1], num_proj), dtype=jnp.float32
     )
@@ -21,12 +22,16 @@ def sigreg_loss(embeddings, key, *, knots=17, num_proj=1024):
     weights = weights.at[jnp.asarray([0, knots - 1])].set(dt)
     phi = jnp.exp(-(t**2) / 2.0)
     weights = weights * phi
-    projected = jnp.einsum('tbd,dp->tbp', projection, directions)
+    projected = jnp.einsum(
+        'tbd,dp->tbp', projection, directions.astype(projection.dtype)
+    )
     x_t = projected[..., None] * t
     error = (jnp.cos(x_t).mean(axis=1) - phi) ** 2
     error = error + jnp.sin(x_t).mean(axis=1) ** 2
     statistic = jnp.einsum(
-        'tpk,k->tp', error, weights
+        'tpk,k->tp',
+        error.astype(projection.dtype),
+        weights.astype(projection.dtype),
     ) * projection.shape[1]
     return statistic.mean()
 
@@ -65,8 +70,7 @@ def lewm_loss(
         updates = {'batch_stats': variables['batch_stats']}
 
     targets = embeddings[:, 1:]
-    prediction_error = predictions.astype(jnp.float32) - targets.astype(jnp.float32)
-    prediction_loss = jnp.mean(prediction_error**2)
+    prediction_loss = jnp.mean((predictions - targets) ** 2)
     regularizer = sigreg_loss(
         embeddings,
         sigreg_key,
