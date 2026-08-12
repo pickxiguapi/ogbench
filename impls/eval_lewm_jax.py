@@ -80,14 +80,24 @@ def worker_main(args):
         import flax
         import jax
         import jax.numpy as jnp
-        from lewm_jax import LeWM
+        from lewm_jax import LeWM as VariantLeWM
+        from lewm_jax.reference import LeWM as ReferenceLeWM
 
         payload = flax.serialization.msgpack_restore(Path(args.checkpoint).read_bytes())
         config = payload['config']
-        model = LeWM(
+        model_class = (
+            ReferenceLeWM
+            if config.get('architecture') == 'reference_vit_66d47b6'
+            else VariantLeWM
+        )
+        model_kwargs = dict(
             image_size=int(config['image_size']),
             embed_dim=int(config['embed_dim']),
             history_size=int(config['history_size']),
+            dtype=jnp.float32,
+        )
+        if model_class is VariantLeWM:
+            model_kwargs.update(
             encoder_name=config.get('encoder', 'vit_tiny14'),
             patch_size=int(config.get('patch_size', 14)),
             projector_hidden_dim=int(config.get('projector_hidden_dim', 2048)),
@@ -99,9 +109,9 @@ def worker_main(args):
             predictor_mlp_dim=int(config.get('predictor_mlp_dim', 2048)),
             predictor_dropout=float(config.get('predictor_dropout', 0.1)),
             predictor_emb_dropout=float(config.get('predictor_emb_dropout', 0.0)),
-            # Reference training uses bf16 autocast, but eval.py does not open
-            # an autocast context; checkpoint evaluation therefore runs fp32.
-            dtype=jnp.float32,
+            )
+        model = model_class(
+            **model_kwargs,
         )
         variables = {'params': payload['params'], 'batch_stats': payload['batch_stats']}
 
@@ -328,9 +338,17 @@ def main(args):
     actions = dataset.get_col_data('action')
     actions = actions[~np.isnan(actions).any(axis=1)]
     action_scaler = StandardScaler().fit(actions)
-    # Both JAX encoders receive the same raw uint8 RGB input. ViT performs
-    # ImageNet normalization inside the model; IMPALA performs /255 there.
-    image_transforms = [transforms.ToImage(), transforms.Resize(size=224)]
+    if checkpoint_payload['config'].get('architecture') == 'reference_vit_66d47b6':
+        image_transforms = [
+            transforms.ToImage(),
+            transforms.ToDtype(torch.float32, scale=True),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+            ),
+            transforms.Resize(size=224),
+        ]
+    else:
+        image_transforms = [transforms.ToImage(), transforms.Resize(size=224)]
     image_transform = transforms.Compose(image_transforms)
 
     solver = JAXLeWMCEMSolver(

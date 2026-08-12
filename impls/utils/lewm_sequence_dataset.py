@@ -18,6 +18,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+IMAGENET_MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
+
 def _fixed_list_to_numpy(column):
     """Convert a Lance/Arrow action column to a dense float32 array."""
     import pyarrow as pa
@@ -45,6 +48,7 @@ class LeWMSequenceDataset:
         train_fraction=0.9,
         seed=3072,
         decode_workers=6,
+        normalize_pixels=False,
     ):
         import lancedb
         from lancedb.permutation import Permutation
@@ -58,6 +62,7 @@ class LeWMSequenceDataset:
         self.num_steps = int(num_steps)
         self.frameskip = int(frameskip)
         self.span = self.num_steps * self.frameskip
+        self.normalize_pixels = bool(normalize_pixels)
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(decode_workers)))
 
         table = lancedb.connect(str(self.path.parent)).open_table(self.path.stem)
@@ -177,6 +182,9 @@ class LeWMSequenceDataset:
         pixels = self._fetch_pixels(pixel_rows.reshape(-1)).reshape(
             len(indices), self.num_steps, *self._fetch_image_shape(pixel_rows[0, 0])
         )
+        if self.normalize_pixels:
+            pixels = pixels.astype(np.float32) / 255.0
+            pixels = (pixels - IMAGENET_MEAN) / IMAGENET_STD
         action_rows = starts[:, None] + np.arange(self.span, dtype=np.int64)[None, :]
         actions = self._fetch_actions(action_rows.reshape(-1)).reshape(len(indices), self.span, self.action_dim)
         actions = (actions - self.action_mean) / self.action_std

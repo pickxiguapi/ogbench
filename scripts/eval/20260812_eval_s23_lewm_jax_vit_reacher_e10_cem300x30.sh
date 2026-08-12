@@ -3,7 +3,7 @@ set -euo pipefail
 
 OGBENCH_ROOT="/home/dzb/ogbench"
 STABLEWM_ROOT="/home/dzb/stable-worldmodel"
-EXP_NAME="LeWMJAX_vit_lance_reacher_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95"
+EXP_NAME="LeWMJAX_ref66_vit_lance_reacher_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95"
 RUN_DIR="/data/dzb/stablewm-data/lewm-jax-runs/${EXP_NAME}"
 OUTPUT_DIR="${RUN_DIR}/eval_cem300x30_seed42"
 

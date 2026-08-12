@@ -6,7 +6,10 @@ visual encoder choices:
 - `vit_tiny14`: ViT-Tiny/14 corresponding to the original LeWM architecture.
 - `impala_small`: the same OGBench IMPALA-small CNN used by visual GCIQL/HIQL.
 
-The JEPA, predictor, rollout, and SIGReg organization follows
+The formal `vit_tiny14` reproduction uses `reference.py`, restored from the
+Server-23-proven commit `66d47b6`: TwoRoom completed 10 epochs and the other
+three tasks completed five epochs at true batch 128 before interruption. The
+JEPA, predictor, rollout, and SIGReg organization also follows
 [`dhidary/le-wm-jax`](https://github.com/dhidary/le-wm-jax) at commit
 `e52c1a0`. That project provides strong inference/checkpoint parity evidence,
 but no training loop. This package therefore uses trainable Flax primitives
@@ -18,9 +21,8 @@ Equinox `Linear`, `LayerNorm`, and `BatchNorm1dEval` wrappers.
 - The source HDF5 `pixels` column is `uint8` RGB in HWC layout. The Lance
   conversion stores each frame as JPEG bytes (quality 95 by default), and the
   lazy loader decodes it back to `uint8` RGB HWC.
-- The public model interface is the same for both encoders: raw `uint8` RGB in
-  NHWC layout. Encoder-specific preprocessing is part of the model itself.
-- `vit_tiny14` performs `/255` and ImageNet normalization internally.
+- The formal ViT backend receives ImageNet-normalized float NHWC images,
+  matching the original LeWM preprocessing and its proven execution graph.
 - `impala_small` performs `/255` internally through the shared OGBench encoder.
 
 The ViT keeps the attention execution path proven by the first working JAX

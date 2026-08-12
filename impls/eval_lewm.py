@@ -171,7 +171,7 @@ def task_spec(task, data_root):
     raise ValueError(f'Unknown task: {task}')
 
 
-def agent_config(method):
+def agent_config(method, checkpoint_dir=None):
     if method == 'gciql':
         from agents.gciql import get_config
 
@@ -188,6 +188,23 @@ def agent_config(method):
     config.batch_size = 256
     config.encoder = 'impala_small'
     config.p_aug = 0.5
+
+    # Prefer the exact agent configuration saved with the checkpoint.  This is
+    # required for evaluations of tuned runs (for example, different HIQL
+    # temperatures or representation dimensions) and keeps the loader from
+    # silently reverting to the baseline defaults above.
+    if checkpoint_dir is not None:
+        flags_path = Path(checkpoint_dir) / 'flags.json'
+        if flags_path.is_file():
+            saved_agent = json.loads(flags_path.read_text()).get('agent', {})
+            if saved_agent.get('agent_name', config.agent_name) != config.agent_name:
+                raise ValueError(
+                    f'Checkpoint agent {saved_agent.get("agent_name")} does not match '
+                    f'requested method {method}.'
+                )
+            for key, value in saved_agent.items():
+                if key in config:
+                    config[key] = value
     return config
 
 
@@ -197,7 +214,7 @@ def load_agent(method, lance_path, checkpoint_dir, checkpoint_step):
     from utils.flax_utils import restore_agent
     from utils.lewm_dataset import LeWMLanceDataset
 
-    config = agent_config(method)
+    config = agent_config(method, checkpoint_dir)
     base = LeWMLanceDataset(
         lance_path, split='train', validation_fraction=0.05
     )

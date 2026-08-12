@@ -1,10 +1,9 @@
-"""Trainable Flax LeWM components for OGBench visual encoders.
+"""Trainable Flax LeWM components for reference ViT and OGBench encoders.
 
 The JEPA/predictor/rollout organization follows ``dhidary/le-wm-jax`` at
 commit e52c1a0, whose inference port is parity-tested against released LeWM
-checkpoints.  This package replaces the original ViT with OGBench's shared
-``impala_small`` encoder and uses trainable Flax primitives throughout, so it
-is an OGBench LeWM variant rather than a checkpoint-compatible port.
+checkpoints. ``lewm_jax.reference`` preserves the Server-23-proven reference
+ViT training backend. The default exports below are the OGBench variants.
 """
 
 from lewm_jax.losses import lewm_loss, sigreg_loss
