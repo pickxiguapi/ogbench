@@ -138,11 +138,11 @@ def task_spec(task, data_root):
             'callables': [
                 {
                     'method': '_set_state',
-                    'args': {'state': {'value': 'pos_agent'}},
+                    'args': {'state': {'value': 'proprio'}},
                 },
                 {
                     'method': '_set_goal_state',
-                    'args': {'goal_state': {'value': 'goal_pos_agent'}},
+                    'args': {'goal_state': {'value': 'goal_proprio'}},
                 },
             ],
         }

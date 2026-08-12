@@ -22,19 +22,30 @@ from utils.lewm_sequence_dataset import LeWMSequenceDataset
 
 @dataclass(frozen=True)
 class LeWMConfig:
-    reference_lewm_commit: str = '8edfeb3'
-    reference_stable_pretraining_version: str = '0.1.8'
+    architecture: str = 'lewm_predictor'
+    encoder: str = 'vit_tiny14'
     seed: int = 3072
-    epochs: int = 100
+    epochs: int = 10
     batch_size: int = 128
+    decode_workers: int = 6
     train_fraction: float = 0.9
     image_size: int = 224
-    patch_size: int = 14
     embed_dim: int = 192
+    patch_size: int = 14
     history_size: int = 3
     num_preds: int = 1
     frameskip: int = 5
+    projector_hidden_dim: int = 2048
+    action_smoothed_dim: int = 10
+    action_mlp_scale: int = 4
+    predictor_depth: int = 6
+    predictor_heads: int = 16
+    predictor_dim_head: int = 64
+    predictor_mlp_dim: int = 2048
+    predictor_dropout: float = 0.1
+    predictor_emb_dropout: float = 0.0
     learning_rate: float = 5e-5
+    lr_schedule: str = 'optimizer_step_warmup_cosine_1pct'
     weight_decay: float = 1e-3
     gradient_clip: float = 1.0
     sigreg_weight: float = 0.09
@@ -52,9 +63,10 @@ def parse_args():
     parser.add_argument('--dataset_path', required=True)
     parser.add_argument('--save_dir', required=True)
     parser.add_argument('--exp_name', required=True)
-    parser.add_argument('--decode_workers', type=int, default=8)
+    parser.add_argument('--decode_workers', type=int, default=6)
+    parser.add_argument('--encoder', choices=('vit_tiny14', 'impala_small'), default='vit_tiny14')
     parser.add_argument('--seed', type=int, default=3072)
-    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--frameskip', type=int, default=5)
     parser.add_argument('--learning_rate', type=float, default=5e-5)
@@ -65,24 +77,16 @@ def parse_args():
     return parser.parse_args()
 
 
-def reference_lr_schedule(base_lr, steps_per_epoch, total_steps):
-    """Match stable-pretraining 0.1.8 plus LeWM's ``interval='epoch'``.
-
-    The dependency derives warmup/max values from gradient-step counts, while
-    the reference LeWM config advances this scheduler once per epoch.  This
-    unusual combination is preserved deliberately instead of silently turning
-    it into a conventional per-step cosine schedule.
-    """
+def warmup_cosine_schedule(base_lr, total_steps):
+    """Standard optimizer-step warmup followed by cosine decay."""
     warmup_steps = max(1, int(0.01 * total_steps))
-
-    def schedule(update_step):
-        scheduler_epoch = update_step // steps_per_epoch
-        scheduler_epoch = scheduler_epoch.astype(jnp.float32)
-        warmup = base_lr * scheduler_epoch / warmup_steps
-        cosine_progress = (scheduler_epoch - warmup_steps) / max(1, total_steps - warmup_steps)
-        cosine = base_lr * (1.0 + jnp.cos(jnp.pi * cosine_progress)) / 2.0
-        return jnp.where(scheduler_epoch < warmup_steps, warmup, cosine)
-
+    schedule = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=base_lr,
+        warmup_steps=warmup_steps,
+        decay_steps=total_steps,
+        end_value=0.0,
+    )
     return schedule, warmup_steps
 
 
@@ -152,9 +156,11 @@ def save_model(state, path, epoch, config):
 def main():
     args = parse_args()
     config = LeWMConfig(
+        encoder=args.encoder,
         seed=args.seed,
         epochs=args.epochs,
         batch_size=args.batch_size,
+        decode_workers=args.decode_workers,
         frameskip=args.frameskip,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
@@ -173,13 +179,13 @@ def main():
         frameskip=config.frameskip,
         train_fraction=config.train_fraction,
         seed=config.seed,
-        decode_workers=args.decode_workers,
+        decode_workers=config.decode_workers,
     )
     steps_per_epoch = len(dataset.train_indices) // config.batch_size
     if steps_per_epoch < 1:
         raise ValueError('The training split is smaller than one full batch.')
     total_steps = config.epochs * steps_per_epoch
-    lr_schedule, warmup_steps = reference_lr_schedule(config.learning_rate, steps_per_epoch, total_steps)
+    lr_schedule, warmup_steps = warmup_cosine_schedule(config.learning_rate, total_steps)
     optimizer = optax.chain(
         optax.clip_by_global_norm(config.gradient_clip),
         optax.adamw(lr_schedule, weight_decay=config.weight_decay),
@@ -189,6 +195,17 @@ def main():
         image_size=config.image_size,
         embed_dim=config.embed_dim,
         history_size=config.history_size,
+        encoder_name=config.encoder,
+        patch_size=config.patch_size,
+        projector_hidden_dim=config.projector_hidden_dim,
+        action_smoothed_dim=config.action_smoothed_dim,
+        action_mlp_scale=config.action_mlp_scale,
+        predictor_depth=config.predictor_depth,
+        predictor_heads=config.predictor_heads,
+        predictor_dim_head=config.predictor_dim_head,
+        predictor_mlp_dim=config.predictor_mlp_dim,
+        predictor_dropout=config.predictor_dropout,
+        predictor_emb_dropout=config.predictor_emb_dropout,
         dtype=jnp.bfloat16,
     )
     rng = jax.random.PRNGKey(config.seed)
@@ -215,6 +232,7 @@ def main():
     parameter_count = sum(value.size for value in jax.tree_util.tree_leaves(state.params))
 
     print(f'exp_name={args.exp_name}')
+    print(f'encoder={config.encoder}')
     print(f'dataset={args.dataset_path}')
     print(f'clips train={len(dataset.train_indices)} val={len(dataset.val_indices)}')
     print(f'steps_per_epoch={steps_per_epoch} total_steps={total_steps} scheduler_warmup_steps={warmup_steps}')
@@ -235,13 +253,12 @@ def main():
         'total_seconds',
     ]
     start_time = time.time()
-    data_rng = np.random.default_rng(config.seed)
     with csv_path.open('w', newline='') as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         for epoch in range(1, config.epochs + 1):
             epoch_start = time.time()
-            shuffled = data_rng.permutation(dataset.train_indices)
+            shuffled = dataset.shuffled_train_indices()
             shuffled = shuffled[: steps_per_epoch * config.batch_size]
             train_rows = []
             for start in range(0, len(shuffled), config.batch_size):

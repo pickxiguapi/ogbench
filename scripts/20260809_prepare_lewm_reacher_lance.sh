@@ -4,7 +4,7 @@ set -euo pipefail
 cd /home/dzb/ogbench
 
 PYTHONPATH=/home/dzb/stable-worldmodel \
-  /home/dzb/ogbench/.venv/bin/python \
+  /home/dzb/stable-worldmodel/.venv/bin/python \
   scripts/convert_lewm_hdf5_to_lance.py \
   /home/dzb/stable-worldmodel \
   /data/dzb/stablewm-data/datasets/reacher.h5 \

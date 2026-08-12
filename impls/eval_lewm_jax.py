@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import pickle
+import re
 import struct
 import subprocess
 import sys
@@ -18,6 +19,13 @@ import numpy as np
 from eval_lewm import json_safe, sample_eval_starts, task_spec
 
 _HEADER = struct.Struct('!Q')
+
+
+def checkpoint_epoch(path):
+    match = re.search(r'weights_epoch_(\d+)\.msgpack$', str(path))
+    if match is None:
+        raise ValueError(f'Cannot infer epoch from checkpoint path: {path}')
+    return int(match.group(1))
 
 
 def _read_exact(stream, size):
@@ -60,6 +68,7 @@ def parse_args():
     parser.add_argument('--cem-num-samples', type=int, default=300)
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
+    parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--video-dir')
     parser.add_argument('--output')
     return parser.parse_args()
@@ -79,6 +88,17 @@ def worker_main(args):
             image_size=int(config['image_size']),
             embed_dim=int(config['embed_dim']),
             history_size=int(config['history_size']),
+            encoder_name=config.get('encoder', 'vit_tiny14'),
+            patch_size=int(config.get('patch_size', 14)),
+            projector_hidden_dim=int(config.get('projector_hidden_dim', 2048)),
+            action_smoothed_dim=int(config.get('action_smoothed_dim', 10)),
+            action_mlp_scale=int(config.get('action_mlp_scale', 4)),
+            predictor_depth=int(config.get('predictor_depth', 6)),
+            predictor_heads=int(config.get('predictor_heads', 16)),
+            predictor_dim_head=int(config.get('predictor_dim_head', 64)),
+            predictor_mlp_dim=int(config.get('predictor_mlp_dim', 2048)),
+            predictor_dropout=float(config.get('predictor_dropout', 0.1)),
+            predictor_emb_dropout=float(config.get('predictor_emb_dropout', 0.0)),
             # Reference training uses bf16 autocast, but eval.py does not open
             # an autocast context; checkpoint evaluation therefore runs fp32.
             dtype=jnp.float32,
@@ -86,10 +106,13 @@ def worker_main(args):
         variables = {'params': payload['params'], 'batch_stats': payload['batch_stats']}
 
         def plan_one(key, pixels, goals, initial_mean):
-            variance = jnp.ones_like(initial_mean)
+            # The reference names this tensor `var`, but samples with
+            # candidates = noise * var + mean and updates it with torch.std.
+            # It is therefore a standard deviation, initialized by var_scale.
+            std = jnp.full_like(initial_mean, args.cem_var_scale)
 
             def cem_step(_, carry):
-                key, mean, variance = carry
+                key, mean, std = carry
                 key, sample_key = jax.random.split(key)
                 candidates = (
                     jax.random.normal(
@@ -97,7 +120,7 @@ def worker_main(args):
                         (args.cem_num_samples, args.cem_horizon, initial_mean.shape[-1]),
                         dtype=jnp.float32,
                     )
-                    * variance[None]
+                    * std[None]
                     + mean[None]
                 )
                 candidates = candidates.at[0].set(mean)
@@ -112,13 +135,13 @@ def worker_main(args):
                 elites = candidates[elite_indices]
                 mean = elites.mean(axis=0)
                 # torch.std(dim=1) in the reference CEM uses Bessel correction.
-                variance = elites.std(axis=0, ddof=1)
-                return key, mean, variance
+                std = elites.std(axis=0, ddof=1)
+                return key, mean, std
 
-            _, mean, variance = jax.lax.fori_loop(
-                0, args.cem_steps, cem_step, (key, initial_mean, variance)
+            _, mean, std = jax.lax.fori_loop(
+                0, args.cem_steps, cem_step, (key, initial_mean, std)
             )
-            return mean, variance
+            return mean, std
 
         plan_one = jax.jit(plan_one)
         rng = jax.random.PRNGKey(args.seed)
@@ -172,6 +195,7 @@ class JAXLeWMCEMSolver:
         num_samples,
         steps,
         topk,
+        var_scale,
     ):
         import torch
 
@@ -179,6 +203,7 @@ class JAXLeWMCEMSolver:
         self._n_envs = None
         self._action_dim = None
         self._horizon = None
+        self._var_scale = float(var_scale)
         child_env = os.environ.copy()
         child_env['PYTHONPATH'] = str(Path(ogbench_root) / 'impls')
         child_env.pop('LD_LIBRARY_PATH', None)
@@ -199,6 +224,8 @@ class JAXLeWMCEMSolver:
             str(steps),
             '--cem-topk',
             str(topk),
+            '--cem-var-scale',
+            str(var_scale),
         ]
         self.process = subprocess.Popen(
             command,
@@ -292,6 +319,8 @@ def main(args):
     from torchvision.transforms import v2 as transforms
 
     spec = task_spec(args.task, stable_root / 'datasets')
+    import flax
+    checkpoint_payload = flax.serialization.msgpack_restore(Path(args.checkpoint).read_bytes())
     dataset = swm.data.load_dataset(str(spec['hdf5']))
     episodes, starts = sample_eval_starts(
         dataset, args.num_eval, args.goal_offset_steps, args.seed
@@ -299,14 +328,10 @@ def main(args):
     actions = dataset.get_col_data('action')
     actions = actions[~np.isnan(actions).any(axis=1)]
     action_scaler = StandardScaler().fit(actions)
-    image_transform = transforms.Compose(
-        [
-            transforms.ToImage(),
-            transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            transforms.Resize(size=224),
-        ]
-    )
+    # Both JAX encoders receive the same raw uint8 RGB input. ViT performs
+    # ImageNet normalization inside the model; IMPALA performs /255 there.
+    image_transforms = [transforms.ToImage(), transforms.Resize(size=224)]
+    image_transform = transforms.Compose(image_transforms)
 
     solver = JAXLeWMCEMSolver(
         args.checkpoint,
@@ -316,13 +341,16 @@ def main(args):
         num_samples=args.cem_num_samples,
         steps=args.cem_steps,
         topk=args.cem_topk,
+        var_scale=args.cem_var_scale,
     )
     world = None
     try:
         plan_config = swm.PlanConfig(
             horizon=args.cem_horizon,
             receding_horizon=args.cem_receding_horizon,
+            history_len=1,
             action_block=args.action_block,
+            warm_start=True,
         )
         policy = swm.policy.WorldModelPolicy(
             solver=solver,
@@ -357,7 +385,9 @@ def main(args):
     result = {
         'task': args.task,
         'method': 'lewm_jax',
+        'encoder': checkpoint_payload['config'].get('encoder', 'vit_tiny14'),
         'checkpoint': args.checkpoint,
+        'checkpoint_step': checkpoint_epoch(args.checkpoint),
         'seed': args.seed,
         'num_eval': args.num_eval,
         'goal_offset_steps': args.goal_offset_steps,
@@ -369,11 +399,19 @@ def main(args):
             'num_samples': args.cem_num_samples,
             'steps': args.cem_steps,
             'topk': args.cem_topk,
+            'var_scale': args.cem_var_scale,
+            'batch_size': 1,
+            'history_len': 1,
+            'warm_start': True,
         },
         'eval_episodes': episodes,
         'eval_start_steps': starts,
         'evaluation_time': elapsed,
         'metrics': metrics,
+        # Keep the complete Stable WM metrics while also exposing the two
+        # canonical dashboard fields at the top level.
+        'success_rate': metrics.get('success_rate'),
+        'episodes': args.num_eval,
     }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

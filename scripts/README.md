@@ -58,30 +58,15 @@ bash scripts/recorded_run.sh EXP-002 'GCIQL_ogbench_cube_single_bs256_s100k_seed
 
 以后评测新训练的 checkpoint 时，复制对应评测 Bash 为当天的新文件，写死新 checkpoint 目录和新 Run ID；不要修改这四个参考快照，也不要让评测自动猜测最新 checkpoint。
 
-## 英博云：JAX LeWM 原版四任务复现
+## Server 23：JAX LeWM ViT 十轮复现
 
-该组实验对应 `lucas-maes/le-wm@8edfeb3` 的模型、损失与官方超参数，并以该代码实际使用的 `stable-pretraining==0.1.8` 为依赖语义基准：ViT-Tiny/14、history 3、frameskip 5、batch 128、100 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）、bf16。训练从 Lance 懒加载像素序列；评测使用 dataset-goal 协议和原生 JAX CEM（300 samples、30 iterations、top-30），但仍保持官方 CEM 更新规则。
+该组 EXP-014 使用 ViT-Tiny/14、训练 history 3、frameskip 5、batch 128、10 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）和 bf16。训练从现有 JPEG95 Lance 数据懒加载像素序列；评测使用原版 dataset-goal 协议和 JAX CEM（history 1、300 samples、30 iterations、top-30、var scale 1.0）。IMPALA 是后续 encoder 消融，不属于原版复现。
 
 每个训练与评测必须作为同一个 pipeline Run 启动，HTML 中只占一行：
 
 ```bash
-cd /root/data/yyf/experiment-dashboard
-
-bash scripts/recorded_run.sh EXP-013 'LeWMJAX_lance_cube_single_bs128_e100_seed3072_fs5_h3_sigreg009_cem300x30' EXP-013-R01 \
-  --train bash /root/data/yyf/ogbench/scripts/train/20260811_train_yb_lewm_jax_cube_e100.sh \
-  --eval bash /root/data/yyf/ogbench/scripts/eval/20260811_eval_yb_lewm_jax_cube_e100_cem300x30.sh
-
-bash scripts/recorded_run.sh EXP-013 'LeWMJAX_lance_pusht_expert_bs128_e100_seed3072_fs5_h3_sigreg009_cem300x30' EXP-013-R02 \
-  --train bash /root/data/yyf/ogbench/scripts/train/20260811_train_yb_lewm_jax_pusht_e100.sh \
-  --eval bash /root/data/yyf/ogbench/scripts/eval/20260811_eval_yb_lewm_jax_pusht_e100_cem300x30.sh
-
-bash scripts/recorded_run.sh EXP-013 'LeWMJAX_lance_reacher_bs128_e100_seed3072_fs5_h3_sigreg009_cem300x30' EXP-013-R03 \
-  --train bash /root/data/yyf/ogbench/scripts/train/20260811_train_yb_lewm_jax_reacher_e100.sh \
-  --eval bash /root/data/yyf/ogbench/scripts/eval/20260811_eval_yb_lewm_jax_reacher_e100_cem300x30.sh
-
-bash scripts/recorded_run.sh EXP-013 'LeWMJAX_lance_tworoom_bs128_e100_seed3072_fs5_h3_sigreg009_cem300x30' EXP-013-R04 \
-  --train bash /root/data/yyf/ogbench/scripts/train/20260811_train_yb_lewm_jax_tworoom_e100.sh \
-  --eval bash /root/data/yyf/ogbench/scripts/eval/20260811_eval_yb_lewm_jax_tworoom_e100_cem300x30.sh
+cd /home/dzb/ogbench
+bash scripts/train/20260812_launch_s23_lewm_jax_vit_e10_four_tasks.sh
 ```
 
 JAX planner 的首次调用包含 XLA 编译成本；后续 replan 复用同一可执行图。不要把 MPPI 结果混入本组原版 CEM 基线，MPPI 应使用新的 EXP-ID 和固定 Bash 单独记录。
