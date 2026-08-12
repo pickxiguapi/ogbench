@@ -49,14 +49,37 @@ def memory_efficient_dot_product_attention(
     )
     if dropout_rate and not deterministic:
         raise ValueError('Fused LeWM ViT attention does not support attention dropout.')
-    return jax.nn.dot_product_attention(
+    if jax.default_backend() != 'gpu':
+        return jax.nn.dot_product_attention(
+            query, key, value, bias=bias, mask=mask, implementation='xla'
+        )
+
+    if bias is not None or mask is not None:
+        raise ValueError('LeWM ViT fused attention expects no bias or mask.')
+
+    # ViT-Tiny/14 has 256 patch tokens plus CLS = 257. cuDNN fused attention
+    # requires an aligned physical sequence length on RTX 3090. Pad the
+    # storage to a multiple of 8 while passing the true lengths, so padded
+    # keys never participate and the returned first 257 rows are exactly the
+    # original attention problem.
+    query_len = query.shape[1]
+    key_len = key.shape[1]
+    padded_query_len = ((query_len + 7) // 8) * 8
+    padded_key_len = ((key_len + 7) // 8) * 8
+    query = jnp.pad(query, ((0, 0), (0, padded_query_len - query_len), (0, 0), (0, 0)))
+    key = jnp.pad(key, ((0, 0), (0, padded_key_len - key_len), (0, 0), (0, 0)))
+    value = jnp.pad(value, ((0, 0), (0, padded_key_len - key_len), (0, 0), (0, 0)))
+    query_lengths = jnp.full((query.shape[0],), query_len, dtype=jnp.int32)
+    key_lengths = jnp.full((key.shape[0],), key_len, dtype=jnp.int32)
+    output = jax.nn.dot_product_attention(
         query,
         key,
         value,
-        bias=bias,
-        mask=mask,
-        implementation='cudnn' if jax.default_backend() == 'gpu' else 'xla',
+        query_seq_lengths=query_lengths,
+        key_value_seq_lengths=key_lengths,
+        implementation='cudnn',
     )
+    return output[:, :query_len]
 
 
 class ViTBlock(nn.Module):

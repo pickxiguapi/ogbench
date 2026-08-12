@@ -26,7 +26,10 @@ Equinox `Linear`, `LayerNorm`, and `BatchNorm1dEval` wrappers.
 The ViT keeps the reference Q/K/V and output projections but evaluates scaled
 dot-product attention with JAX's fused cuDNN kernel on CUDA. This avoids
 materializing every 257-by-257 attention map during the batch-128 backward
-pass; it does not change the checkpoint parameter tree or attention formula.
+pass. The physical CUDA sequence is padded from 257 to an aligned length and
+the true length is supplied to cuDNN, so padded tokens are masked and removed
+from the output. This does not change the checkpoint parameter tree or
+attention formula.
 
 The selected encoder is stored in every checkpoint. Evaluation restores both
 the encoder and its preprocessing from that field.
