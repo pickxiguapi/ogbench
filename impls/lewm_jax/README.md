@@ -23,13 +23,13 @@ Equinox `Linear`, `LayerNorm`, and `BatchNorm1dEval` wrappers.
 - `vit_tiny14` performs `/255` and ImageNet normalization internally.
 - `impala_small` performs `/255` internally through the shared OGBench encoder.
 
-The ViT keeps the reference mixed-precision attention path: QK logits are
-formed in bf16, softmax is evaluated in float32, probabilities are cast back
-to bf16, and the probability-times-V contraction is bf16. This is the same
-dtype transition used by the first working JAX port and avoids Flax's default
-`force_fp32_for_softmax` behavior, which otherwise keeps every normalized
-257-by-257 attention map and the following contraction in float32. The
-checkpoint parameter tree and attention formula are unchanged.
+The ViT keeps the attention execution path proven by the first working JAX
+port: standard Flax Dense layers produce Q/K/V, tensors are explicitly laid
+out as `B,H,Q,D`, QK logits are bf16, softmax is evaluated in float32 and cast
+back to bf16, and probability-times-V is bf16. This avoids the much larger XLA
+backward temporary produced by the generic `B,Q,H,D` attention path at
+batch 128. The checkpoint parameter tree and attention formula remain the
+HuggingFace ViT layout; only the implementation is made explicit.
 
 The selected encoder is stored in every checkpoint. Evaluation restores both
 the encoder and its preprocessing from that field.

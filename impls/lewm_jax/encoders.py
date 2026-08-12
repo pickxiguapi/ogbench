@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import flax.linen as nn
-import jax
 import jax.numpy as jnp
 
 from utils.encoders import encoder_modules
@@ -14,51 +13,45 @@ IMAGENET_MEAN = jnp.asarray([0.485, 0.456, 0.406], dtype=jnp.float32)
 IMAGENET_STD = jnp.asarray([0.229, 0.224, 0.225], dtype=jnp.float32)
 
 
-def reference_mixed_precision_attention(
-    query,
-    key,
-    value,
-    bias=None,
-    mask=None,
-    *,
-    broadcast_dropout=True,
-    dropout_rng=None,
-    dropout_rate=0.0,
-    deterministic=False,
-    dtype=None,
-    precision=None,
-    module=None,
-    force_fp32_for_softmax=False,
-    **unused_kwargs,
-):
-    """Match the mixed-precision attention path that ran in the first port.
+class ViTSelfAttention(nn.Module):
+    """Reference ViT attention with the proven B,H,Q,D XLA layout."""
 
-    Flax's ``force_fp32_for_softmax=True`` leaves the normalized attention
-    weights in float32, which also promotes the subsequent weights-times-value
-    contraction. The reference LeWM autocast path and our first working JAX
-    port compute softmax in fp32, then cast the probabilities back to bf16
-    before multiplying by V. Keeping that explicit cast is essential for the
-    published batch size of 128 on a 24 GiB RTX 3090.
-    """
-    del (
-        broadcast_dropout,
-        dropout_rng,
-        dtype,
-        precision,
-        module,
-        unused_kwargs,
-    )
-    depth = query.shape[-1]
-    logits = jnp.einsum('...qhd,...khd->...hqk', query, key) * (depth**-0.5)
-    if bias is not None:
-        logits = logits + bias
-    if mask is not None:
-        logits = jnp.where(mask, logits, jnp.finfo(logits.dtype).min)
-    weights = nn.softmax(logits.astype(jnp.float32), axis=-1).astype(query.dtype)
-    if dropout_rate and not deterministic:
-        keep = jax.random.bernoulli(dropout_rng, 1.0 - dropout_rate, weights.shape)
-        weights = weights * keep.astype(weights.dtype) / (1.0 - dropout_rate)
-    return jnp.einsum('...hqk,...khd->...qhd', weights, value)
+    dim: int = 192
+    heads: int = 3
+    dtype: Any = jnp.bfloat16
+
+    @nn.compact
+    def __call__(self, x):
+        normal_init = nn.initializers.normal(0.02)
+        projections = []
+        for name in ('query', 'key', 'value'):
+            projection = nn.Dense(
+                self.dim,
+                kernel_init=normal_init,
+                bias_init=nn.initializers.zeros,
+                dtype=self.dtype,
+                name=name,
+            )(x)
+            projection = projection.reshape(
+                projection.shape[0], projection.shape[1], self.heads, self.dim // self.heads
+            ).transpose(0, 2, 1, 3)
+            projections.append(projection)
+        query, key, value = projections
+        logits = jnp.einsum('bhqd,bhkd->bhqk', query, key) * (
+            (self.dim // self.heads) ** -0.5
+        )
+        weights = nn.softmax(logits.astype(jnp.float32), axis=-1).astype(self.dtype)
+        output = jnp.einsum('bhqk,bhkd->bhqd', weights, value)
+        output = output.transpose(0, 2, 1, 3).reshape(
+            output.shape[0], output.shape[2], self.dim
+        )
+        return nn.Dense(
+            self.dim,
+            kernel_init=normal_init,
+            bias_init=nn.initializers.zeros,
+            dtype=self.dtype,
+            name='output',
+        )(output)
 
 
 class ViTBlock(nn.Module):
@@ -73,16 +66,8 @@ class ViTBlock(nn.Module):
     def __call__(self, x):
         normal_init = nn.initializers.normal(0.02)
         y = nn.LayerNorm(epsilon=1e-12, dtype=self.dtype, name='layernorm_before')(x)
-        y = nn.SelfAttention(
-            num_heads=self.heads,
-            qkv_features=self.dim,
-            out_features=self.dim,
-            kernel_init=normal_init,
-            bias_init=nn.initializers.zeros,
-            force_fp32_for_softmax=True,
-            attention_fn=reference_mixed_precision_attention,
-            dtype=self.dtype,
-            name='attention',
+        y = ViTSelfAttention(
+            dim=self.dim, heads=self.heads, dtype=self.dtype, name='attention'
         )(y)
         x = x + y
         y = nn.LayerNorm(epsilon=1e-12, dtype=self.dtype, name='layernorm_after')(x)
