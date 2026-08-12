@@ -1,8 +1,10 @@
 import jax
 import jax.numpy as jnp
+import flax.linen as nn
 import pytest
 
 from lewm_jax import LeWM, lewm_loss
+from lewm_jax.encoders import memory_efficient_dot_product_attention
 from train_lewm import LeWMConfig
 
 
@@ -18,6 +20,17 @@ def test_reference_training_defaults():
     assert config.learning_rate == 5e-5
     assert config.weight_decay == 1e-3
     assert config.sigreg_weight == 0.09
+
+
+def test_fused_attention_cpu_matches_reference_attention():
+    query = jax.random.normal(jax.random.PRNGKey(0), (2, 7, 3, 8))
+    key = jax.random.normal(jax.random.PRNGKey(1), (2, 7, 3, 8))
+    value = jax.random.normal(jax.random.PRNGKey(2), (2, 7, 3, 8))
+    expected = nn.dot_product_attention(query, key, value, deterministic=True)
+    actual = memory_efficient_dot_product_attention(
+        query, key, value, deterministic=True
+    )
+    assert jnp.allclose(actual, expected, rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.parametrize(

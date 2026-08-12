@@ -5,12 +5,58 @@ from __future__ import annotations
 from typing import Any
 
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
 
 from utils.encoders import encoder_modules
 
 IMAGENET_MEAN = jnp.asarray([0.485, 0.456, 0.406], dtype=jnp.float32)
 IMAGENET_STD = jnp.asarray([0.229, 0.224, 0.225], dtype=jnp.float32)
+
+
+def memory_efficient_dot_product_attention(
+    query,
+    key,
+    value,
+    bias=None,
+    mask=None,
+    *,
+    broadcast_dropout=True,
+    dropout_rng=None,
+    dropout_rate=0.0,
+    deterministic=False,
+    dtype=None,
+    precision=None,
+    module=None,
+    force_fp32_for_softmax=False,
+    **unused_kwargs,
+):
+    """Use fused SDPA for ViT without materializing the full attention map.
+
+    LeWM's ViT attention has no dropout, bias, or mask.  The extra keyword
+    arguments are accepted because this function is passed through Flax's
+    ``SelfAttention`` interface.  On CUDA, JAX dispatches explicitly to the
+    cuDNN fused forward/backward implementation; CPU tests use the XLA path.
+    """
+    del (
+        broadcast_dropout,
+        dropout_rng,
+        dtype,
+        precision,
+        module,
+        force_fp32_for_softmax,
+        unused_kwargs,
+    )
+    if dropout_rate and not deterministic:
+        raise ValueError('Fused LeWM ViT attention does not support attention dropout.')
+    return jax.nn.dot_product_attention(
+        query,
+        key,
+        value,
+        bias=bias,
+        mask=mask,
+        implementation='cudnn' if jax.default_backend() == 'gpu' else 'xla',
+    )
 
 
 class ViTBlock(nn.Module):
@@ -32,6 +78,7 @@ class ViTBlock(nn.Module):
             kernel_init=normal_init,
             bias_init=nn.initializers.zeros,
             force_fp32_for_softmax=True,
+            attention_fn=memory_efficient_dot_product_attention,
             dtype=self.dtype,
             name='attention',
         )(y)
