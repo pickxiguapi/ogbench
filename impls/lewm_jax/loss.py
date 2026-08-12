@@ -1,4 +1,4 @@
-"""Prediction and SIGReg objectives for the IMPALA LeWM variant."""
+"""LeWM prediction and SIGReg objectives."""
 
 from __future__ import annotations
 

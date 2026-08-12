@@ -1,4 +1,4 @@
-"""LeWM latent predictor using OGBench's IMPALA-small visual encoder."""
+"""LeWM with OGBench's native IMPALA-small visual encoder."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from typing import Any
 import flax.linen as nn
 import jax.numpy as jnp
 
-from lewm_jax.impala.encoder import ImpalaSmallEncoder
-from lewm_jax.impala.modules import ARPredictor, ActionEmbedder, ProjectionMLP
+from lewm_jax.modules import ARPredictor, ActionEmbedder, ProjectionMLP
+from utils.encoders import encoder_modules
 
 
-class ImpalaLeWM(nn.Module):
+class LeWM(nn.Module):
     """End-to-end IMPALA-small encoder plus LeWM predictor."""
 
     image_size: int = 224
@@ -29,7 +29,7 @@ class ImpalaLeWM(nn.Module):
     dtype: Any = jnp.bfloat16
 
     def setup(self):
-        self.encoder = ImpalaSmallEncoder()
+        self.encoder = encoder_modules['impala_small']()
         self.projector = ProjectionMLP(
             self.embed_dim, hidden_dim=self.projector_hidden_dim, dtype=self.dtype
         )

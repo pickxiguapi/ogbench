@@ -1,4 +1,4 @@
-"""Train the JAX LeWM reproduction on an existing LeWM Lance dataset."""
+"""Train LeWM JAX with OGBench's IMPALA-small encoder on a Lance dataset."""
 
 from __future__ import annotations
 
@@ -16,20 +16,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.training import train_state
-from lewm_jax import (
-    REFERENCE_ARCHITECTURE,
-    architecture_for_encoder,
-    build_model,
-    loss_for_architecture,
-    uses_imagenet_preprocessing,
-)
+from lewm_jax import ARCHITECTURE, LeWM, lewm_loss
 from utils.lewm_sequence_dataset import LeWMSequenceDataset
 
 
 @dataclass(frozen=True)
 class LeWMConfig:
-    architecture: str = REFERENCE_ARCHITECTURE
-    encoder: str = 'vit_tiny14'
+    architecture: str = ARCHITECTURE
+    encoder: str = 'impala_small'
     seed: int = 3072
     epochs: int = 10
     batch_size: int = 128
@@ -70,7 +64,6 @@ def parse_args():
     parser.add_argument('--save_dir', required=True)
     parser.add_argument('--exp_name', required=True)
     parser.add_argument('--decode_workers', type=int, default=6)
-    parser.add_argument('--encoder', choices=('vit_tiny14', 'impala_small'), default='vit_tiny14')
     parser.add_argument('--seed', type=int, default=3072)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=128)
@@ -162,8 +155,6 @@ def save_model(state, path, epoch, config):
 def main():
     args = parse_args()
     config = LeWMConfig(
-        architecture=architecture_for_encoder(args.encoder),
-        encoder=args.encoder,
         seed=args.seed,
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -187,7 +178,7 @@ def main():
         train_fraction=config.train_fraction,
         seed=config.seed,
         decode_workers=config.decode_workers,
-        normalize_pixels=uses_imagenet_preprocessing(config),
+        normalize_pixels=False,
     )
     steps_per_epoch = len(dataset.train_indices) // config.batch_size
     if steps_per_epoch < 1:
@@ -199,8 +190,22 @@ def main():
         optax.adamw(lr_schedule, weight_decay=config.weight_decay),
     )
 
-    model = build_model(config, dtype=jnp.bfloat16)
-    loss_function = loss_for_architecture(config.architecture)
+    model = LeWM(
+        image_size=config.image_size,
+        embed_dim=config.embed_dim,
+        history_size=config.history_size,
+        projector_hidden_dim=config.projector_hidden_dim,
+        action_smoothed_dim=config.action_smoothed_dim,
+        action_mlp_scale=config.action_mlp_scale,
+        predictor_depth=config.predictor_depth,
+        predictor_heads=config.predictor_heads,
+        predictor_dim_head=config.predictor_dim_head,
+        predictor_mlp_dim=config.predictor_mlp_dim,
+        predictor_dropout=config.predictor_dropout,
+        predictor_emb_dropout=config.predictor_emb_dropout,
+        dtype=jnp.bfloat16,
+    )
+    loss_function = lewm_loss
     rng = jax.random.PRNGKey(config.seed)
     rng, params_key, dropout_key = jax.random.split(rng, 3)
     example = dataset.get_batch(dataset.train_indices[:2])

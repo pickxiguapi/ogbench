@@ -80,11 +80,29 @@ def worker_main(args):
         import flax
         import jax
         import jax.numpy as jnp
-        from lewm_jax import build_model
+        from lewm_jax import ARCHITECTURE, LeWM
 
         payload = flax.serialization.msgpack_restore(Path(args.checkpoint).read_bytes())
         config = payload['config']
-        model = build_model(config, dtype=jnp.float32)
+        if config.get('architecture') != ARCHITECTURE:
+            raise ValueError(
+                f'Checkpoint architecture {config.get("architecture")!r} is not {ARCHITECTURE!r}.'
+            )
+        model = LeWM(
+            image_size=int(config['image_size']),
+            embed_dim=int(config['embed_dim']),
+            history_size=int(config['history_size']),
+            projector_hidden_dim=int(config.get('projector_hidden_dim', 2048)),
+            action_smoothed_dim=int(config.get('action_smoothed_dim', 10)),
+            action_mlp_scale=int(config.get('action_mlp_scale', 4)),
+            predictor_depth=int(config.get('predictor_depth', 6)),
+            predictor_heads=int(config.get('predictor_heads', 16)),
+            predictor_dim_head=int(config.get('predictor_dim_head', 64)),
+            predictor_mlp_dim=int(config.get('predictor_mlp_dim', 2048)),
+            predictor_dropout=float(config.get('predictor_dropout', 0.1)),
+            predictor_emb_dropout=float(config.get('predictor_emb_dropout', 0.0)),
+            dtype=jnp.float32,
+        )
         variables = {'params': payload['params'], 'batch_stats': payload['batch_stats']}
 
         def plan_one(key, pixels, goals, initial_mean):
@@ -310,19 +328,7 @@ def main(args):
     actions = dataset.get_col_data('action')
     actions = actions[~np.isnan(actions).any(axis=1)]
     action_scaler = StandardScaler().fit(actions)
-    from lewm_jax import uses_imagenet_preprocessing
-
-    if uses_imagenet_preprocessing(checkpoint_payload['config']):
-        image_transforms = [
-            transforms.ToImage(),
-            transforms.ToDtype(torch.float32, scale=True),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),
-            transforms.Resize(size=224),
-        ]
-    else:
-        image_transforms = [transforms.ToImage(), transforms.Resize(size=224)]
+    image_transforms = [transforms.ToImage(), transforms.Resize(size=224)]
     image_transform = transforms.Compose(image_transforms)
 
     solver = JAXLeWMCEMSolver(
@@ -377,7 +383,7 @@ def main(args):
     result = {
         'task': args.task,
         'method': 'lewm_jax',
-        'encoder': checkpoint_payload['config'].get('encoder', 'vit_tiny14'),
+        'encoder': checkpoint_payload['config'].get('encoder', 'impala_small'),
         'checkpoint': args.checkpoint,
         'checkpoint_step': checkpoint_epoch(args.checkpoint),
         'seed': args.seed,
