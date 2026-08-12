@@ -14,7 +14,7 @@ IMAGENET_MEAN = jnp.asarray([0.485, 0.456, 0.406], dtype=jnp.float32)
 IMAGENET_STD = jnp.asarray([0.229, 0.224, 0.225], dtype=jnp.float32)
 
 
-def memory_efficient_dot_product_attention(
+def reference_mixed_precision_attention(
     query,
     key,
     value,
@@ -31,12 +31,14 @@ def memory_efficient_dot_product_attention(
     force_fp32_for_softmax=False,
     **unused_kwargs,
 ):
-    """Use fused SDPA for ViT without materializing the full attention map.
+    """Match the mixed-precision attention path that ran in the first port.
 
-    LeWM's ViT attention has no dropout, bias, or mask.  The extra keyword
-    arguments are accepted because this function is passed through Flax's
-    ``SelfAttention`` interface.  On CUDA, JAX dispatches explicitly to the
-    cuDNN fused forward/backward implementation; CPU tests use the XLA path.
+    Flax's ``force_fp32_for_softmax=True`` leaves the normalized attention
+    weights in float32, which also promotes the subsequent weights-times-value
+    contraction. The reference LeWM autocast path and our first working JAX
+    port compute softmax in fp32, then cast the probabilities back to bf16
+    before multiplying by V. Keeping that explicit cast is essential for the
+    published batch size of 128 on a 24 GiB RTX 3090.
     """
     del (
         broadcast_dropout,
@@ -44,42 +46,19 @@ def memory_efficient_dot_product_attention(
         dtype,
         precision,
         module,
-        force_fp32_for_softmax,
         unused_kwargs,
     )
+    depth = query.shape[-1]
+    logits = jnp.einsum('...qhd,...khd->...hqk', query, key) * (depth**-0.5)
+    if bias is not None:
+        logits = logits + bias
+    if mask is not None:
+        logits = jnp.where(mask, logits, jnp.finfo(logits.dtype).min)
+    weights = nn.softmax(logits.astype(jnp.float32), axis=-1).astype(query.dtype)
     if dropout_rate and not deterministic:
-        raise ValueError('Fused LeWM ViT attention does not support attention dropout.')
-    if jax.default_backend() != 'gpu':
-        return jax.nn.dot_product_attention(
-            query, key, value, bias=bias, mask=mask, implementation='xla'
-        )
-
-    if bias is not None or mask is not None:
-        raise ValueError('LeWM ViT fused attention expects no bias or mask.')
-
-    # ViT-Tiny/14 has 256 patch tokens plus CLS = 257. cuDNN fused attention
-    # requires an aligned physical sequence length on RTX 3090. Pad the
-    # storage to a multiple of 8 while passing the true lengths, so padded
-    # keys never participate and the returned first 257 rows are exactly the
-    # original attention problem.
-    query_len = query.shape[1]
-    key_len = key.shape[1]
-    padded_query_len = ((query_len + 7) // 8) * 8
-    padded_key_len = ((key_len + 7) // 8) * 8
-    query = jnp.pad(query, ((0, 0), (0, padded_query_len - query_len), (0, 0), (0, 0)))
-    key = jnp.pad(key, ((0, 0), (0, padded_key_len - key_len), (0, 0), (0, 0)))
-    value = jnp.pad(value, ((0, 0), (0, padded_key_len - key_len), (0, 0), (0, 0)))
-    query_lengths = jnp.full((query.shape[0],), query_len, dtype=jnp.int32)
-    key_lengths = jnp.full((key.shape[0],), key_len, dtype=jnp.int32)
-    output = jax.nn.dot_product_attention(
-        query,
-        key,
-        value,
-        query_seq_lengths=query_lengths,
-        key_value_seq_lengths=key_lengths,
-        implementation='cudnn',
-    )
-    return output[:, :query_len]
+        keep = jax.random.bernoulli(dropout_rng, 1.0 - dropout_rate, weights.shape)
+        weights = weights * keep.astype(weights.dtype) / (1.0 - dropout_rate)
+    return jnp.einsum('...hqk,...khd->...qhd', weights, value)
 
 
 class ViTBlock(nn.Module):
@@ -101,7 +80,7 @@ class ViTBlock(nn.Module):
             kernel_init=normal_init,
             bias_init=nn.initializers.zeros,
             force_fp32_for_softmax=True,
-            attention_fn=memory_efficient_dot_product_attention,
+            attention_fn=reference_mixed_precision_attention,
             dtype=self.dtype,
             name='attention',
         )(y)

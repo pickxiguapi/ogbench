@@ -23,13 +23,13 @@ Equinox `Linear`, `LayerNorm`, and `BatchNorm1dEval` wrappers.
 - `vit_tiny14` performs `/255` and ImageNet normalization internally.
 - `impala_small` performs `/255` internally through the shared OGBench encoder.
 
-The ViT keeps the reference Q/K/V and output projections but evaluates scaled
-dot-product attention with JAX's fused cuDNN kernel on CUDA. This avoids
-materializing every 257-by-257 attention map during the batch-128 backward
-pass. The physical CUDA sequence is padded from 257 to an aligned length and
-the true length is supplied to cuDNN, so padded tokens are masked and removed
-from the output. This does not change the checkpoint parameter tree or
-attention formula.
+The ViT keeps the reference mixed-precision attention path: QK logits are
+formed in bf16, softmax is evaluated in float32, probabilities are cast back
+to bf16, and the probability-times-V contraction is bf16. This is the same
+dtype transition used by the first working JAX port and avoids Flax's default
+`force_fp32_for_softmax` behavior, which otherwise keeps every normalized
+257-by-257 attention map and the following contraction in float32. The
+checkpoint parameter tree and attention formula are unchanged.
 
 The selected encoder is stored in every checkpoint. Evaluation restores both
 the encoder and its preprocessing from that field.
