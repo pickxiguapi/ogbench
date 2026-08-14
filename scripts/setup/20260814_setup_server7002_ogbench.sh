@@ -7,6 +7,8 @@ PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
 UV_CACHE_DIR="${UV_CACHE_DIR:-/home/yyf/.cache/uv}"
 DATA_DIR="${DATA_DIR:-/mnt/18T/yyf/ogbench-data}"
 DEFAULT_DATA_LINK="${HOME}/.ogbench/data"
+VENV_DIR="${VENV_DIR:-${OGBENCH_ROOT}/.venv-s23}"
+PYTHON_RUNTIME="${PYTHON_RUNTIME:-/mnt/18T/yyf/python/cpython-3.11.15-linux-x86_64-gnu/bin/python3.11}"
 
 [[ -x "$UV_BIN" ]] || { echo "ERROR: uv not found: ${UV_BIN}" >&2; exit 1; }
 [[ -x "$PYTHON_BIN" ]] || { echo "ERROR: Python not found: ${PYTHON_BIN}" >&2; exit 1; }
@@ -26,20 +28,20 @@ else
 fi
 
 cd "$OGBENCH_ROOT"
-UV_CACHE_DIR="$UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT="${OGBENCH_ROOT}/.venv" \
-  "$UV_BIN" sync --extra train --frozen --offline --python "$PYTHON_BIN"
+if [[ -e "${VENV_DIR}/bin/python" && ! -x "${VENV_DIR}/bin/python" && -x "$PYTHON_RUNTIME" ]]; then
+  ln -sfn "$PYTHON_RUNTIME" "${VENV_DIR}/bin/python"
+fi
+if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+  UV_CACHE_DIR="$UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT="$VENV_DIR" \
+    "$UV_BIN" sync --extra train --frozen --offline --python "$PYTHON_BIN"
+fi
 
-"${OGBENCH_ROOT}/.venv/bin/python" - <<'PY'
-from ogbench import download_datasets
+for name in visual-cube-single-noisy-v0 visual-cube-double-noisy-v0 visual-cube-triple-noisy-v0; do
+  [[ -s "${DATA_DIR}/${name}.npz" ]] || { echo "ERROR: dataset missing: ${DATA_DIR}/${name}.npz" >&2; exit 1; }
+  [[ -s "${DATA_DIR}/${name}-val.npz" ]] || { echo "ERROR: dataset missing: ${DATA_DIR}/${name}-val.npz" >&2; exit 1; }
+done
 
-download_datasets([
-    'visual-cube-single-noisy-v0',
-    'visual-cube-double-noisy-v0',
-    'visual-cube-triple-noisy-v0',
-])
-PY
-
-MUJOCO_GL=egl PYTHONPATH="$OGBENCH_ROOT" "${OGBENCH_ROOT}/.venv/bin/python" - <<'PY'
+MUJOCO_GL=egl PYTHONPATH="$OGBENCH_ROOT" "${VENV_DIR}/bin/python" - <<'PY'
 import jax
 import ogbench
 import gymnasium
