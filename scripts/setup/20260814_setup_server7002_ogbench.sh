@@ -4,7 +4,7 @@ set -euo pipefail
 OGBENCH_ROOT="${OGBENCH_ROOT:-/home/yyf/yyf/ogbench}"
 UV_BIN="${UV_BIN:-/home/yyf/.local/bin/uv}"
 PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
-UV_CACHE_DIR="${UV_CACHE_DIR:-/mnt/18T/yyf/ogbench-cache/uv}"
+UV_CACHE_DIR="${UV_CACHE_DIR:-/home/yyf/.cache/uv}"
 DATA_DIR="${DATA_DIR:-/mnt/18T/yyf/ogbench-data}"
 DEFAULT_DATA_LINK="${HOME}/.ogbench/data"
 
@@ -27,7 +27,7 @@ fi
 
 cd "$OGBENCH_ROOT"
 UV_CACHE_DIR="$UV_CACHE_DIR" UV_PROJECT_ENVIRONMENT="${OGBENCH_ROOT}/.venv" \
-  "$UV_BIN" sync --extra train --frozen --python "$PYTHON_BIN"
+  "$UV_BIN" sync --extra train --frozen --offline --python "$PYTHON_BIN"
 
 "${OGBENCH_ROOT}/.venv/bin/python" - <<'PY'
 from ogbench import download_datasets
