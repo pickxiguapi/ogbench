@@ -2,14 +2,14 @@
 set -euo pipefail
 
 OGBENCH_ROOT="/root/data/yyf/ogbench"
-STABLEWM_ROOT="/root/data/yyf/stable-worldmodel"
+DATA_ROOT="/root/data/yyf/stable-worldmodel/datasets"
 RUNS_ROOT="/root/data/yyf/lewm-runs"
 GPU_ID=3
 EXP_NAME="GCIQLChunkDDPGBC_ogbench_cube_single_k5_bs256_s100k_seed0_alpha1_expectile09_aug05"
 LOG_PATH="${RUNS_ROOT}/logs/${EXP_NAME}.log"
 
 [[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || { echo "ERROR: OGBench Python not found" >&2; exit 1; }
-[[ -d "${STABLEWM_ROOT}/datasets/cube_single_expert.lance" ]] || { echo "ERROR: Cube Lance dataset not found" >&2; exit 1; }
+[[ -d "${DATA_ROOT}/cube_single_expert.lance" ]] || { echo "ERROR: Cube Lance dataset not found" >&2; exit 1; }
 mkdir -p "${RUNS_ROOT}/wandb" "${RUNS_ROOT}/logs"
 cd "${OGBENCH_ROOT}/impls"
 
@@ -18,7 +18,7 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false \
 WANDB_DIR="${RUNS_ROOT}/wandb" \
 "${OGBENCH_ROOT}/.venv/bin/python" main.py \
   --env_name=visual-lewm-cube-single-expert-v0 \
-  --dataset_path="${STABLEWM_ROOT}/datasets/cube_single_expert.lance" \
+  --dataset_path="${DATA_ROOT}/cube_single_expert.lance" \
   --agent=agents/gciql_chunk.py \
   --agent.actor_loss=ddpgbc \
   --agent.alpha=1.0 \

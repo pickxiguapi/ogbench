@@ -24,4 +24,7 @@
 
 ## Github
 
-固定拉最新的https://github.com/pickxiguapi/ogbench
+- 正式开发与发布分支固定为 `main`，服务器、本地和 GitHub 均以 `https://github.com/pickxiguapi/ogbench` 的 `main` 为准。
+- `master` 仅用于镜像和对照上游 `https://github.com/seohongpark/ogbench` 的 `master`；禁止向 `master` 提交本地功能、实验脚本或修复。
+- 日常同步先更新 `origin/master`，再把确认需要的上游变更合入 `main`；不得在 `main` 与 `master` 双线开发。
+- 发布或同步服务器时必须明确使用 `main`，禁止依赖远端默认分支的隐式选择。

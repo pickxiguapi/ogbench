@@ -2,7 +2,7 @@
 set -euo pipefail
 
 OGBENCH_ROOT="/root/data/yyf/ogbench"
-STABLEWM_ROOT="/root/data/yyf/stable-worldmodel"
+DATA_ROOT="/root/data/yyf/stable-worldmodel/datasets"
 EXP_NAME="LeWMJAX_lance_tworoom_bs128_e100_seed3072_fs5_h3_sigreg009_cem300x30"
 RUN_DIR="/root/data/yyf/lewm-runs/${EXP_NAME}"
 CHECKPOINT="${RUN_DIR}/weights_epoch_100.msgpack"
@@ -11,10 +11,9 @@ OUTPUT_JSON="${OUTPUT_DIR}/tworoom.json"
 GPU_ID=3
 EGL_LIB_DIR="${OGBENCH_ROOT}/.runtime/libegl1/usr/lib/x86_64-linux-gnu"
 
-[[ -x "${STABLEWM_ROOT}/.venv/bin/python" ]] || { echo "ERROR: StableWM Python not found" >&2; exit 1; }
 [[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || { echo "ERROR: OGBench Python not found" >&2; exit 1; }
 [[ -s "${CHECKPOINT}" ]] || { echo "ERROR: LeWM epoch-100 checkpoint not found" >&2; exit 1; }
-[[ -f "${STABLEWM_ROOT}/datasets/tworoom.h5" ]] || { echo "ERROR: TwoRoom HDF5 not found" >&2; exit 1; }
+[[ -f "${DATA_ROOT}/tworoom.h5" ]] || { echo "ERROR: TwoRoom HDF5 not found" >&2; exit 1; }
 mkdir -p "${OUTPUT_DIR}/videos"
 cd "${OGBENCH_ROOT}/impls"
 
@@ -25,12 +24,11 @@ MUJOCO_GL=egl \
 PYOPENGL_PLATFORM=egl \
 EGL_PLATFORM=surfaceless \
 LD_LIBRARY_PATH="${EGL_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-PYTHONPATH="${STABLEWM_ROOT}:${OGBENCH_ROOT}/impls" \
-"${STABLEWM_ROOT}/.venv/bin/python" eval_lewm_jax.py \
+PYTHONPATH="${OGBENCH_ROOT}:${OGBENCH_ROOT}/impls" \
+"${OGBENCH_ROOT}/.venv/bin/python" eval_lewm_jax_cem.py \
   --task=tworoom \
   --checkpoint="${CHECKPOINT}" \
-  --stable-wm-root="${STABLEWM_ROOT}" \
-  --ogbench-root="${OGBENCH_ROOT}" \
+  --data-root="${DATA_ROOT}" \
   --num-eval=50 \
   --seed=42 \
   --goal-offset-steps=25 \

@@ -11,8 +11,8 @@ import wandb
 from absl import app, flags
 from agents import agents
 from ml_collections import config_flags
-from utils.datasets import Dataset, GCChunkDataset, GCDataset, HGCDataset, HIQLChunkDataset
-from utils.env_utils import make_env_and_datasets
+from utils.datasets import Dataset, GCChunkDataset, GCDataset, HGCDataset
+from utils.env_utils import DatasetSpecEnv, make_env_and_datasets
 from utils.evaluation import evaluate
 from utils.flax_utils import restore_agent, save_agent
 from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, get_wandb_video, setup_wandb
@@ -75,7 +75,6 @@ def main(_):
         'GCDataset': GCDataset,
         'GCChunkDataset': GCChunkDataset,
         'HGCDataset': HGCDataset,
-        'HIQLChunkDataset': HIQLChunkDataset,
     }[config['dataset_class']]
     train_base = train_dataset if getattr(train_dataset, 'lazy', False) else Dataset.create(**train_dataset)
     train_dataset = dataset_class(
@@ -115,6 +114,19 @@ def main(_):
     if FLAGS.eval_only and (FLAGS.restore_path is None or FLAGS.restore_epoch is None):
         raise ValueError('--eval_only requires --restore_path and --restore_epoch.')
 
+    dataset_only_env = isinstance(env.unwrapped, DatasetSpecEnv)
+    if dataset_only_env and FLAGS.eval_only:
+        raise ValueError(
+            '--eval_only is unavailable for a Lance training dataset. Use '
+            'eval_ogbench_agent_lewm_envs.py with the matching built-in LeWM environment.'
+        )
+    if dataset_only_env and (FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0):
+        print(
+            'Lance datasets provide training data but no online environment; '
+            'main.py will skip online evaluation. Use eval_ogbench_agent_lewm_envs.py '
+            'to evaluate the saved checkpoint.'
+        )
+
     # Train or evaluate agent.
     train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
     eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
@@ -141,7 +153,9 @@ def main(_):
             train_logger.log(train_metrics, step=i)
 
         # Evaluate agent.
-        should_evaluate = FLAGS.eval_only or FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0
+        should_evaluate = not dataset_only_env and (
+            FLAGS.eval_only or FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0
+        )
         if should_evaluate and (FLAGS.eval_only or i == 1 or i % FLAGS.eval_interval == 0):
             if FLAGS.eval_on_cpu:
                 eval_agent = jax.device_put(agent, device=jax.devices('cpu')[0])

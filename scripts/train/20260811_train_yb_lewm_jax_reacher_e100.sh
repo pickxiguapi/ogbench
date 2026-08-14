@@ -19,7 +19,7 @@ set +e
 CUDA_VISIBLE_DEVICES="${GPU_ID}" \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 JAX_PLATFORMS=cuda \
-"${OGBENCH_ROOT}/.venv/bin/python" train_lewm.py \
+"${OGBENCH_ROOT}/.venv/bin/python" train_lewm_jax.py \
   --dataset_path="${DATA_ROOT}/reacher.lance" \
   --save_dir="${RUN_DIR}" \
   --exp_name="${EXP_NAME}" \

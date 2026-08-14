@@ -14,7 +14,7 @@ mkdir -p "${RUN_DIR}"
 cd "${OGBENCH_ROOT}/impls"
 
 CUDA_VISIBLE_DEVICES=2 XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_PLATFORMS=cuda \
-"${OGBENCH_ROOT}/.venv/bin/python" train_lewm.py \
+"${OGBENCH_ROOT}/.venv/bin/python" train_lewm_jax.py \
   --dataset_path="${DATA_ROOT}/cube_single_expert.lance" \
   --save_dir="${RUN_DIR}" --exp_name="${EXP_NAME}" \
   --epochs=10 --batch_size=128 --seed=3072 \

@@ -1,8 +1,17 @@
-ogbench  # Use the PyPI version of OGBench. Replace this with `pip install -e .` if you want to use the local version.
-jax[cuda12] >= 0.4.26
-flax >= 0.8.4
-distrax >= 0.1.5
+-e ..  # Install this fork, including its local dataset and environment changes.
+jax[cuda12] == 0.4.33
+flax == 0.8.5
+distrax == 0.1.5
 ml_collections
 matplotlib
 moviepy
 wandb
+h5py
+hdf5plugin
+imageio[ffmpeg]
+lancedb == 0.36.0
+pylance == 9.0.1
+pillow
+pygame == 2.6.1
+pymunk == 7.1.0
+opencv-python-headless == 4.11.0.86

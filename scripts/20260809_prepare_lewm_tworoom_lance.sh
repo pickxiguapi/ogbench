@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd /home/dzb/ogbench
+OGBENCH_ROOT="${OGBENCH_ROOT:-/home/dzb/ogbench}"
+DATA_ROOT="${DATA_ROOT:-/data/dzb/stablewm-data/datasets}"
 
-PYTHONPATH=/home/dzb/stable-worldmodel \
-  /home/dzb/stable-worldmodel/.venv/bin/python \
-  scripts/convert_lewm_hdf5_to_lance.py \
-  /home/dzb/stable-worldmodel \
-  /data/dzb/stablewm-data/datasets/tworoom.h5 \
-  /data/dzb/stablewm-data/datasets/tworoom.lance
+cd "${OGBENCH_ROOT}"
+"${OGBENCH_ROOT}/.venv/bin/python" scripts/convert_lewm_hdf5_to_lance.py \
+  "${DATA_ROOT}/tworoom.h5" \
+  "${DATA_ROOT}/tworoom.lance"

@@ -4,12 +4,15 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "ogbench"
-version = "1.2.1"
-requires-python = ">=3.10"
+version = "1.2.1+pickxiguapi.1"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "mujoco >= 3.1.6",
     "dm_control >= 1.0.20",
     "gymnasium[mujoco]",
+    "pygame == 2.6.1",
+    "pymunk == 7.1.0",
+    "opencv-python-headless == 4.11.0.86",
 ]
 authors = [
     { name = "Seohong Park" },
@@ -35,6 +38,7 @@ train = [
     "wandb",
     "h5py",
     "hdf5plugin",
+    "imageio[ffmpeg]",
     "lancedb == 0.36.0",
     "pylance == 9.0.1",
     "pillow",
@@ -47,7 +51,7 @@ all = [
 ]
 
 [project.urls]
-Home = "https://github.com/seohongpark/ogbench"
+Home = "https://github.com/pickxiguapi/ogbench"
 
 [tool.ruff]
 target-version = "py310"

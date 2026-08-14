@@ -81,9 +81,11 @@ def evaluate(
             if not action_chunk:
                 sampled_actions = actor_fn(observations=observation, goals=goal, temperature=eval_temperature)
                 sampled_actions = np.array(sampled_actions)
-                chunk_size = config.get('chunk_size', 1)
-                if chunk_size > 1:
-                    action_chunk = list(sampled_actions.reshape(chunk_size, -1))
+                action_horizon = int(getattr(agent, 'action_horizon', 1))
+                if action_horizon < 1:
+                    raise ValueError(f'agent.action_horizon must be positive, got {action_horizon}.')
+                if action_horizon > 1:
+                    action_chunk = list(sampled_actions.reshape(action_horizon, -1))
                 else:
                     action_chunk = [sampled_actions]
             action = action_chunk.pop(0)

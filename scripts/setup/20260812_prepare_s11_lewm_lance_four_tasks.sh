@@ -2,11 +2,10 @@
 set -euo pipefail
 
 OGBENCH_ROOT="${OGBENCH_ROOT:-/home/yyf/ogbench}"
-STABLEWM_ROOT="${STABLEWM_ROOT:-/home/yyf/stable-worldmodel-yyf}"
 DATA_ROOT="${DATA_ROOT:-/data/yyf/H-LeWM/datasets}"
-STABLEWM_PYTHON="${STABLEWM_PYTHON:-/data/yyf/H-LeWM/envs/stable-worldmodel/bin/python}"
+OGBENCH_PYTHON="${OGBENCH_PYTHON:-/data/yyf/H-LeWM/envs/ogbench/bin/python}"
 
-[[ -x "${STABLEWM_PYTHON}" ]] || { echo "ERROR: StableWM Python not found" >&2; exit 1; }
+[[ -x "${OGBENCH_PYTHON}" ]] || { echo "ERROR: OGBench Python not found" >&2; exit 1; }
 [[ -f "${OGBENCH_ROOT}/scripts/convert_lewm_hdf5_to_lance.py" ]] || {
   echo "ERROR: converter not found under ${OGBENCH_ROOT}" >&2
   exit 1
@@ -26,9 +25,8 @@ convert_dataset() {
   echo "Converting ${source_path} -> ${target_path}"
   (
     cd "${OGBENCH_ROOT}"
-    PYTHONPATH="${STABLEWM_ROOT}" \
-    "${STABLEWM_PYTHON}" scripts/convert_lewm_hdf5_to_lance.py \
-      "${STABLEWM_ROOT}" "${source_path}" "${target_path}"
+    "${OGBENCH_PYTHON}" scripts/convert_lewm_hdf5_to_lance.py \
+      "${source_path}" "${target_path}"
   )
   touch "${complete_marker}"
   echo "DONE: ${target_path}"

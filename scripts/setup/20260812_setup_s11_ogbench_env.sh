@@ -4,10 +4,10 @@ set -euo pipefail
 OGBENCH_ROOT="${OGBENCH_ROOT:-/home/yyf/ogbench}"
 VENV_DIR="${VENV_DIR:-/data/yyf/H-LeWM/envs/ogbench}"
 UV_BIN="${UV_BIN:-/home/yyf/.local/bin/uv}"
-PYTHON_BIN="${PYTHON_BIN:-/data/yyf/H-LeWM/envs/stable-worldmodel/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3.11 || true)}"
 
 [[ -x "${UV_BIN}" ]] || { echo "ERROR: uv not found: ${UV_BIN}" >&2; exit 1; }
-[[ -x "${PYTHON_BIN}" ]] || { echo "ERROR: base Python not found: ${PYTHON_BIN}" >&2; exit 1; }
+[[ -n "${PYTHON_BIN}" && -x "${PYTHON_BIN}" ]] || { echo "ERROR: Python 3.11 not found: ${PYTHON_BIN}" >&2; exit 1; }
 [[ -f "${OGBENCH_ROOT}/pyproject.toml" ]] || { echo "ERROR: OGBench checkout not found: ${OGBENCH_ROOT}" >&2; exit 1; }
 
 cd "${OGBENCH_ROOT}"

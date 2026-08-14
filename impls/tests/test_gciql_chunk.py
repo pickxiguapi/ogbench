@@ -130,6 +130,19 @@ class GCChunkDatasetTest(unittest.TestCase):
         ):
             self.assertIs(getattr(GCIQLChunkAgent, method_name), getattr(GCIQLAgent, method_name), method_name)
 
+    def test_agent_declares_action_horizon_explicitly(self):
+        config = get_config()
+        config.encoder = None
+        config.chunk_size = 3
+        config.actor_hidden_dims = (16, 16)
+        config.value_hidden_dims = (16, 16)
+        observations = jnp.zeros((1, 4), dtype=jnp.float32)
+        actions = jnp.zeros((1, 6), dtype=jnp.float32)
+
+        agent = GCIQLChunkAgent.create(0, observations, actions, config)
+
+        self.assertEqual(agent.action_horizon, 3)
+
     def test_agent_updates_and_emits_flattened_action_chunk(self):
         config = get_config()
         config.encoder = None

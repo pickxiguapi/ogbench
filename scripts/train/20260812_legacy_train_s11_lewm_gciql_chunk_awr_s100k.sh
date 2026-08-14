@@ -42,15 +42,16 @@ esac
 }
 
 EXP_NAME="${EXPERIMENT_EXP_NAME:-GCIQLChunkAWR_ogbench_lewm_${TASK}_k5_bs256_s100k_seed0_alpha3_expectile09_aug05_s11}"
-LOG_DIR="${RUNS_ROOT}/logs"
+TASK_RUNS_ROOT="${RUNS_ROOT}/${TASK}"
+LOG_DIR="${TASK_RUNS_ROOT}/logs"
 LOG_PATH="${LOG_DIR}/${EXP_NAME}.log"
-mkdir -p "${RUNS_ROOT}/wandb" "${LOG_DIR}"
+mkdir -p "${TASK_RUNS_ROOT}/wandb" "${LOG_DIR}"
 cd "${OGBENCH_ROOT}/impls"
 
 export PYTHONPATH="${OGBENCH_ROOT}:${OGBENCH_ROOT}/impls${PYTHONPATH:+:${PYTHONPATH}}"
 
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-WANDB_DIR="${RUNS_ROOT}/wandb" \
+WANDB_DIR="${TASK_RUNS_ROOT}/wandb" \
 "${VENV_DIR}/bin/python" main.py \
   --env_name="${ENV_NAME}" \
   --dataset_path="${DATA_ROOT}/${DATASET_NAME}" \
@@ -66,10 +67,10 @@ WANDB_DIR="${RUNS_ROOT}/wandb" \
   --agent.encoder=impala_small \
   --agent.p_aug=0.5 \
   --train_steps=100000 \
-  --save_dir="${RUNS_ROOT}" \
+  --save_dir="${TASK_RUNS_ROOT}" \
   --log_interval=5000 \
   --save_interval=100000 \
-  --run_group=lewm-gciql-chunk-awr-k5-bs256-s100k-s11 \
+  --run_group="lewm-${TASK}-gciql-chunk-awr-k5-bs256-s100k-s11" \
   --wandb_mode="${WANDB_MODE}" \
   --seed=0 \
   --eval_episodes=0 \

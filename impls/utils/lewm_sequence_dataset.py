@@ -1,7 +1,7 @@
 """LeWM sequence batches read lazily from JPEG-backed Lance tables.
 
-This module mirrors ``stable_worldmodel.data.Dataset`` for the LeWM training
-case: four observations are sampled five environment steps apart, while the
+This module implements the LeWM sequence sampling convention directly:
+four observations are sampled five environment steps apart, while the
 five intervening actions are flattened into one action chunk per observation.
 The train/validation split is over clip indices (not episodes), matching
 ``torch.utils.data.random_split`` in the reference LeWM implementation.

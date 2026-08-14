@@ -10,6 +10,9 @@
 
 新实验不要修改旧脚本。复制所需命令到当天的新文件，写死 task、GPU、checkpoint、seed、超参数、输出目录和日志路径，并通过 `experiment-dashboard/scripts/recorded_run.sh` 启动。
 
+LeWM 数据文件的磁盘目录名可以沿用历史路径；这只是数据位置，不代表代码依赖。新的训练、转换和评测
+命令只能调用 OGBench Python，不得把 Stable World Model checkout 加入 `PYTHONPATH`，也不得调用它的 venv。
+
 ## 英博云：OGBench GCIQL 跑 LeWM 四任务
 
 参考配置：IMPALA-small、batch 256、alpha 1、p_aug 0.5、seed 0、100k steps、W&B offline。四个任务分别使用 GPU 4/5/6/7。以下四条命令可以分别放进 tmux 执行；真实训练 Bash 自身保持前台运行，并由记录器负责 started/completed/failed 事件。
@@ -58,15 +61,25 @@ bash scripts/recorded_run.sh EXP-002 'GCIQL_ogbench_cube_single_bs256_s100k_seed
 
 以后评测新训练的 checkpoint 时，复制对应评测 Bash 为当天的新文件，写死新 checkpoint 目录和新 Run ID；不要修改这四个参考快照，也不要让评测自动猜测最新 checkpoint。
 
-## Server 23：JAX LeWM ViT 十轮复现
+## Server 23：JAX LeWM IMPALA-small 十轮训练与评测
 
-该组 EXP-014 使用 ViT-Tiny/14、训练 history 3、frameskip 5、batch 128、10 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）和 bf16。训练从现有 JPEG95 Lance 数据懒加载像素序列；评测使用原版 dataset-goal 协议和 JAX CEM（history 1、300 samples、30 iterations、top-30、var scale 1.0）。IMPALA 是后续 encoder 消融，不属于原版复现。
+该组只使用 IMPALA-small encoder、训练 history 3、frameskip 5、batch 128、10 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）和 bf16。训练从 JPEG95 Lance 数据懒加载像素序列；评测使用 dataset-goal 协议和 JAX CEM（history 1、300 samples、30 iterations、top-30、var scale 1.0）。
 
 每个训练与评测必须作为同一个 pipeline Run 启动，HTML 中只占一行：
 
 ```bash
 cd /home/dzb/ogbench
-bash scripts/train/20260812_launch_s23_lewm_jax_vit_e10_four_tasks.sh
+bash scripts/train/20260812_launch_s23_lewm_jax_impala_e10_four_tasks.sh
 ```
 
 JAX planner 的首次调用包含 XLA 编译成本；后续 replan 复用同一可执行图。不要把 MPPI 结果混入本组原版 CEM 基线，MPPI 应使用新的 EXP-ID 和固定 Bash 单独记录。
+
+## LeWM 相关 Python 入口
+
+- `impls/train_lewm_jax.py`：训练 JAX LeWM（IMPALA-small）。
+- `impls/eval_lewm_jax_cem.py`：加载 JAX LeWM checkpoint，并在 OGBench 内置 LeWM 环境中使用 CEM 规划评测。
+- `impls/eval_ogbench_agent_lewm_envs.py`：加载 OGBench agent checkpoint，在同一套内置环境中评测。
+
+两个评测程序是完全独立的可执行文件，不互相导入；只共享 `ogbench.lewm_envs.evaluation` 中的数据起点、
+环境状态恢复、动作归一化和 rollout 协议。四个环境位于 `ogbench/lewm_envs/`，只使用 OGBench 的 Python
+环境，不再依赖 Stable World Model checkout、包或第二个 Python 子进程。数据目录通过 `--data-root` 显式指定。

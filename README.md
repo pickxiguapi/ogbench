@@ -270,15 +270,15 @@ ogbench.download_datasets(
 
 # Reference Implementations
 
-OGBench also provides JAX-based reference implementations of seven offline goal-conditioned RL algorithms
-(GCBC, GCIVL, GCIQL, QRL, CRL, HIQL, and the local HIQL-Chunk extension).
+OGBench also provides JAX-based implementations of seven offline goal-conditioned RL algorithms:
+the six upstream methods (GCBC, GCIVL, GCIQL, QRL, CRL, and HIQL) plus the local GCIQL-Chunk extension.
 They are provided in the `impls` directory as a **standalone** codebase.
 You can safely remove the other parts of the repository if you only need the reference implementations
 and do not want to modify the environments.
 
 ### Installation
 
-Our reference implementations require Python 3.9+ and additional dependencies, including `jax >= 0.4.26`.
+This fork supports Python 3.10--3.12 and pins JAX 0.4.33, Flax 0.8.5, and Distrax 0.1.5.
 To install these dependencies, run:
 
 ```shell
@@ -298,10 +298,10 @@ We provide implementations of the following offline goal-conditioned RL algorith
 - `gcbc.py`: Goal-Conditioned Behavioral Cloning (GCBC)
 - `gcivl.py`: Goal-Conditioned Implicit V-Learning (GCIVL)
 - `gciql.py`: Goal-Conditioned Implicit Q-Learning (GCIQL)
+- `gciql_chunk.py`: Goal-Conditioned Implicit Q-Learning over fixed action chunks (GCIQL-Chunk)
 - `qrl.py`: Quasimetric Reinforcement Learning (QRL)
 - `crl.py`: Contrastive Reinforcement Learning (CRL)
 - `hiql.py`: Hierarchical Implicit Q-Learning (HIQL)
-- `hiql_chunk.py`: Gaussian-policy Hierarchical Implicit Q-Learning with action chunks (HIQL-Chunk)
 
 To train an agent, you can run the `main.py` script.
 Training metrics, evaluation metrics, and videos are logged via `wandb` by default.
@@ -314,22 +314,33 @@ python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/gcbc.py
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/gcivl.py --agent.alpha=10.0
 # antmaze-large-navigate-v0 (GCIQL)
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/gciql.py --agent.alpha=0.3
+# visual-cube-single-play-v0 (GCIQL-Chunk)
+python main.py --env_name=visual-cube-single-play-v0 --agent=agents/gciql_chunk.py --agent.encoder=impala_small --agent.chunk_size=5
 # antmaze-large-navigate-v0 (QRL)
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/qrl.py --agent.alpha=0.003
 # antmaze-large-navigate-v0 (CRL)
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/crl.py --agent.alpha=0.1
 # antmaze-large-navigate-v0 (HIQL)
 python main.py --env_name=antmaze-large-navigate-v0 --agent=agents/hiql.py --agent.high_alpha=3.0 --agent.low_alpha=3.0
-# visual-cube-single-play-v0 (HIQL-Chunk)
-python main.py --env_name=visual-cube-single-play-v0 --agent=agents/hiql_chunk.py --agent.encoder=impala_small --agent.subgoal_steps=10 --agent.chunk_size=5 --agent.expectile=0.93
 ```
 
-HIQL-Chunk is continuous-action only. Its low-level policy predicts a flattened action chunk with the same constant-
-standard-deviation Gaussian actor used by HIQL; evaluation executes the chunk open-loop and replans at each chunk
-boundary. The archived launchers in `scripts/train/20260809_legacy_train_hiql_chunk_visual_*_s500k.sh` target the visual AntMaze, HumanoidMaze,
-Cube, Scene, and Puzzle environments on server 23. They use the small Impala encoder and representation gradients
-for the low-level actor. Random-crop augmentation is enabled only for visual manipulation environments, matching
-the OGBench visual HIQL settings.
+GCIQL-Chunk is continuous-action only. One policy call returns a fixed sequence of atomic actions;
+evaluation uses the agent's explicit `action_horizon` capability to execute that sequence open-loop.
+
+### Local LeWM entry points
+
+- `train_lewm_jax.py` trains the local JAX LeWM model with IMPALA-small.
+- `eval_lewm_jax_cem.py` evaluates a JAX LeWM checkpoint with CEM planning in the built-in LeWM environment suite.
+- `eval_ogbench_agent_lewm_envs.py` evaluates an OGBench policy checkpoint in the same built-in environment suite.
+
+The two evaluators are intentionally independent executables. Their entry points and experiment scripts live in
+this repository. Cube Single, PushT, TwoRoom, and Reacher are bundled under `ogbench.lewm_envs` and registered as
+`ogbench-lewm/...` Gymnasium environments. Evaluation uses one OGBench checkout and one Python environment; there
+is no runtime package, repository-path, or subprocess dependency on Stable World Model. Existing HDF5/Lance data
+may remain on any storage volume and is selected explicitly with `--data-root`.
+
+The fork-specific compatibility and checkpoint validation matrix is recorded in
+[RELEASE_AUDIT.md](RELEASE_AUDIT.md).
 
 Each run typically takes 2-5 hours (on state-based tasks)
 or 5-12 hours (on pixel-based tasks) on a single A5000 GPU.

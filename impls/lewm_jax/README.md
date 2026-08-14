@@ -1,8 +1,7 @@
 # LeWM JAX with OGBench IMPALA-small
 
 This directory contains one implementation only: LeWM with OGBench's native
-`encoder_modules['impala_small']()` visual encoder. There is no encoder factory
-and no ViT implementation in this package.
+`encoder_modules['impala_small']()` visual encoder. There is no alternate encoder factory.
 
 Only the visual encoder is replaced. The remaining model and objective retain
 the LeWM design:
@@ -23,11 +22,11 @@ Training:
 
 ```bash
 cd impls
-python train_lewm.py \
+python train_lewm_jax.py \
   --dataset_path=/path/to/task.lance \
   --save_dir=/path/to/run \
   --exp_name=LeWMJAX_impala_task_bs128_e10
 ```
 
 Evaluation reconstructs the same model only when the checkpoint architecture
-is `lewm_impala_small`; incompatible ViT checkpoints fail explicitly.
+is `lewm_impala_small`; checkpoints from other architectures fail explicitly.

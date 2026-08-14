@@ -12,6 +12,11 @@ class GCIQLChunkAgent(GCIQLAgent):
     so the critic bootstraps from ``s[t + k]`` with discount ``gamma ** k``.
     """
 
+    @property
+    def action_horizon(self):
+        """Number of atomic actions returned by one policy invocation."""
+        return int(self.config['chunk_size'])
+
     def critic_loss(self, batch, grad_params):
         """Compute the k-step IQL critic loss for a full action chunk."""
         next_v = self.network.select('value')(batch['next_observations'], batch['value_goals'])

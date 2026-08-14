@@ -2,14 +2,14 @@
 set -euo pipefail
 
 OGBENCH_ROOT="/root/data/yyf/ogbench"
-STABLEWM_ROOT="/root/data/yyf/stable-worldmodel"
+DATA_ROOT="/root/data/yyf/stable-worldmodel/datasets"
 RUNS_ROOT="/root/data/yyf/lewm-runs"
 GPU_ID=4
 EXP_NAME="HIQL_ogbench_tworoom_bs256_s100k_seed0_sg10_ha1_la3_lr1e4_rep10_aug02_repgrad"
 LOG_PATH="${RUNS_ROOT}/logs/${EXP_NAME}.log"
 
 [[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || { echo "ERROR: OGBench Python not found" >&2; exit 1; }
-[[ -d "${STABLEWM_ROOT}/datasets/tworoom.lance" ]] || { echo "ERROR: TwoRoom Lance dataset not found" >&2; exit 1; }
+[[ -d "${DATA_ROOT}/tworoom.lance" ]] || { echo "ERROR: TwoRoom Lance dataset not found" >&2; exit 1; }
 mkdir -p "${RUNS_ROOT}/wandb" "${RUNS_ROOT}/logs"
 cd "${OGBENCH_ROOT}/impls"
 
@@ -18,7 +18,7 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false \
 WANDB_DIR="${RUNS_ROOT}/wandb" \
 "${OGBENCH_ROOT}/.venv/bin/python" main.py \
   --env_name=visual-lewm-tworoom-v0 \
-  --dataset_path="${STABLEWM_ROOT}/datasets/tworoom.lance" \
+  --dataset_path="${DATA_ROOT}/tworoom.lance" \
   --agent=agents/hiql.py \
   --agent.batch_size=256 \
   --agent.lr=1e-4 \

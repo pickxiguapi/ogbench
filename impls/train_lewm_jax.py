@@ -1,4 +1,4 @@
-"""Train LeWM JAX with OGBench's IMPALA-small encoder on a Lance dataset."""
+"""Train the JAX LeWM model with OGBench's IMPALA-small encoder."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ class LeWMConfig:
     train_fraction: float = 0.9
     image_size: int = 224
     embed_dim: int = 192
-    patch_size: int = 14
     history_size: int = 3
     num_preds: int = 1
     frameskip: int = 5
@@ -183,6 +182,8 @@ def main():
     steps_per_epoch = len(dataset.train_indices) // config.batch_size
     if steps_per_epoch < 1:
         raise ValueError('The training split is smaller than one full batch.')
+    if not len(dataset.val_indices):
+        raise ValueError('The validation split is empty; provide more clips or lower the training fraction.')
     total_steps = config.epochs * steps_per_epoch
     lr_schedule, warmup_steps = warmup_cosine_schedule(config.learning_rate, total_steps)
     optimizer = optax.chain(

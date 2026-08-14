@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OGBENCH_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-STABLEWM_ROOT="/root/data/yyf/stable-worldmodel"
+DATA_ROOT="/root/data/yyf/stable-worldmodel/datasets"
 CHECKPOINT_DIR="/root/data/yyf/ogbench/checkpoints/lewm_gciql_s100k/reacher"
 CHECKPOINT_STEP=100000
 GPU_ID=7
@@ -14,8 +14,7 @@ EVAL_BUDGET=50
 OUTPUT_DIR="${CHECKPOINT_DIR}/eval_ff/seed_${SEED}"
 EGL_LIB_DIR="${OGBENCH_ROOT}/.runtime/libegl1/usr/lib/x86_64-linux-gnu"
 
-[[ -x "${STABLEWM_ROOT}/.venv/bin/python" ]] || {
-  echo "ERROR: StableWM Python not found: ${STABLEWM_ROOT}/.venv/bin/python" >&2
+[[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || {
   exit 1
 }
 [[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || {
@@ -31,8 +30,8 @@ EGL_LIB_DIR="${OGBENCH_ROOT}/.runtime/libegl1/usr/lib/x86_64-linux-gnu"
   exit 1
 }
 for dataset in reacher.h5 reacher.lance; do
-  [[ -e "${STABLEWM_ROOT}/datasets/${dataset}" ]] || {
-    echo "ERROR: dataset not found: ${STABLEWM_ROOT}/datasets/${dataset}" >&2
+  [[ -e "${DATA_ROOT}/${dataset}" ]] || {
+    echo "ERROR: dataset not found: ${DATA_ROOT}/${dataset}" >&2
     exit 1
   }
 done
@@ -47,14 +46,13 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" \
   PYOPENGL_PLATFORM=egl \
   EGL_PLATFORM=surfaceless \
   LD_LIBRARY_PATH="${EGL_LIB_DIR}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" \
-  PYTHONPATH="${STABLEWM_ROOT}:${OGBENCH_ROOT}/impls" \
-  "${STABLEWM_ROOT}/.venv/bin/python" eval_lewm.py \
+  PYTHONPATH="${OGBENCH_ROOT}:${OGBENCH_ROOT}/impls" \
+  "${OGBENCH_ROOT}/.venv/bin/python" eval_ogbench_agent_lewm_envs.py \
     --task reacher \
     --method gciql \
     --checkpoint-dir "${CHECKPOINT_DIR}" \
+    --data-root="${DATA_ROOT}" \
     --checkpoint-step "${CHECKPOINT_STEP}" \
-    --stable-wm-root "${STABLEWM_ROOT}" \
-    --ogbench-root "${OGBENCH_ROOT}" \
     --num-eval "${NUM_EVAL}" \
     --seed "${SEED}" \
     --goal-offset-steps "${GOAL_OFFSET_STEPS}" \
