@@ -4,7 +4,7 @@ set -euo pipefail
 OGBENCH_ROOT="/home/dzb/ogbench"
 RUNS_ROOT="/data/dzb/ogbench-native-runs"
 TMP_ROOT="/home/dzb/ogbench-tmp"
-RUN_GROUP="EXP018_HIQL_visual_scene_official_s500k"
+RUN_GROUP="EXP019_HIQL_visual_scene_official_s500k"
 LOG_PATH="${RUNS_ROOT}/logs/HIQL_ogbench_visual_scene_bs256_s500k_seed0_official.log"
 
 [[ -x "${OGBENCH_ROOT}/.venv/bin/python" ]] || { echo "ERROR: OGBench Python not found" >&2; exit 1; }

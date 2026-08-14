@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DASHBOARD_ROOT="/home/dzb/experiment-dashboard"
-RUN_GROUP="EXP018_HIQL_visual_cube_double_official_s500k"
+RUN_GROUP="EXP019_HIQL_visual_cube_double_official_s500k"
 GROUP_DIR="/data/dzb/ogbench-native-runs/OGBench/${RUN_GROUP}"
 RUN_DIR="$(find "${GROUP_DIR}" -mindepth 1 -maxdepth 1 -type d -name 'sd000_*' | sort | tail -n 1)"
 
