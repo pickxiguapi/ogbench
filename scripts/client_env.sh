@@ -5,14 +5,31 @@ case "$CLIENT_ID" in
 
     OGBENCH_ROOT=$CLIENT_ROOT/ogbench-new
     PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
-    DASHBOARD_ROOT=$CLIENT_ROOT/experiment-dashboard
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
     LEWM_DATA_ROOT=$CLIENT_ROOT/stable-worldmodel/datasets
     EGL_LIB_DIR=$CLIENT_ROOT/egl-runtime/root/usr/lib/x86_64-linux-gnu
+    ;;
+  23)
+    CLIENT_ROOT=/home/dzb
 
-    LEWM_RUNS_ROOT=$CLIENT_ROOT/lewm-runs
-    OGBENCH_NATIVE_RUNS_ROOT=$CLIENT_ROOT/ogbench-native-runs
-    HIQL_OFFICIAL_RUNS_ROOT=$CLIENT_ROOT/ogbench-hiql-official-runs
+    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
+
+    LEWM_DATA_ROOT=/data/dzb/stablewm-data/datasets
+    ;;
+  7002)
+    CLIENT_ROOT=/home/yyf/yyf
+
+    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    PYTHON_BIN=$OGBENCH_ROOT/.venv-s23/bin/python
+    ;;
+  11)
+    CLIENT_ROOT=/home/yyf
+
+    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    PYTHON_BIN=/data/yyf/H-LeWM/envs/ogbench/bin/python
+
+    LEWM_DATA_ROOT=/data/yyf/H-LeWM/datasets
     ;;
 esac
