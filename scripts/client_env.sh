@@ -17,6 +17,7 @@ case "$CLIENT_ID" in
     PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
 
     LEWM_DATA_ROOT=/data/dzb/stablewm-data/datasets
+    RUN_DIR=/data/dzb/stablewm-data/
     ;;
   7002)
     CLIENT_ROOT=/home/yyf/yyf

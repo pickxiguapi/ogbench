@@ -10,14 +10,22 @@
 - 每个 Bash 都必须保持极简，让人能快速看懂真实命令。禁止冗余的路径检查、重复变量、过度封装、多层函数以及仅为“看起来健壮”而增加的样板代码；命令本身能给出明确错误时，不再重复预检。
 - 每个 Bash 开头必须用中文注释写清楚：运行服务器、实验目的、任务范围、算法、训练量和关键特殊设置。注释应短而具体，不能只写“训练脚本”之类无信息描述。
 - 服务器专用 Bash 的文件名必须显式包含服务器标签，例如 `yb`、`s23`、`s11`、`server7002`；禁止仅靠硬编码路径猜运行位置。推荐格式为 `YYYYMMDD_<type>_<server>_<domain>_<algorithm>_<task-or-scope>_<budget>.sh`。
-- 同一服务器、同一算法、同一套关键超参，若脚本之间只差 task、环境名、数据集和 GPU，则必须合并为一个带 task 参数的极简脚本；例如四个 LeWM GCIQL 任务合并为 `YYYYMMDD_train_s23_lewm_gciql_task_s100k.sh`。任务映射应集中写在一个简短 `case` 中。
+- 同一服务器、同一算法、同一套关键超参，若脚本之间只差 task、环境名、数据集和 GPU，则必须合并为一个极简脚本；例如四个 LeWM GCIQL 任务合并为 `YYYYMMDD_train_s23_lewm_gciql_task_s100k.sh`。固定任务集需要一次依次跑完时使用下述并行数组加单层循环；确实需要由外层 launcher 独立分配单任务时，才使用 task 参数和简短 `case`。
 - 不同服务器、不同算法、不同训练量、不同关键超参、不同 checkpoint/seed 或不同实验目的不得为了少写文件而强行合并。此时一个 Bash 仍对应一个确定的实验配置；配置变化时新建带日期脚本，同日可追加 `_v2`、`_seed1` 等明确后缀。
-- 参数化仅用于合并上述“同配置多任务”重复脚本。禁止用 task/checkpoint/seed 参数矩阵、复杂循环、数组拼装或多层函数把不同实验塞进一个 Bash。
+- 参数化仅用于合并上述“同配置多任务”重复脚本。固定任务集的等长并行数组属于允许的任务映射；禁止用 task/checkpoint/seed 参数矩阵、复杂循环、动态数组拼装或多层函数把不同实验塞进一个 Bash。
 - 关键实验配置必须直接写在脚本中，包括服务器路径、算法、训练量、seed、关键超参和输出根目录。允许外层 launcher 分配 `CUDA_VISIBLE_DEVICES`；`EXPERIMENT_EXP_NAME`、`EXPERIMENT_RUN_ID` 只能作为可选的看板信息，脚本不得依赖它们才能运行。不得用大量 `${VAR:-default}` 隐藏实验设置。
 - Python 命令及其 flags 要在脚本中完整展开，方便只看这一个文件就复现实验。不要引入“几十个可选 Bash 参数”的抽象层。
 - 脚本在前台完成真实任务；禁止在脚本内部再用 `tmux`、`screen`、`nohup` 或后台 `&` 派生无法随记录器追踪的实验进程。
 - 每个脚本使用 `#!/usr/bin/env bash` 和 `set -euo pipefail`，真实任务在前台运行。直接运行时输出到当前终端；需要看板记录时由 `recorded_run.sh` 接管 stdout/stderr 和退出状态。脚本内不要重复 `tee` 同一份日志，只创建真实命令必需的输出目录。
 - 新增或修改后至少运行 `bash -n scripts/train/<script>.sh` 或 `bash -n scripts/eval/<script>.sh`。仍留在活跃目录、但仅为兼容历史调用的旧脚本必须使用 `YYYYMMDD_legacy_*.sh` 命名；移入 backup 的脚本保留原名。不得执行或复制 legacy/backup 脚本来发起新实验。
+
+### 固定多任务训练脚本格式
+
+- 固定任务集的批量训练脚本以 `scripts/train/20260819_train_s23_lewm_jax_impala_task_e10.sh` 为格式范本：中文单行注释先概括服务器、任务顺序、算法、训练量、batch size、seed 和关键设置，然后依次写 `CLIENT_ID`、`DATE=$(date +%Y-%m-%d)`、source `scripts/client_env.sh`、进入实现目录。
+- 任务差异用等长的 `envs`、`datasets`、`tags`、`gpus` 等小写并行数组集中表达，并用 `for i in "${!datasets[@]}"; do ... done` 单层循环按数组顺序依次训练。数组只放真正随任务变化的字段；算法、训练量和超参数仍直接写在 Python 命令中。
+- 每次循环先构造 `exp_name` 和 `run_dir`，再创建输出目录。`exp_name` 统一包含 `${DATE}`、`${CLIENT_ID}`、算法、数据格式、任务标签、batch size、训练量和 seed；`run_dir` 按算法归入 `RUN_DIR` 下的固定子目录。
+- GPU 通过命令前缀 `CUDA_VISIBLE_DEVICES=${gpus[$i]}` 明确分配；JAX、W&B 等运行环境变量紧邻真实 Python 命令。Python flags 按数据与输出、算法配置、训练配置、记录与评测配置分行，保持范本的紧凑展开风格。
+- 这类脚本默认在前台依次跑完整个固定任务集，不再保留必填 task 位置参数，也不在循环内部使用后台 `&`。若需要并行调度，应另建符合日期命名规则的轻量 launcher，而不是改变训练脚本的前台语义。
 
 ## Bash 清理与归档
 
