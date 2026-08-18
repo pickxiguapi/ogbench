@@ -29,7 +29,8 @@
 ## 服务器公共路径
 
 - 各服务器反复使用的稳定硬编码路径统一记录在 `scripts/client_env.sh`；实验 Bash 应先 source 该文件，再使用其中的路径变量，禁止在多个活跃脚本中重复散落同一客户端路径。
-- `client_env.sh` 除用于按 `CLIENT_ID`/hostname 选择服务器的极简 `case` 外，只能包含客户端身份和纯路径赋值；不得包含 GPU、task、环境名、算法、超参、`EXP_NAME`、日志名、路径检查、`mkdir`、`cd` 或任何训练/评测命令。
+- `CLIENT_ID` 只允许使用四个固定短 ID：英博云为 `yb`、Server 23 为 `23`、Server 7002 为 `7002`、Server 11 为 `11`；禁止使用 hostname、IP、长别名或其他拼写。
+- `client_env.sh` 除用于按 `CLIENT_ID` 选择服务器的极简 `case` 外，只能包含客户端身份和纯路径赋值；不得包含 GPU、task、环境名、算法、超参、`EXP_NAME`、日志名、路径检查、`mkdir`、`cd` 或任何训练/评测命令。
 - 只记录当前有效的公共路径。旧 checkout、一次性 release-audit 和废弃输出目录留在 backup 历史脚本中，不得作为当前客户端默认值。
 - 新增服务器时使用独立且清晰的服务器小节，并保持同一语义的变量名一致；服务器专属差异集中在 `client_env.sh`，实验配置仍留在各实验 Bash 中。
 

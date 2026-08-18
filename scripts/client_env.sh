@@ -1,7 +1,6 @@
-# 客户端公共路径。实验脚本先 source 本文件；新增服务器时追加一个 case 分支。
-case "${CLIENT_ID:-$(hostname)}" in
-  yb|cs-3ab64-052a9-server)
-    CLIENT_ID=yb
+# 客户端公共路径。CLIENT_ID 只允许 yb、23、7002、11；新增路径时补全对应分支。
+case "${CLIENT_ID:?请先设置 CLIENT_ID=yb|23|7002|11}" in
+  yb)
     CLIENT_ROOT=/root/data/yyf
 
     OGBENCH_ROOT=$CLIENT_ROOT/ogbench-new
@@ -19,5 +18,6 @@ case "${CLIENT_ID:-$(hostname)}" in
     HIQL_CHUNK_TWO_V_EVALS_ROOT=$CLIENT_ROOT/ogbench-hiql-chunk-two-v-evals
     HIQL_OFFICIAL_RUNS_ROOT=$CLIENT_ROOT/ogbench-hiql-official-runs
     ;;
-  *) echo "未知服务器，请在 scripts/client_env.sh 中登记" >&2; return 1 2>/dev/null || exit 1 ;;
+  23|7002|11) echo "CLIENT_ID=$CLIENT_ID 的路径尚未登记" >&2; return 1 2>/dev/null || exit 1 ;;
+  *) echo "CLIENT_ID 只允许 yb、23、7002、11" >&2; return 1 2>/dev/null || exit 1 ;;
 esac
