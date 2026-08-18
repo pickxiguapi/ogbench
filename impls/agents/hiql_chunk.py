@@ -1,4 +1,4 @@
-"""HIQL with separate high/low values and a fixed-length low-level action chunk."""
+"""Hierarchical IQL with a GCIQL-style fixed-length low-level action chunk."""
 
 import flax
 import flax.linen as nn
@@ -14,16 +14,14 @@ from utils.networks import GCActor, GCValue, Identity, LengthNormalize, MLP
 
 
 class HIQLChunkAgent(HIQLAgent):
-    """HIQL whose low-level policy emits a length-k continuous action chunk.
+    """HIQL whose low level is GCIQL-Chunk AWR over continuous action chunks.
 
     The high-level planner keeps the original OGBench HIQL objective, but it
-    has its own value ``V_H(s, g)``.  The low level uses an independent value
-    ``V_L(s, z)`` trained on k-step goal-conditioned macro-transitions and an
-    AWR actor that predicts the demonstrated chunk ``a[t:t + k]``.
-
-    This intentionally does not add HiQC's explicit chunk critic or flow
-    policy.  It isolates the effect of chunked execution while preventing the
-    global-goal and latent-subgoal value objectives from sharing one head.
+    has its own value ``V_H(s, g)``.  The low level mirrors GCIQL-Chunk: an
+    action-conditioned twin critic ``Q_L(s, z, a[t:t + k])``, an expectile
+    value ``V_L(s, z)``, and AWR weighted by ``min(Q_L) - V_L``.  Its critic
+    uses the exact discounted k-step return and bootstraps from ``s[t + k]``
+    with ``discount ** k``.
     """
 
     @property
@@ -31,38 +29,20 @@ class HIQLChunkAgent(HIQLAgent):
         """Number of atomic actions returned by one policy invocation."""
         return int(self.config['chunk_size'])
 
-    def _value_loss(self, batch, grad_params, *, level):
-        """Compute an IVL loss for one independently parameterized value."""
-        if level == 'high':
-            module_name = 'high_value'
-            target_name = 'target_high_value'
-            next_observations = batch['next_observations']
-            goals = batch['value_goals']
-            rewards = batch['rewards']
-            masks = batch['masks']
-            discount = self.config['discount']
-        elif level == 'low':
-            module_name = 'low_value'
-            target_name = 'target_low_value'
-            next_observations = batch['low_actor_next_observations']
-            goals = batch['low_actor_goals']
-            rewards = batch['low_value_rewards']
-            masks = batch['low_value_masks']
-            discount = self.config['discount'] ** self.config['chunk_size']
-        else:
-            raise ValueError(f'Unknown value level: {level}.')
-
-        next_v1_t, next_v2_t = self.network.select(target_name)(next_observations, goals)
+    def high_value_loss(self, batch, grad_params):
+        """Compute the original one-step HIQL value objective for global goals."""
+        goals = batch['value_goals']
+        next_v1_t, next_v2_t = self.network.select('target_high_value')(batch['next_observations'], goals)
         next_v_t = jnp.minimum(next_v1_t, next_v2_t)
-        q = rewards + discount * masks * next_v_t
+        q = batch['rewards'] + self.config['discount'] * batch['masks'] * next_v_t
 
-        v1_t, v2_t = self.network.select(target_name)(batch['observations'], goals)
+        v1_t, v2_t = self.network.select('target_high_value')(batch['observations'], goals)
         v_t = (v1_t + v2_t) / 2
         adv = q - v_t
 
-        q1 = rewards + discount * masks * next_v1_t
-        q2 = rewards + discount * masks * next_v2_t
-        v1, v2 = self.network.select(module_name)(batch['observations'], goals, params=grad_params)
+        q1 = batch['rewards'] + self.config['discount'] * batch['masks'] * next_v1_t
+        q2 = batch['rewards'] + self.config['discount'] * batch['masks'] * next_v2_t
+        v1, v2 = self.network.select('high_value')(batch['observations'], goals, params=grad_params)
         v = (v1 + v2) / 2
 
         value_loss1 = self.expectile_loss(adv, q1 - v1, self.config['expectile']).mean()
@@ -76,23 +56,52 @@ class HIQLChunkAgent(HIQLAgent):
             'adv': adv.mean(),
         }
 
-    def high_value_loss(self, batch, grad_params):
-        """Compute the original one-step HIQL value objective for global goals."""
-        return self._value_loss(batch, grad_params, level='high')
-
     def low_value_loss(self, batch, grad_params):
-        """Compute a k-step IVL objective for latent low-level subgoals."""
-        return self._value_loss(batch, grad_params, level='low')
+        """Fit V_L to an expectile of the target low-level chunk critic."""
+        q1, q2 = self.network.select('target_low_critic')(
+            batch['observations'], batch['low_actor_goals'], batch['actions']
+        )
+        q = jnp.minimum(q1, q2)
+        v = self.network.select('low_value')(
+            batch['observations'], batch['low_actor_goals'], params=grad_params
+        )
+        adv = q - v
+        value_loss = self.expectile_loss(adv, adv, self.config['low_expectile']).mean()
+        return value_loss, {
+            'value_loss': value_loss,
+            'v_mean': v.mean(),
+            'v_max': v.max(),
+            'v_min': v.min(),
+            'adv': adv.mean(),
+        }
 
-    def low_actor_loss(self, batch, grad_params):
-        """Compute low-level AWR on demonstrated action chunks using V_L."""
-        v1, v2 = self.network.select('low_value')(batch['observations'], batch['low_actor_goals'])
-        nv1, nv2 = self.network.select('low_value')(
+    def low_critic_loss(self, batch, grad_params):
+        """Fit Q_L to the exact k-step return plus a V_L bootstrap."""
+        next_v = self.network.select('low_value')(
             batch['low_actor_next_observations'], batch['low_actor_goals']
         )
-        v = (v1 + v2) / 2
-        nv = (nv1 + nv2) / 2
-        adv = nv - v
+        chunk_discount = self.config['discount'] ** self.config['chunk_size']
+        target_q = batch['low_value_rewards'] + chunk_discount * batch['low_value_masks'] * next_v
+        q1, q2 = self.network.select('low_critic')(
+            batch['observations'], batch['low_actor_goals'], batch['actions'], params=grad_params
+        )
+        critic_loss = ((q1 - target_q) ** 2 + (q2 - target_q) ** 2).mean()
+        return critic_loss, {
+            'critic_loss': critic_loss,
+            'q_mean': target_q.mean(),
+            'q_max': target_q.max(),
+            'q_min': target_q.min(),
+            'chunk_reward_mean': batch['low_value_rewards'].mean(),
+        }
+
+    def low_actor_loss(self, batch, grad_params):
+        """Compute GCIQL-Chunk AWR on demonstrated low-level action chunks."""
+        v = self.network.select('low_value')(batch['observations'], batch['low_actor_goals'])
+        q1, q2 = self.network.select('low_critic')(
+            batch['observations'], batch['low_actor_goals'], batch['actions']
+        )
+        q = jnp.minimum(q1, q2)
+        adv = q - v
 
         exp_a = jnp.minimum(jnp.exp(adv * self.config['low_alpha']), 100.0)
         goal_reps = self.network.select('goal_rep')(
@@ -151,6 +160,7 @@ class HIQLChunkAgent(HIQLAgent):
         for name, loss_fn in (
             ('high_value', self.high_value_loss),
             ('low_value', self.low_value_loss),
+            ('low_critic', self.low_critic_loss),
             ('low_actor', self.low_actor_loss),
             ('high_actor', self.high_actor_loss),
         ):
@@ -171,7 +181,7 @@ class HIQLChunkAgent(HIQLAgent):
 
     @jax.jit
     def update(self, batch):
-        """Apply Adam first, then EMA-update both target values."""
+        """Apply Adam, then update the high value and low critic targets."""
         new_rng, rng = jax.random.split(self.rng)
 
         def loss_fn(grad_params):
@@ -179,12 +189,12 @@ class HIQLChunkAgent(HIQLAgent):
 
         new_network, info = self.network.apply_loss_fn(loss_fn=loss_fn)
         self._target_update(new_network, 'high_value', self.config['tau'])
-        self._target_update(new_network, 'low_value', self.config['tau'])
+        self._target_update(new_network, 'low_critic', self.config['tau'])
         return self.replace(network=new_network, rng=new_rng), info
 
     @classmethod
     def create(cls, seed, ex_observations, ex_actions, config):
-        """Create a continuous-action HIQL-Chunk agent with separate V_H/V_L."""
+        """Create continuous hierarchical IQL with a GCIQL-Chunk low level."""
         if config['discrete']:
             raise ValueError('HIQLChunkAgent currently supports continuous action spaces only.')
 
@@ -214,11 +224,19 @@ class HIQLChunkAgent(HIQLAgent):
                 return GCEncoder(state_encoder=encoder_module(), concat_encoder=goal_rep_def)
             return GCEncoder(state_encoder=Identity(), concat_encoder=goal_rep_def)
 
-        def make_value():
+        def make_high_value():
             return GCValue(
                 hidden_dims=config['value_hidden_dims'],
                 layer_norm=config['layer_norm'],
                 ensemble=True,
+                gc_encoder=make_value_encoder(),
+            )
+
+        def make_low_value(*, ensemble):
+            return GCValue(
+                hidden_dims=config['value_hidden_dims'],
+                layer_norm=config['layer_norm'],
+                ensemble=ensemble,
                 gc_encoder=make_value_encoder(),
             )
 
@@ -246,10 +264,11 @@ class HIQLChunkAgent(HIQLAgent):
 
         network_info = {
             'goal_rep': (goal_rep_def, jnp.concatenate([ex_observations, ex_goals], axis=-1)),
-            'high_value': (make_value(), (ex_observations, ex_goals)),
-            'target_high_value': (make_value(), (ex_observations, ex_goals)),
-            'low_value': (make_value(), (ex_observations, ex_goals)),
-            'target_low_value': (make_value(), (ex_observations, ex_goals)),
+            'high_value': (make_high_value(), (ex_observations, ex_goals)),
+            'target_high_value': (make_high_value(), (ex_observations, ex_goals)),
+            'low_value': (make_low_value(ensemble=False), (ex_observations, ex_goals)),
+            'low_critic': (make_low_value(ensemble=True), (ex_observations, ex_goals, ex_actions)),
+            'target_low_critic': (make_low_value(ensemble=True), (ex_observations, ex_goals, ex_actions)),
             'low_actor': (low_actor_def, (ex_observations, ex_goals)),
             'high_actor': (high_actor_def, (ex_observations, ex_goals)),
         }
@@ -257,7 +276,7 @@ class HIQLChunkAgent(HIQLAgent):
         network_args = {name: item[1] for name, item in network_info.items()}
         params = network_def.init(init_rng, **network_args)['params']
         params['modules_target_high_value'] = params['modules_high_value']
-        params['modules_target_low_value'] = params['modules_low_value']
+        params['modules_target_low_critic'] = params['modules_low_critic']
         network = TrainState.create(network_def, params, tx=optax.adam(config['lr']))
         return cls(rng, network=network, config=flax.core.FrozenDict(**config))
 
@@ -268,5 +287,6 @@ def get_config():
     config.agent_name = 'hiql_chunk'
     config.dataset_class = 'HIQLChunkDataset'
     config.chunk_size = 5
+    config.low_expectile = 0.9
     config.discrete = False
     return config

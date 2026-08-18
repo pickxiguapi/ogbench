@@ -81,23 +81,22 @@ class HIQLChunkAgentTest(unittest.TestCase):
         self.assertEqual(config.agent_name, 'hiql_chunk')
         self.assertEqual(config.dataset_class, 'HIQLChunkDataset')
         self.assertEqual(config.chunk_size, 5)
+        self.assertEqual(config.low_expectile, 0.9)
         self.assertFalse(config.discrete)
-        self.assertEqual(set(config.keys()), set(base_config.keys()) | {'chunk_size'})
+        self.assertEqual(set(config.keys()), set(base_config.keys()) | {'chunk_size', 'low_expectile'})
         for key in base_config:
             if key not in {'agent_name', 'dataset_class'}:
                 self.assertEqual(config[key], base_config[key], key)
 
-    def test_agent_has_independent_high_and_low_values_and_targets(self):
+    def test_agent_has_hiql_high_value_and_gciql_low_critic_value(self):
         agent, _ = self.make_agent(chunk_size=3)
         param_names = set(agent.network.params)
         self.assertIn('modules_high_value', param_names)
         self.assertIn('modules_target_high_value', param_names)
         self.assertIn('modules_low_value', param_names)
-        self.assertIn('modules_target_low_value', param_names)
-        self.assertNotEqual(
-            id(agent.network.params['modules_high_value']),
-            id(agent.network.params['modules_low_value']),
-        )
+        self.assertIn('modules_low_critic', param_names)
+        self.assertIn('modules_target_low_critic', param_names)
+        self.assertNotIn('modules_target_low_value', param_names)
 
     def test_agent_emits_flattened_chunk_and_declares_horizon(self):
         agent, _ = self.make_agent(chunk_size=3)
@@ -107,26 +106,62 @@ class HIQLChunkAgentTest(unittest.TestCase):
         self.assertEqual(agent.action_horizon, 3)
         self.assertEqual(sampled_actions.shape, (1, 6))
 
-    def test_low_actor_advantage_uses_low_value_and_chunk_next_observation(self):
+    def test_low_actor_advantage_is_chunk_q_minus_v(self):
         agent, _ = self.make_agent(chunk_size=3)
+        observations = jnp.zeros((2, 4), dtype=jnp.float32)
+        goals = jnp.full_like(observations, 2.0)
+        actions = jnp.zeros((2, 6), dtype=jnp.float32)
+        batch = {
+            'observations': observations,
+            'low_actor_goals': goals,
+            'actions': actions,
+        }
+
+        _, info = agent.low_actor_loss(batch, grad_params=None)
+        v = agent.network.select('low_value')(observations, goals)
+        q1, q2 = agent.network.select('low_critic')(observations, goals, actions)
+        expected_adv = (jnp.minimum(q1, q2) - v).mean()
+
+        np.testing.assert_allclose(info['adv'], expected_adv, rtol=1e-6)
+
+    def test_low_critic_uses_exact_chunk_return_and_k_step_bootstrap(self):
+        agent, config = self.make_agent(chunk_size=3)
         observations = jnp.zeros((2, 4), dtype=jnp.float32)
         chunk_next = jnp.ones_like(observations)
         goals = jnp.full_like(observations, 2.0)
         actions = jnp.zeros((2, 6), dtype=jnp.float32)
         batch = {
             'observations': observations,
-            'next_observations': jnp.full_like(observations, 99.0),
             'low_actor_next_observations': chunk_next,
             'low_actor_goals': goals,
             'actions': actions,
+            'low_value_rewards': jnp.asarray([-2.0, -1.0]),
+            'low_value_masks': jnp.asarray([1.0, 0.0]),
         }
 
-        _, info = agent.low_actor_loss(batch, grad_params=None)
-        v1, v2 = agent.network.select('low_value')(observations, goals)
-        nv1, nv2 = agent.network.select('low_value')(chunk_next, goals)
-        expected_adv = (((nv1 + nv2) - (v1 + v2)) / 2).mean()
+        loss, info = agent.low_critic_loss(batch, grad_params=None)
+        next_v = agent.network.select('low_value')(chunk_next, goals)
+        target_q = batch['low_value_rewards'] + config.discount**config.chunk_size * batch['low_value_masks'] * next_v
+        q1, q2 = agent.network.select('low_critic')(observations, goals, actions)
+        expected_loss = ((q1 - target_q) ** 2 + (q2 - target_q) ** 2).mean()
 
-        np.testing.assert_allclose(info['adv'], expected_adv, rtol=1e-6)
+        np.testing.assert_allclose(loss, expected_loss, rtol=1e-6)
+        np.testing.assert_allclose(info['q_mean'], target_q.mean(), rtol=1e-6)
+
+    def test_low_value_is_expectile_regression_on_target_chunk_q(self):
+        agent, config = self.make_agent(chunk_size=3)
+        observations = jnp.zeros((2, 4), dtype=jnp.float32)
+        goals = jnp.ones_like(observations)
+        actions = jnp.zeros((2, 6), dtype=jnp.float32)
+        batch = {'observations': observations, 'low_actor_goals': goals, 'actions': actions}
+
+        loss, _ = agent.low_value_loss(batch, grad_params=None)
+        q1, q2 = agent.network.select('target_low_critic')(observations, goals, actions)
+        v = agent.network.select('low_value')(observations, goals)
+        adv = jnp.minimum(q1, q2) - v
+        expected_loss = agent.expectile_loss(adv, adv, config.low_expectile).mean()
+
+        np.testing.assert_allclose(loss, expected_loss, rtol=1e-6)
 
     def test_full_update_reports_both_value_levels(self):
         agent, config = self.make_agent(chunk_size=3)
@@ -140,6 +175,7 @@ class HIQLChunkAgentTest(unittest.TestCase):
         self.assertEqual(int(updated_agent.network.step), int(agent.network.step) + 1)
         self.assertIn('high_value/value_loss', info)
         self.assertIn('low_value/value_loss', info)
+        self.assertIn('low_critic/critic_loss', info)
 
     def test_impala_small_visual_update_smoke(self):
         config = get_config()
