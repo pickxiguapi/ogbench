@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Server 23 only. Usage: .../recorded_run.sh EXP-ID EXP_NAME RUN-ID -- bash "$0" {cube|pusht|reacher|tworoom}
+# Server 23：LeWM 四任务 GCIQL 基线，训练 100k；任务为 cube、pusht、reacher 或 tworoom。
 task="${1:?task: cube|pusht|reacher|tworoom}"
 case "$task" in
   cube)    env=visual-lewm-cube-single-expert-v0; dataset=cube_single_expert.lance; gpu=0 ;;
