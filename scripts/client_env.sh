@@ -14,8 +14,6 @@ case "${CLIENT_ID:?请先设置 CLIENT_ID=yb|23|7002|11}" in
 
     LEWM_RUNS_ROOT=$CLIENT_ROOT/lewm-runs
     OGBENCH_NATIVE_RUNS_ROOT=$CLIENT_ROOT/ogbench-native-runs
-    HIQL_CHUNK_TWO_V_RUNS_ROOT=$CLIENT_ROOT/ogbench-hiql-chunk-two-v-runs
-    HIQL_CHUNK_TWO_V_EVALS_ROOT=$CLIENT_ROOT/ogbench-hiql-chunk-two-v-evals
     HIQL_OFFICIAL_RUNS_ROOT=$CLIENT_ROOT/ogbench-hiql-official-runs
     ;;
   23|7002|11) echo "CLIENT_ID=$CLIENT_ID 的路径尚未登记" >&2; return 1 2>/dev/null || exit 1 ;;
