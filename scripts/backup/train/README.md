@@ -13,3 +13,5 @@ current launch entry points.
 
 The four `20260812_train_s23_lewm_jax_impala_*_e10.sh` files were likewise
 consolidated into `scripts/train/20260819_train_s23_lewm_jax_impala_task_e10.sh`.
+The old `20260812_launch_s23_lewm_jax_impala_e10_four_tasks.sh` launcher was
+archived because the consolidated script now runs all four tasks itself.

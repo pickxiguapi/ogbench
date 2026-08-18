@@ -65,11 +65,11 @@ bash scripts/recorded_run.sh EXP-002 'GCIQL_ogbench_cube_single_bs256_s100k_seed
 
 该组只使用 IMPALA-small encoder、训练 history 3、frameskip 5、batch 128、10 epochs、AdamW 5e-5/1e-3、SIGReg 0.09（17 knots、1024 projections）和 bf16。训练从 JPEG95 Lance 数据懒加载像素序列；评测使用 dataset-goal 协议和 JAX CEM（history 1、300 samples、30 iterations、top-30、var scale 1.0）。
 
-每个训练与评测必须作为同一个 pipeline Run 启动，HTML 中只占一行：
+训练脚本按 Cube、PushT、Reacher、TwoRoom 顺序依次执行：
 
 ```bash
 cd /home/dzb/ogbench
-bash scripts/train/20260812_launch_s23_lewm_jax_impala_e10_four_tasks.sh
+bash scripts/train/20260819_train_s23_lewm_jax_impala_task_e10.sh
 ```
 
 JAX planner 的首次调用包含 XLA 编译成本；后续 replan 复用同一可执行图。不要把 MPPI 结果混入本组原版 CEM 基线，MPPI 应使用新的 EXP-ID 和固定 Bash 单独记录。
