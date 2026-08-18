@@ -11,7 +11,7 @@ import wandb
 from absl import app, flags
 from agents import agents
 from ml_collections import config_flags
-from utils.datasets import Dataset, GCChunkDataset, GCDataset, HGCDataset
+from utils.datasets import Dataset, GCChunkDataset, GCDataset, HGCDataset, HIQLChunkDataset
 from utils.env_utils import DatasetSpecEnv, make_env_and_datasets
 from utils.evaluation import evaluate
 from utils.flax_utils import restore_agent, save_agent
@@ -75,6 +75,7 @@ def main(_):
         'GCDataset': GCDataset,
         'GCChunkDataset': GCChunkDataset,
         'HGCDataset': HGCDataset,
+        'HIQLChunkDataset': HIQLChunkDataset,
     }[config['dataset_class']]
     train_base = train_dataset if getattr(train_dataset, 'lazy', False) else Dataset.create(**train_dataset)
     train_dataset = dataset_class(

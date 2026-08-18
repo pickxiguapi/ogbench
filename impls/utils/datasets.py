@@ -486,3 +486,80 @@ class HGCDataset(GCDataset):
                 )
 
         return batch
+
+
+@dataclasses.dataclass
+class HIQLChunkDataset(HGCDataset):
+    """HIQL sampler with an atomic high level and a chunked low level.
+
+    The high-level value fields remain the atomic transition produced by
+    :class:`HGCDataset`.  The low level receives the flattened sequence
+    ``a[t:t + k]``, the endpoint ``s[t + k]``, and an exact discounted k-step
+    goal-conditioned return for its independent value function.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        chunk_size = self.config['chunk_size']
+        if chunk_size < 1:
+            raise ValueError(f'chunk_size must be positive, got {chunk_size}.')
+        if 'valids' not in self.dataset or 'next_observations' in self.dataset:
+            raise ValueError('HIQLChunkDataset requires a compact dataset with a valids field.')
+
+        all_idxs = np.arange(self.size)
+        valid = all_idxs + chunk_size < self.size
+        atomic_valids = np.asarray(self.dataset['valids'])
+        for offset in range(chunk_size):
+            offset_idxs = np.minimum(all_idxs + offset, self.size - 1)
+            valid &= atomic_valids[offset_idxs] > 0
+
+        self.chunk_valid_mask = valid
+        self.chunk_valid_idxs = all_idxs[valid]
+        if len(self.chunk_valid_idxs) == 0:
+            raise ValueError(f'Dataset does not contain any complete action chunks of length {chunk_size}.')
+
+    def sample(self, batch_size, idxs=None, evaluation=False):
+        """Sample atomic high-level/value fields and chunked low-level fields."""
+        if idxs is None:
+            idxs = self.chunk_valid_idxs[np.random.randint(len(self.chunk_valid_idxs), size=batch_size)]
+        else:
+            idxs = np.asarray(idxs)
+            if np.any(idxs < 0) or np.any(idxs >= self.size) or np.any(~self.chunk_valid_mask[idxs]):
+                raise ValueError('Explicit sample indices must identify complete, valid action chunks.')
+
+        # Suppress the parent augmentation so every temporal view receives one
+        # consistent crop below, including the new s[t + k] low-level input.
+        batch = super().sample(batch_size, idxs=idxs, evaluation=True)
+
+        chunk_size = self.config['chunk_size']
+        chunk_idxs = idxs[:, None] + np.arange(chunk_size)[None, :]
+        batch['actions'] = jax.tree_util.tree_map(
+            lambda arr: arr[chunk_idxs].reshape(batch_size, -1), self.dataset['actions']
+        )
+        batch['low_actor_next_observations'] = self.get_observations(idxs + chunk_size)
+
+        final_state_idxs = self.terminal_locs[np.searchsorted(self.terminal_locs, idxs)]
+        low_goal_idxs = np.minimum(idxs + self.config['subgoal_steps'], final_state_idxs)
+        batch['low_value_rewards'], batch['low_value_masks'] = compute_goal_conditioned_chunk_returns(
+            chunk_idxs,
+            low_goal_idxs,
+            self.config['discount'],
+            self.config['gc_negative'],
+        )
+
+        if self.config['p_aug'] is not None and not evaluation and np.random.rand() < self.config['p_aug']:
+            self.augment(
+                batch,
+                [
+                    'observations',
+                    'next_observations',
+                    'low_actor_next_observations',
+                    'value_goals',
+                    'low_actor_goals',
+                    'high_actor_goals',
+                    'high_actor_targets',
+                ],
+            )
+
+        return batch
