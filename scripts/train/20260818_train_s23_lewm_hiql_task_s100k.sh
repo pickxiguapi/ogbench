@@ -11,7 +11,6 @@ case "$task" in
   *) echo "unknown task: $task" >&2; exit 2 ;;
 esac
 
-: "${EXPERIMENT_RUN_ID:?launch through recorded_run.sh}" "${EXPERIMENT_EXP_NAME:?launch through recorded_run.sh}"
 mkdir -p /data/dzb/lewm-runs/wandb
 cd /home/dzb/ogbench/impls
 
@@ -25,5 +24,5 @@ WANDB_DIR=/data/dzb/lewm-runs/wandb \
   --agent.p_aug=0.5 --agent.subgoal_steps=10 \
   --train_steps=100000 --save_dir=/data/dzb/lewm-runs \
   --log_interval=5000 --save_interval=100000 \
-  --run_group="$EXPERIMENT_EXP_NAME" --wandb_mode=offline --eval_episodes=0 \
+  --run_group="${EXPERIMENT_EXP_NAME:-S23_LeWM_HIQL_${task}_s100k}" --wandb_mode=offline --eval_episodes=0 \
   --video_episodes=0

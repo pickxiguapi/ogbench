@@ -6,7 +6,6 @@ case "${CLIENT_ID:?请先设置 CLIENT_ID=yb|23|7002|11}" in
     OGBENCH_ROOT=$CLIENT_ROOT/ogbench-new
     PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
     DASHBOARD_ROOT=$CLIENT_ROOT/experiment-dashboard
-    RECORDED_RUN=$DASHBOARD_ROOT/scripts/recorded_run.sh
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
     LEWM_DATA_ROOT=$CLIENT_ROOT/stable-worldmodel/datasets

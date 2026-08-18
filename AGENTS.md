@@ -4,7 +4,7 @@
 
 ## 实验 Bash：极简、清晰、可追溯
 
-- 训练、评测、复现、消融等实验只能通过仓库 `scripts/` 中的 Bash 启动，并继续遵守上层规则：真实启动必须由 `experiment-dashboard/scripts/recorded_run.sh` 包裹。
+- 训练、评测、复现、消融等实验只能通过仓库 `scripts/` 中的 Bash 启动。默认可直接运行 Bash；只有用户明确要求记录到看板时才使用 `experiment-dashboard/scripts/recorded_run.sh`。
 - 训练与启动脚本放在 `scripts/train/`，评测脚本放在 `scripts/eval/`。
 - 新实验 Bash 必须使用 `YYYYMMDD_<type>_<description>.sh` 命名，例如 `scripts/eval/20260811_eval_lewm_reacher_gciql_s100k.sh`。日期是脚本首次实际运行日期；禁止只写 `0811` 这类缺少年份的日期。
 - 每个 Bash 都必须保持极简，让人能快速看懂真实命令。禁止冗余的路径检查、重复变量、过度封装、多层函数以及仅为“看起来健壮”而增加的样板代码；命令本身能给出明确错误时，不再重复预检。
@@ -13,10 +13,10 @@
 - 同一服务器、同一算法、同一套关键超参，若脚本之间只差 task、环境名、数据集和 GPU，则必须合并为一个带 task 参数的极简脚本；例如四个 LeWM GCIQL 任务合并为 `YYYYMMDD_train_s23_lewm_gciql_task_s100k.sh`。任务映射应集中写在一个简短 `case` 中。
 - 不同服务器、不同算法、不同训练量、不同关键超参、不同 checkpoint/seed 或不同实验目的不得为了少写文件而强行合并。此时一个 Bash 仍对应一个确定的实验配置；配置变化时新建带日期脚本，同日可追加 `_v2`、`_seed1` 等明确后缀。
 - 参数化仅用于合并上述“同配置多任务”重复脚本。禁止用 task/checkpoint/seed 参数矩阵、复杂循环、数组拼装或多层函数把不同实验塞进一个 Bash。
-- 关键实验配置必须直接写在脚本中，包括服务器路径、算法、训练量、seed、关键超参和输出根目录。仅允许由 `recorded_run.sh` 注入 `EXPERIMENT_EXP_NAME`、`EXPERIMENT_RUN_ID`，以及由外层 launcher 分配 `CUDA_VISIBLE_DEVICES`；不得用大量 `${VAR:-default}` 隐藏实验设置。
+- 关键实验配置必须直接写在脚本中，包括服务器路径、算法、训练量、seed、关键超参和输出根目录。允许外层 launcher 分配 `CUDA_VISIBLE_DEVICES`；`EXPERIMENT_EXP_NAME`、`EXPERIMENT_RUN_ID` 只能作为可选的看板信息，脚本不得依赖它们才能运行。不得用大量 `${VAR:-default}` 隐藏实验设置。
 - Python 命令及其 flags 要在脚本中完整展开，方便只看这一个文件就复现实验。不要引入“几十个可选 Bash 参数”的抽象层。
 - 脚本在前台完成真实任务；禁止在脚本内部再用 `tmux`、`screen`、`nohup` 或后台 `&` 派生无法随记录器追踪的实验进程。
-- 每个脚本使用 `#!/usr/bin/env bash` 和 `set -euo pipefail`。stdout/stderr 和退出状态统一交给 `recorded_run.sh`，脚本内不要再重复 `tee` 同一份日志；只创建真实命令必需的输出目录。
+- 每个脚本使用 `#!/usr/bin/env bash` 和 `set -euo pipefail`，真实任务在前台运行。直接运行时输出到当前终端；需要看板记录时由 `recorded_run.sh` 接管 stdout/stderr 和退出状态。脚本内不要重复 `tee` 同一份日志，只创建真实命令必需的输出目录。
 - 新增或修改后至少运行 `bash -n scripts/train/<script>.sh` 或 `bash -n scripts/eval/<script>.sh`。仍留在活跃目录、但仅为兼容历史调用的旧脚本必须使用 `YYYYMMDD_legacy_*.sh` 命名；移入 backup 的脚本保留原名。不得执行或复制 legacy/backup 脚本来发起新实验。
 
 ## Bash 清理与归档
