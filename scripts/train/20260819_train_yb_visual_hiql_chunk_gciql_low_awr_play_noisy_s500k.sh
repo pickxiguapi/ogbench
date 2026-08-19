@@ -12,7 +12,7 @@ tags=(cs_play cd_play ct_play scene_play cs_noisy cd_noisy ct_noisy scene_noisy)
 gpus=(0 1 2 3 4 5 6 7)
 
 for i in "${!envs[@]}"; do
-  exp_name="${DATE}_${CLIENT_ID}_HCGLAWR_${tags[$i]}_k5_sg10_bs256_s500k_s0_la3_le09_ha3_he07_aug05"
+  exp_name="${DATE}_${CLIENT_ID}_HCGLAWR_${tags[$i]}_k5sg10_b256_500k_s0"
   pgrep -u "$(id -u)" -f "[m]ain.py .*--run_group=$exp_name" >/dev/null && continue
   run_dir="$CLIENT_ROOT/ogbench-hiql-chunk-gciql-low-awr-runs/$exp_name"
   mkdir -p "$run_dir/wandb" "$run_dir/tmp"
