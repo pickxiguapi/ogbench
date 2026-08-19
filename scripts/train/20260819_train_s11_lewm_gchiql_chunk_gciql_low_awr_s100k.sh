@@ -8,6 +8,9 @@ RUNS_ROOT="${RUNS_ROOT:-/data/yyf/H-LeWM/ogbench-runs}"
 VENV_DIR="${VENV_DIR:-/data/yyf/H-LeWM/envs/ogbench}"
 WANDB_MODE="${WANDB_MODE:-offline}"
 RUN_STAMP="${RUN_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
+TRAIN_STEPS="${TRAIN_STEPS:-100000}"
+LOG_INTERVAL="${LOG_INTERVAL:-5000}"
+SAVE_INTERVAL="${SAVE_INTERVAL:-100000}"
 
 case "${TASK}" in
   tworoom)
@@ -70,10 +73,10 @@ WANDB_DIR="${TASK_RUNS_ROOT}/wandb" \
   --agent.encoder=impala_small \
   --agent.low_actor_rep_grad=True \
   --agent.p_aug=0.5 \
-  --train_steps=100000 \
+  --train_steps="${TRAIN_STEPS}" \
   --save_dir="${TASK_RUNS_ROOT}" \
-  --log_interval=5000 \
-  --save_interval=100000 \
+  --log_interval="${LOG_INTERVAL}" \
+  --save_interval="${SAVE_INTERVAL}" \
   --run_group="gchiql-chunk-gciql-low-awr-lewm-${TASK}-k5-sg10-bs256-s100k" \
   --wandb_mode="${WANDB_MODE}" \
   --seed=0 \
