@@ -17,7 +17,7 @@ for i in "${!envs[@]}"; do
   run_dir="$CLIENT_ROOT/ogbench-hiql-chunk-gciql-low-awr-runs/$exp_name"
   mkdir -p "$run_dir/wandb" "$run_dir/tmp"
   MUJOCO_GL=egl LD_LIBRARY_PATH="$CLIENT_ROOT/egl-runtime/root/usr/lib/x86_64-linux-gnu" TMPDIR="$run_dir/tmp" \
-  CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false WANDB_DIR="$run_dir/wandb" \
+  CUDA_VISIBLE_DEVICES=${gpus[$i]} WANDB_DIR="$run_dir/wandb" \
   nohup "$PYTHON_BIN" main.py \
     --env_name="${envs[$i]}" --agent=agents/hiql_chunk.py \
     --agent.chunk_size=5 --agent.subgoal_steps=10 --agent.batch_size=512 \
