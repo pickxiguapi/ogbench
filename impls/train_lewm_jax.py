@@ -17,6 +17,7 @@ import numpy as np
 import optax
 from flax.training import train_state
 from lewm_jax import ARCHITECTURE, LeWM, lewm_loss
+from utils.lewm_npz_sequence_dataset import LeWMNPZSequenceDataset
 from utils.lewm_sequence_dataset import LeWMSequenceDataset
 
 
@@ -60,6 +61,8 @@ class LeWMTrainState(train_state.TrainState):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dataset_path', required=True)
+    parser.add_argument('--validation_dataset_path')
+    parser.add_argument('--dataset_format', choices=('auto', 'lance', 'npz'), default='auto')
     parser.add_argument('--save_dir', required=True)
     parser.add_argument('--exp_name', required=True)
     parser.add_argument('--decode_workers', type=int, default=6)
@@ -67,6 +70,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--frameskip', type=int, default=5)
+    parser.add_argument('--image_size', type=int, default=224)
     parser.add_argument('--learning_rate', type=float, default=5e-5)
     parser.add_argument('--weight_decay', type=float, default=1e-3)
     parser.add_argument('--sigreg_weight', type=float, default=0.09)
@@ -159,26 +163,52 @@ def main():
         batch_size=args.batch_size,
         decode_workers=args.decode_workers,
         frameskip=args.frameskip,
+        image_size=args.image_size,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         sigreg_weight=args.sigreg_weight,
         sigreg_knots=args.sigreg_knots,
         sigreg_num_proj=args.sigreg_num_proj,
     )
+    dataset_format = args.dataset_format
+    if dataset_format == 'auto':
+        dataset_format = 'npz' if args.dataset_path.endswith('.npz') else 'lance'
+    validation_path = args.validation_dataset_path
+    dataset_kwargs = {
+        'num_steps': config.history_size + config.num_preds,
+        'frameskip': config.frameskip,
+        'seed': config.seed,
+    }
+    if dataset_format == 'npz':
+        if validation_path is None:
+            validation_path = args.dataset_path.removesuffix('.npz') + '-val.npz'
+        dataset = LeWMNPZSequenceDataset(
+            args.dataset_path,
+            validation_path,
+            **dataset_kwargs,
+        )
+    else:
+        dataset = LeWMSequenceDataset(
+            args.dataset_path,
+            train_fraction=config.train_fraction,
+            decode_workers=config.decode_workers,
+            normalize_pixels=False,
+            **dataset_kwargs,
+        )
     output_dir = Path(args.save_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / 'config.json').open('w') as file:
-        json.dump({'exp_name': args.exp_name, 'dataset_path': args.dataset_path, **asdict(config)}, file, indent=2)
-
-    dataset = LeWMSequenceDataset(
-        args.dataset_path,
-        num_steps=config.history_size + config.num_preds,
-        frameskip=config.frameskip,
-        train_fraction=config.train_fraction,
-        seed=config.seed,
-        decode_workers=config.decode_workers,
-        normalize_pixels=False,
-    )
+        json.dump(
+            {
+                'exp_name': args.exp_name,
+                'dataset_path': args.dataset_path,
+                'validation_dataset_path': validation_path,
+                'dataset_format': dataset_format,
+                **asdict(config),
+            },
+            file,
+            indent=2,
+        )
     steps_per_epoch = len(dataset.train_indices) // config.batch_size
     if steps_per_epoch < 1:
         raise ValueError('The training split is smaller than one full batch.')
