@@ -27,6 +27,8 @@ class LeWMConfig:
     encoder: str = 'impala_small'
     seed: int = 3072
     epochs: int = 10
+    train_steps: int | None = None
+    save_interval_steps: int = 100_000
     batch_size: int = 128
     decode_workers: int = 6
     train_fraction: float = 0.9
@@ -68,6 +70,8 @@ def parse_args():
     parser.add_argument('--decode_workers', type=int, default=6)
     parser.add_argument('--seed', type=int, default=3072)
     parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--train_steps', type=int)
+    parser.add_argument('--save_interval_steps', type=int, default=100_000)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--frameskip', type=int, default=5)
     parser.add_argument('--image_size', type=int, default=224)
@@ -139,13 +143,15 @@ def mean_metrics(rows):
     return {key: float(np.mean([float(row[key]) for row in rows])) for key in rows[0]}
 
 
-def save_model(state, path, epoch, config):
+def save_model(state, path, epoch, config, step=None):
     payload = {
         'params': jax.device_get(state.params),
         'batch_stats': jax.device_get(state.batch_stats),
         'epoch': epoch,
         'config': asdict(config),
     }
+    if step is not None:
+        payload['step'] = step
     serialized = flax.serialization.msgpack_serialize(payload)
     temporary = path.with_suffix(path.suffix + '.tmp')
     with temporary.open('wb') as file:
@@ -160,6 +166,8 @@ def main():
     config = LeWMConfig(
         seed=args.seed,
         epochs=args.epochs,
+        train_steps=args.train_steps,
+        save_interval_steps=args.save_interval_steps,
         batch_size=args.batch_size,
         decode_workers=args.decode_workers,
         frameskip=args.frameskip,
@@ -214,7 +222,16 @@ def main():
         raise ValueError('The training split is smaller than one full batch.')
     if not len(dataset.val_indices):
         raise ValueError('The validation split is empty; provide more clips or lower the training fraction.')
-    total_steps = config.epochs * steps_per_epoch
+    if config.train_steps is not None and config.train_steps <= 0:
+        raise ValueError('train_steps must be positive.')
+    if config.save_interval_steps <= 0:
+        raise ValueError('save_interval_steps must be positive.')
+    total_steps = (
+        config.train_steps
+        if config.train_steps is not None
+        else config.epochs * steps_per_epoch
+    )
+    num_epochs = (total_steps + steps_per_epoch - 1) // steps_per_epoch
     lr_schedule, warmup_steps = warmup_cosine_schedule(config.learning_rate, total_steps)
     optimizer = optax.chain(
         optax.clip_by_global_norm(config.gradient_clip),
@@ -272,6 +289,7 @@ def main():
     csv_path = output_dir / 'metrics.csv'
     fieldnames = [
         'epoch',
+        'step',
         'train_loss',
         'train_pred_loss',
         'train_sigreg_loss',
@@ -284,20 +302,36 @@ def main():
         'total_seconds',
     ]
     start_time = time.time()
+    global_step = 0
     with csv_path.open('w', newline='') as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
-        for epoch in range(1, config.epochs + 1):
+        for epoch in range(1, num_epochs + 1):
             epoch_start = time.time()
+            epoch_steps = min(steps_per_epoch, total_steps - global_step)
             shuffled = dataset.shuffled_train_indices()
-            shuffled = shuffled[: steps_per_epoch * config.batch_size]
+            shuffled = shuffled[: epoch_steps * config.batch_size]
             train_rows = []
-            for start in range(0, len(shuffled), config.batch_size):
-                batch_np = dataset.get_batch(shuffled[start : start + config.batch_size])
+            for batch_start in range(0, len(shuffled), config.batch_size):
+                batch_np = dataset.get_batch(
+                    shuffled[batch_start : batch_start + config.batch_size]
+                )
                 batch = jax.tree_util.tree_map(jnp.asarray, batch_np)
                 rng, dropout_key, sigreg_key = jax.random.split(rng, 3)
                 state, metrics = train_step(state, batch, dropout_key, sigreg_key)
                 train_rows.append(jax.device_get(metrics))
+                global_step += 1
+                if config.train_steps is not None and (
+                    global_step % config.save_interval_steps == 0
+                    or global_step == total_steps
+                ):
+                    save_model(
+                        state,
+                        output_dir / f'weights_step_{global_step}.msgpack',
+                        epoch,
+                        config,
+                        step=global_step,
+                    )
 
             val_rows = []
             for start in range(0, len(dataset.val_indices), config.batch_size):
@@ -313,6 +347,7 @@ def main():
             val_metrics = mean_metrics(val_rows)
             row = {
                 'epoch': epoch,
+                'step': global_step,
                 'train_loss': train_metrics['loss'],
                 'train_pred_loss': train_metrics['pred_loss'],
                 'train_sigreg_loss': train_metrics['sigreg_loss'],
@@ -327,7 +362,13 @@ def main():
             writer.writerow(row)
             csv_file.flush()
             print(json.dumps(row))
-            save_model(state, output_dir / f'weights_epoch_{epoch}.msgpack', epoch, config)
+            if config.train_steps is None:
+                save_model(
+                    state,
+                    output_dir / f'weights_epoch_{epoch}.msgpack',
+                    epoch,
+                    config,
+                )
 
     dataset.close()
 
