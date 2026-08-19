@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Server 23：评测 LeWM-JAX IMPALA epoch-10；单任务 50 episodes，dataset-goal，CEM 300 samples × 30 iterations。
-task="${1:?Usage: bash scripts/eval/20260819_eval_s23_lewm_jax_impala_task_e10_cem300x30.sh {cube|pusht|reacher|tworoom}}"
+task="${1:-}"
 CLIENT_ID=23
 source /home/dzb/ogbench/scripts/client_env.sh
 
