@@ -41,6 +41,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--cem-horizon', type=int, default=5)
     parser.add_argument('--cem-receding-horizon', type=int, default=5)
+    parser.add_argument('--action-block', type=int, default=1)
     parser.add_argument('--cem-num-samples', type=int, default=300)
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
@@ -60,7 +61,7 @@ def main():
         seed=args.seed,
         horizon=args.cem_horizon,
         receding_horizon=args.cem_receding_horizon,
-        action_block=1,
+        action_block=args.action_block,
         num_samples=args.cem_num_samples,
         steps=args.cem_steps,
         topk=args.cem_topk,
@@ -106,7 +107,7 @@ def main():
         'cem': {
             'horizon': args.cem_horizon,
             'receding_horizon': args.cem_receding_horizon,
-            'action_block': 1,
+            'action_block': args.action_block,
             'num_samples': args.cem_num_samples,
             'steps': args.cem_steps,
             'topk': args.cem_topk,
