@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Server 11：四卡启动 Cube、PushT、Reacher、TwoRoom 的 HIQL-Chunk-Share-V 训练，每个任务调用对应的单任务训练 Bash。
 OGBENCH_ROOT="${OGBENCH_ROOT:-/home/yyf/ogbench}"
 TRAIN_SCRIPT="${OGBENCH_ROOT}/scripts/train/20260821_train_s11_lewm_hiql_chunk_share_v_task_s100k.sh"
 RUN_STAMP="${RUN_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"

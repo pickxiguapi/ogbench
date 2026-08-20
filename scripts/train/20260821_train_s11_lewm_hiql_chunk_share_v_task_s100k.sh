@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Server 11：训练指定 LeWM 单任务的 HIQL-Chunk-Share-V；共享高低层 reachability value，s100k、k5、sg10、bs256、seed0。
 TASK="${1:-}"
 OGBENCH_ROOT="${OGBENCH_ROOT:-/home/yyf/ogbench}"
 DATA_ROOT="${DATA_ROOT:-/data/yyf/H-LeWM/datasets}"
