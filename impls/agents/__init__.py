@@ -5,6 +5,7 @@ from agents.gciql_chunk import GCIQLChunkAgent
 from agents.gcivl import GCIVLAgent
 from agents.hiql import HIQLAgent
 from agents.hiql_chunk import HIQLChunkAgent
+from agents.hiql_chunk_share_v import HIQLChunkShareVAgent
 from agents.qrl import QRLAgent
 from agents.sac import SACAgent
 
@@ -16,6 +17,7 @@ agents = dict(
     gcivl=GCIVLAgent,
     hiql=HIQLAgent,
     hiql_chunk=HIQLChunkAgent,
+    hiql_chunk_share_v=HIQLChunkShareVAgent,
     qrl=QRLAgent,
     sac=SACAgent,
 )

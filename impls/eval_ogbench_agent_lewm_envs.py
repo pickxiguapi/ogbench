@@ -21,7 +21,11 @@ from ogbench.lewm_envs.evaluation import (
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task', choices=('cube', 'pusht', 'tworoom', 'reacher'), required=True)
-    parser.add_argument('--method', choices=('gciql', 'gciql_chunk', 'hiql'), required=True)
+    parser.add_argument(
+        '--method',
+        choices=('gciql', 'gciql_chunk', 'hiql', 'hiql_chunk', 'hiql_chunk_share_v'),
+        required=True,
+    )
     parser.add_argument('--checkpoint-dir', required=True)
     parser.add_argument('--checkpoint-step', type=int, default=100000)
     parser.add_argument('--data-root', required=True)
@@ -44,7 +48,7 @@ def agent_config(method, checkpoint_dir=None):
         from agents.gciql_chunk import get_config
 
         config = get_config()
-    else:
+    elif method == 'hiql':
         from agents.hiql import get_config
 
         config = get_config()
@@ -52,6 +56,24 @@ def agent_config(method, checkpoint_dir=None):
         config.low_actor_rep_grad = True
         config.low_alpha = 3.0
         config.subgoal_steps = 10
+    elif method == 'hiql_chunk':
+        from agents.hiql_chunk import get_config
+
+        config = get_config()
+        config.high_alpha = 3.0
+        config.low_actor_rep_grad = True
+        config.low_alpha = 3.0
+        config.subgoal_steps = 10
+    elif method == 'hiql_chunk_share_v':
+        from agents.hiql_chunk_share_v import get_config
+
+        config = get_config()
+        config.high_alpha = 3.0
+        config.low_actor_rep_grad = True
+        config.low_alpha = 3.0
+        config.subgoal_steps = 10
+    else:
+        raise ValueError(f'Unsupported method: {method}')
     config.batch_size = 256
     config.encoder = 'impala_small'
     config.p_aug = 0.5
@@ -72,13 +94,19 @@ def agent_config(method, checkpoint_dir=None):
 
 def load_agent(method, lance_path, checkpoint_dir, checkpoint_step):
     from agents import agents
-    from utils.datasets import GCChunkDataset, GCDataset, HGCDataset
+    from utils.datasets import GCChunkDataset, GCDataset, HGCDataset, HIQLChunkDataset
     from utils.flax_utils import restore_agent
     from utils.lewm_dataset import LeWMLanceDataset
 
     config = agent_config(method, checkpoint_dir)
     base = LeWMLanceDataset(lance_path, split='train', validation_fraction=0.05)
-    wrapper = {'gciql': GCDataset, 'gciql_chunk': GCChunkDataset, 'hiql': HGCDataset}[method]
+    wrapper = {
+        'gciql': GCDataset,
+        'gciql_chunk': GCChunkDataset,
+        'hiql': HGCDataset,
+        'hiql_chunk': HIQLChunkDataset,
+        'hiql_chunk_share_v': HIQLChunkDataset,
+    }[method]
     dataset = wrapper(base, config, preprocess_frame_stack=False)
     example = dataset.sample(1, evaluation=True)
     agent = agents[config.agent_name].create(0, example['observations'], example['actions'], config)
