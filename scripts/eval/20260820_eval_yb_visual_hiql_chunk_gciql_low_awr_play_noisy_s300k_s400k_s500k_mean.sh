@@ -3,7 +3,7 @@ set -euo pipefail
 
 # 英博云：8 卡并行评测 HIQL-Chunk-GCIQL-Low-AWR；每卡依次评测 s300k、s400k、s500k，各 50 episodes，并汇总 checkpoint mean。
 CLIENT_ID=yb
-TRAIN_DATE=2026-08-19
+TRAIN_DATE=2026-08-20
 EVAL_DATE=$(date +%Y-%m-%d)
 source /root/data/yyf/ogbench-new/scripts/client_env.sh
 cd "$OGBENCH_ROOT/impls"
