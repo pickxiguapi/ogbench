@@ -28,7 +28,8 @@
 | A | J5/min/σ1 | 直接迁移 LeWM 四任务最高分配置 | 完成：10/0/0/8，平均4.5 |
 | B | J1/min/σ1 | 测试最保守的一轮 world-model 修正 | 完成：50/6/8/36，平均25.0 |
 | B | J5/terminal/σ1 | 分离 min-over-horizon 的贡献 | 待运行 |
-| B | 32个真实 policy chunks + LeWM H1选择 | 只在 actor 支持集内筛选，避免 CEM elite 均值与模型外推 | 待运行 |
+| B | 32个真实 policy chunks + LeWM H1选择 | 只在 actor 支持集内筛选，避免 CEM elite 均值与模型外推 | 完成：22/18/16/44，平均25.0 |
+| C | LeWM选择32个真实 chunks，逐原子动作重规划 | 降低误选 chunk 的持续伤害，并增加闭环反馈 | 运行中 |
 
 后续只根据前两轮证据增加 σ、J、policy population、执行频率或安全门控消融，避免无信息的全排列搜索。
 
@@ -39,5 +40,6 @@
 | GCIQL-Chunk mode，J0，动作空间已校准，10 ep/task | 60.0 | 32.0 | 20.0 | 48.0 | 40.0 | `20260822_policy_equivalence_j0_envscale_h5_rh1_ab5_ep10_seed42` |
 | GCIQL-Chunk init + CEM300×1，σ1，H5/min，10 ep/task | 50.0 | 6.0 | 8.0 | 36.0 | 25.0 | `20260822_gciqlchunk_envscale_mincost_cem300x1_sigma1_h5_rh1_ab5_ep10_seed42` |
 | GCIQL-Chunk init + CEM300×5，σ1，H5/min，10 ep/task | 10.0 | 0.0 | 0.0 | 8.0 | 4.5 | `20260822_gciqlchunk_envscale_mincost_cem300x5_sigma1_h5_rh1_ab5_ep10_seed42` |
+| LeWM H1/min 从32个真实 policy chunks 中选择，temperature0.1，10 ep/task | 22.0 | 18.0 | 16.0 | 44.0 | 25.0 | `20260822_lewm_select_policy32_temp01_h1_mincost_ep10_seed42` |
 
 J0 与完整500k policy-only 的 68/29.2/20/47.6（平均41.2）一致到10-episode抽样误差范围，证明新的动作空间转换恢复了真实 actor 行为。从 J0 到 J1 再到 J5，平均分为40.0、25.0、4.5，呈随 CEM 修正轮数增加而恶化的清晰趋势；剩余主因是 CEM 对强 policy 的离分布修正，而不是 checkpoint、数据或 evaluator 对齐失败。
