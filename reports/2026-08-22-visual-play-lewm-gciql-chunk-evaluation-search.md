@@ -37,7 +37,8 @@
 | C | 4个近-mode真实 chunks + LeWM H1选择 | 降低 actor 支持集内的选择过优化 | 完成：56/34/18/58，平均41.5 |
 | D | 当前最佳 K4/temp0.05 扩大到50 ep/task | 检验10-episode筛选收益是否稳定 | 运行中 |
 | D | K2/temp0.05 | 进一步降低选择干预率 | 完成：58/38/20/48，平均41.0 |
-| D | K8/temp0.05 | 补齐 K=2/4/8 的选择强度消融 | 运行中 |
+| D | K8/temp0.05 | 补齐 K=2/4/8 的选择强度消融 | 完成：50/24/20/48，平均35.5 |
+| D | Policy mode 当前 evaluator 50 ep/task | 与 K4 扩展做完全同协议对照 | 运行中 |
 
 后续只根据前两轮证据增加 σ、J、policy population、执行频率或安全门控消融，避免无信息的全排列搜索。
 
@@ -56,5 +57,6 @@
 | GCIQL-Chunk mode + CEM300×1，σ0.05，H1/min，10 ep/task | 54.0 | 28.0 | 20.0 | 54.0 | 39.0 | `20260822_gciqlchunk_envscale_mincost_cem300x1_sigma005_h1_rh1_ab5_ep10_seed42` |
 | LeWM H1/min 从4个近-mode真实 policy chunks 中选择，temperature0.05，10 ep/task | 56.0 | 34.0 | 18.0 | 58.0 | 41.5 | `20260822_lewm_select_policy4_temp005_h1_mincost_ep10_seed42` |
 | LeWM H1/min 在 mode 与1个 temperature0.05 sample 间二选一，10 ep/task | 58.0 | 38.0 | 20.0 | 48.0 | 41.0 | `20260822_lewm_select_policy2_temp005_h1_mincost_ep10_seed42` |
+| LeWM H1/min 从8个近-mode真实 policy chunks 中选择，temperature0.05，10 ep/task | 50.0 | 24.0 | 20.0 | 48.0 | 35.5 | `20260822_lewm_select_policy8_temp005_h1_mincost_ep10_seed42` |
 
 J0 与完整500k policy-only 的 68/29.2/20/47.6（平均41.2）一致到10-episode抽样误差范围，证明新的动作空间转换恢复了真实 actor 行为。从 J0 到 J1 再到 J5，平均分为40.0、25.0、4.5，呈随 CEM 修正轮数增加而恶化的清晰趋势；剩余主因是 CEM 对强 policy 的离分布修正，而不是 checkpoint、数据或 evaluator 对齐失败。
