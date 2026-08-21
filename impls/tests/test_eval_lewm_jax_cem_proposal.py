@@ -88,6 +88,23 @@ class ProposalInitializationTest(unittest.TestCase):
                 proposal_selection='lewm',
             )
 
+    def test_execution_steps_cannot_exceed_selected_blocks(self):
+        with self.assertRaisesRegex(ValueError, 'Execution steps'):
+            JAXLeWMCEMPolicy.__init__(
+                object.__new__(JAXLeWMCEMPolicy),
+                checkpoint='unused',
+                scaler=None,
+                seed=0,
+                horizon=1,
+                receding_horizon=1,
+                action_block=5,
+                num_samples=300,
+                steps=0,
+                topk=30,
+                var_scale=1.0,
+                execution_steps=6,
+            )
+
     def test_paired_plan_keys_match_with_and_without_proposal(self):
         vanilla = object.__new__(JAXLeWMCEMPolicy)
         guided = object.__new__(JAXLeWMCEMPolicy)

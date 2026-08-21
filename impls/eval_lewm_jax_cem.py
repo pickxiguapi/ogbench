@@ -159,11 +159,18 @@ class JAXLeWMCEMPolicy:
         shared_q_evaluator=None,
         paired_plan_keys=False,
         diagnose_min_horizon=False,
+        execution_steps=None,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
         if receding_horizon > horizon:
             raise ValueError('CEM receding horizon cannot exceed the planning horizon.')
+        if execution_steps is not None and not (
+            1 <= execution_steps <= receding_horizon * action_block
+        ):
+            raise ValueError(
+                'Execution steps must be in [1, receding_horizon * action_block].'
+            )
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -290,6 +297,11 @@ class JAXLeWMCEMPolicy:
         self.shared_q_evaluator = shared_q_evaluator
         self.paired_plan_keys = bool(paired_plan_keys)
         self.diagnose_min_horizon = bool(diagnose_min_horizon)
+        self.execution_steps = (
+            self.receding_horizon * self.action_block
+            if execution_steps is None
+            else int(execution_steps)
+        )
         self._plan_one = jax.jit(self._build_plan_one())
         self._score_plans = jax.jit(self._build_score_plans())
         self._plan_distances = jax.jit(self._build_plan_distances())
@@ -778,8 +790,17 @@ class JAXLeWMCEMPolicy:
                 self.min_horizon_distance_sums_by_env[env_index] += distances
                 self.min_horizon_replans_by_env[env_index] += 1
             keep = normalized_blocks[: self.receding_horizon]
-            self.warm_starts[env_index] = normalized_blocks[self.receding_horizon :].copy()
+            if self.execution_steps % self.action_block == 0:
+                executed_blocks = self.execution_steps // self.action_block
+                self.warm_starts[env_index] = normalized_blocks[
+                    executed_blocks:
+                ].copy()
+            else:
+                # A partially executed action block no longer aligns with the
+                # blockwise warm start expected by LeWM, so replan from scratch.
+                self.warm_starts[env_index] = None
             normalized_atomic = keep.reshape(-1, self.atomic_action_dim)
+            normalized_atomic = normalized_atomic[: self.execution_steps]
             atomic = self.scaler.inverse_transform(normalized_atomic)
             self.buffers[env_index].extend(atomic)
 

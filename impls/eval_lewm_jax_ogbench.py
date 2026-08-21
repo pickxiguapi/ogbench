@@ -45,6 +45,11 @@ def parse_args():
     parser.add_argument('--cem-horizon', type=int, default=5)
     parser.add_argument('--cem-receding-horizon', type=int, default=5)
     parser.add_argument('--action-block', type=int, default=1)
+    parser.add_argument(
+        '--execution-steps',
+        type=int,
+        help='Atomic actions to execute before replanning (default: full receding horizon).',
+    )
     parser.add_argument('--cem-num-samples', type=int, default=300)
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
@@ -127,6 +132,7 @@ def main():
         proposal_selection=args.proposal_selection,
         native_q_keep=args.native_q_keep,
         paired_plan_keys=args.paired_plan_keys,
+        execution_steps=args.execution_steps,
     )
 
     task_infos = env.unwrapped.task_infos
@@ -179,6 +185,7 @@ def main():
             'var_scale': args.cem_var_scale,
             'cost_mode': args.cem_cost_mode,
             'history_len': 1,
+            'execution_steps': policy.execution_steps,
             'paired_plan_keys': args.paired_plan_keys,
         },
         'metrics': metrics,
