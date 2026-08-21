@@ -40,6 +40,7 @@ case "$CLIENT_ID" in
     PYTHON_BIN=$CLIENT_ROOT/envs/ogbench/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
+    LEWM_JAX_RUNS_ROOT=$CLIENT_ROOT/ogbench/lewm-jax-visual-runs
     EGL_LIB_DIR=/usr/lib/x86_64-linux-gnu
     ;;
 esac

@@ -14,7 +14,7 @@ pids=()
 
 for i in "${!envs[@]}"; do
   exp_name="${DATE}_${CLIENT_ID}_LeWMJAX_${tags[$i]}_npz_impalasmall_bs128_s200k_s3072_fs5_h3_sigreg009"
-  run_dir="$CLIENT_ROOT/lewm-jax-visual-runs/$exp_name"
+  run_dir="$LEWM_JAX_RUNS_ROOT/$exp_name"
   mkdir -p "$run_dir/tmp"
   TMPDIR="$run_dir/tmp" CUDA_VISIBLE_DEVICES=${gpus[$i]} \
   XLA_PYTHON_CLIENT_PREALLOCATE=true XLA_PYTHON_CLIENT_MEM_FRACTION=0.90 JAX_PLATFORMS=cuda \
