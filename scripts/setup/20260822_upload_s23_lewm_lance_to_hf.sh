@@ -5,8 +5,9 @@ set -euo pipefail
 DATA_ROOT=/data/dzb/stablewm-data/datasets
 HF_PYTHON=python3
 HF_TOKEN_PATH=/tmp/iffyuan-hf-token
+HF_ENDPOINT=https://hf-mirror.com
 
-export HF_TOKEN_PATH
+export HF_ENDPOINT HF_TOKEN_PATH
 export PYTHONPATH=/home/dzb/hf-upload-python${PYTHONPATH:+:$PYTHONPATH}
 
 "$HF_PYTHON" - <<'PY'
