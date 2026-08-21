@@ -24,6 +24,7 @@ cd "$OGBENCH_ROOT/impls"
 
 CUDA_VISIBLE_DEVICES=$gpu XLA_PYTHON_CLIENT_PREALLOCATE=false \
 MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless \
+LD_LIBRARY_PATH="$EGL_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
 PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
 "$PYTHON_BIN" eval_lewm_jax_cem.py \
   --task="$task" --checkpoint="$run_dir/weights_epoch_10.msgpack" \
