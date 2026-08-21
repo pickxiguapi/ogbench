@@ -27,7 +27,7 @@
 
 ## 活跃训练 Bash 实验登记表
 
-`scripts/train/` 只保留下表中的正式入口。当前所有脚本运行在英博云，统一使用 `/root/data/yyf/ogbench-new`；历史单任务脚本、launcher、queue、retry、legacy 和其他服务器专用入口位于 `scripts/backup/train/`，不得用于新实验。
+`scripts/train/` 只保留下表中的正式入口。除显式标注 Server 23 的 shared-encoder 实验外，其余脚本运行在英博云并统一使用 `/root/data/yyf/ogbench-new`；历史单任务脚本、launcher、queue、retry、legacy 和其他服务器专用入口位于 `scripts/backup/train/`，不得用于新实验。
 
 公共任务集合：
 
@@ -41,6 +41,11 @@
 | `20260821_train_yb_lewm_gciql_four_tasks_s100k.sh` | LeWM 四任务 goal-conditioned policy baseline | GCIQL、DDPG+BC actor、s100k、bs256、seed0、alpha1、expectile0.9、IMPALA Small、p_aug0.5 |
 | `20260821_train_yb_lewm_gciql_chunk_ddpgbc_four_tasks_s100k.sh` | LeWM 四任务 action-chunk policy | GCIQL-Chunk DDPG+BC、k5、s100k、bs256、seed0、alpha1、expectile0.9 |
 | `20260821_train_yb_lewm_gciql_chunk_awr_four_tasks_s100k.sh` | LeWM 四任务 AWR action-chunk policy | GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3、expectile0.9 |
+| `20260822_train_yb_lewm_gciql_chunk_pi_shared_four_tasks_s100k.sh` | LeWM 四任务 frozen-representation policy 消融（优先）；实验名 `LeWM_with_GCIQL_Chunk_AWR_shared_pi_only` | 英博云 GPU 4–7 四任务并行；GCIQL-Chunk AWR；仅 π 使用从 Server 23 同步的 seed3072 冻结 LeWM post-projector latent，Q/V 各自保留 IMPALA Small；k5、s100k、bs256、policy seed0、alpha3，像素分支 p_aug0.5 |
+| `20260822_train_yb_lewm_gciql_chunk_qvpi_shared_four_tasks_s100k.sh` | LeWM 四任务 frozen-representation 全共享消融（优先）；实验名 `LeWM_with_GCIQL_Chunk_AWR_shared_all` | GCIQL-Chunk AWR；Q/V/π 使用同一冻结 LeWM post-projector latent、下游 heads 独立；k5、s100k、bs256、seed0、alpha3；GPU 4–7 |
+| `20260822_train_s23_lewm_gciql_chunk_qvpi_shared_four_tasks_s100k.sh` | Server 23 LeWM 四任务 frozen-representation 全共享消融；实验名 `LeWM_with_GCIQL_Chunk_AWR_shared_all` | GCIQL-Chunk AWR；Q/V/π 使用各任务 seed3072 LeWM epoch-10 的同一冻结 post-projector latent、下游 heads 独立；k5、s100k、bs256、seed0、alpha3；GPU 2–5 并行 |
+| `20260822_train_yb_lewm_gciql_chunk_qv_shared_four_tasks_s100k.sh` | LeWM 四任务 frozen-representation critic/value 消融（次选） | GCIQL-Chunk AWR；仅 Q/V 使用同一冻结 LeWM post-projector latent，π 保留 IMPALA Small；k5、s100k、bs256、seed0、alpha3，像素分支 p_aug0.5；GPU 0–3 |
+| `20260821_train_s23_lewm_gciql_chunk_shared_encoder_four_tasks_s100k.sh` | LeWM 四任务 shared-encoder evaluator | Server 23；冻结各任务 LeWM IMPALA+projector 与现有 GCIQL-Chunk-AWR actor，只训练共享 192-D latent 上的 V/twin-Q heads；k5、s100k、bs256、seed0、expectile0.9 |
 | `20260821_train_yb_lewm_hiql_stable_four_tasks_s100k.sh` | LeWM 四任务稳定化层次策略 | HIQL、s100k、bs256、seed0、subgoal10、high-alpha1、low-alpha3、lr1e-4、p_aug0.2 |
 | `20260821_train_yb_lewm_hiql_chunk_gciql_low_awr_four_tasks_s100k.sh` | LeWM 四任务层次化 action-chunk 策略 | HIQL-Chunk-GCIQL-Low-AWR、k5、subgoal10、s100k、bs256、seed0、low-expectile0.9 |
 | `20260821_train_yb_lewm_hiql_chunk_share_v_four_tasks_s100k.sh` | LeWM 四任务 shared-reachability-value 策略 | HIQL-Chunk-Share-V、高低层共享 value、k5、subgoal10、s100k、bs256、seed0 |
@@ -66,7 +71,7 @@
 ## 服务器公共路径
 
 - 各服务器反复使用的稳定硬编码路径统一记录在 `scripts/client_env.sh`；实验 Bash 应先 source 该文件，再使用其中的路径变量，禁止在多个活跃脚本中重复散落同一客户端路径。
-- `CLIENT_ID` 只允许使用已登记的固定短 ID：英博云为 `yb`、A800 node2 为 `node2`、Server 23 为 `23`、Server 7002 为 `7002`、Server 11 为 `11`；禁止使用 IP、长别名或其他拼写。
+- `CLIENT_ID` 只允许使用已登记的固定短 ID：英博云为 `yb`、A800 node1/2 为 `node1`/`node2`、Server 23 为 `23`、Server 7002 为 `7002`、Server 11 为 `11`；禁止使用 IP、长别名或其他拼写。
 - `client_env.sh` 除用于按 `CLIENT_ID` 选择服务器的极简 `case` 外，只能包含客户端身份和纯路径赋值；不得加入必填检查、默认值、合法性校验、错误分支或其他兜底逻辑，也不得包含 GPU、task、环境名、算法、超参、`EXP_NAME`、日志名、路径检查、`mkdir`、`cd` 或任何训练/评测命令。
 - 只记录当前有效的公共路径。旧 checkout、一次性 release-audit 和废弃输出目录留在 backup 历史脚本中，不得作为当前客户端默认值。
 - 新增服务器时使用独立且清晰的服务器小节，并保持同一语义的变量名一致；服务器专属差异集中在 `client_env.sh`，实验配置仍留在各实验 Bash 中。
