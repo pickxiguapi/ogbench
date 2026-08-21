@@ -3,10 +3,11 @@ set -euo pipefail
 
 # Server 23：将四个标准 LeWM JPEG95 Lance 数据集直接上传到 Hugging Face dataset repo。
 DATA_ROOT=/data/dzb/stablewm-data/datasets
-HF_PYTHON=/home/dzb/hf-upload-venv/bin/python
+HF_PYTHON=python3
 HF_TOKEN_PATH=/tmp/iffyuan-hf-token
 
 export HF_TOKEN_PATH
+export PYTHONPATH=/home/dzb/hf-upload-python${PYTHONPATH:+:$PYTHONPATH}
 
 "$HF_PYTHON" - <<'PY'
 from pathlib import Path
