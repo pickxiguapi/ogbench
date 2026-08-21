@@ -16,6 +16,16 @@ class FakeChunkAgent:
         return jnp.arange(10, dtype=jnp.float32)[None]
 
 
+class FakeMultiChunkAgent:
+    action_horizon = 5
+
+    def sample_actions(self, observations, goals, seed, temperature):
+        count = observations.shape[0]
+        blocks = np.tile(np.arange(10, dtype=np.float32), (count, 1))
+        blocks[:, 0] += np.arange(count, dtype=np.float32) * 10
+        return jnp.asarray(blocks)
+
+
 class FakeScaler:
     action_dim = 2
     mean = np.array([1.0, -2.0], dtype=np.float32)
@@ -60,6 +70,24 @@ class ProposalInitializationTest(unittest.TestCase):
                 native_q_keep=150,
             )
 
+    def test_lewm_proposal_selection_requires_actor(self):
+        with self.assertRaisesRegex(ValueError, 'requires a proposal agent'):
+            JAXLeWMCEMPolicy.__init__(
+                object.__new__(JAXLeWMCEMPolicy),
+                checkpoint='unused',
+                scaler=None,
+                seed=0,
+                horizon=1,
+                receding_horizon=1,
+                action_block=5,
+                num_samples=300,
+                steps=0,
+                topk=30,
+                var_scale=1.0,
+                proposal_num_samples=32,
+                proposal_selection='lewm',
+            )
+
     def test_paired_plan_keys_match_with_and_without_proposal(self):
         vanilla = object.__new__(JAXLeWMCEMPolicy)
         guided = object.__new__(JAXLeWMCEMPolicy)
@@ -102,6 +130,25 @@ class ProposalInitializationTest(unittest.TestCase):
             np.arange(10, dtype=np.float32).reshape(5, 2)
         ).reshape(10)
         np.testing.assert_allclose(block, expected)
+
+    def test_lewm_selects_exact_actor_sample_without_cem_averaging(self):
+        policy = proposal_policy()
+        policy.proposal_agent = FakeMultiChunkAgent()
+        policy.proposal_num_samples = 3
+        policy.proposal_selection = 'lewm'
+        policy._score_plans = lambda pixels, goals, plans: jnp.asarray(
+            [2.0, 0.0, 1.0]
+        )
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+        mode, selected = policy._q_selection_blocks(
+            pixels, pixels, jax.random.PRNGKey(0)
+        )
+
+        np.testing.assert_array_equal(mode, np.arange(10, dtype=np.float32))
+        expected = np.arange(10, dtype=np.float32)
+        expected[0] = 10.0
+        np.testing.assert_array_equal(selected, expected)
 
     def test_proposal_shape_is_checked(self):
         policy = proposal_policy()

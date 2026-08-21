@@ -24,9 +24,18 @@
 
 | 阶段 | 配置 | 目的 | 状态 |
 |---|---|---|---|
-| A | J0，环境动作校准 | 验证新 evaluator 与 policy-only 等价 | 待运行 |
-| A | J5/min/σ1 | 直接迁移 LeWM 四任务最高分配置 | 待运行 |
-| B | J1/min/σ1 | 测试最保守的一轮 world-model 修正 | 待运行 |
+| A | J0，环境动作校准 | 验证新 evaluator 与 policy-only 等价 | 完成：60/32/20/48，平均40.0 |
+| A | J5/min/σ1 | 直接迁移 LeWM 四任务最高分配置 | 运行中：已完成 Single 10、Double 0、Scene 8 |
+| B | J1/min/σ1 | 测试最保守的一轮 world-model 修正 | 运行中 |
 | B | J5/terminal/σ1 | 分离 min-over-horizon 的贡献 | 待运行 |
+| B | 32个真实 policy chunks + LeWM H1选择 | 只在 actor 支持集内筛选，避免 CEM elite 均值与模型外推 | 待运行 |
 
 后续只根据前两轮证据增加 σ、J、policy population、执行频率或安全门控消融，避免无信息的全排列搜索。
+
+## 已完成结果
+
+| 配置 | Single | Double | Triple | Scene | 平均 | 输出目录 |
+|---|---:|---:|---:|---:|---:|---|
+| GCIQL-Chunk mode，J0，动作空间已校准，10 ep/task | 60.0 | 32.0 | 20.0 | 48.0 | 40.0 | `20260822_policy_equivalence_j0_envscale_h5_rh1_ab5_ep10_seed42` |
+
+J0 与完整500k policy-only 的 68/29.2/20/47.6（平均41.2）一致到10-episode抽样误差范围，证明新的动作空间转换恢复了真实 actor 行为。J5/min 已完成的环境仍大幅下降，表明剩余主因是 CEM 对强 policy 的离分布修正，而不是 checkpoint、数据或 evaluator 对齐失败。

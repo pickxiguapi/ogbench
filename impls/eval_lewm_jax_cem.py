@@ -76,7 +76,7 @@ def parse_args():
     )
     parser.add_argument(
         '--proposal-selection',
-        choices=('mode', 'native_q', 'shared_q'),
+        choices=('mode', 'lewm', 'native_q', 'shared_q'),
         default='mode',
     )
     parser.add_argument(
@@ -200,8 +200,10 @@ class JAXLeWMCEMPolicy:
             raise ValueError('Proposal population size must be in [0, num_samples].')
         if proposal_population_size and proposal_agent is None:
             raise ValueError('Proposal population injection requires a proposal agent.')
+        if proposal_selection != 'mode' and proposal_agent is None:
+            raise ValueError('Proposal selection requires a proposal agent.')
         if proposal_selection != 'mode' and proposal_num_samples < 2:
-            raise ValueError('Q-selected proposals require at least two policy samples.')
+            raise ValueError('Proposal selection requires at least two policy samples.')
         if proposal_selection == 'shared_q' and shared_q_evaluator is None:
             raise ValueError('Shared-Q proposal selection requires a shared evaluator.')
         if dual_center_q:
@@ -540,7 +542,7 @@ class JAXLeWMCEMPolicy:
         return self.scaler.transform(atomic).reshape(shape)
 
     def _q_selection_blocks(self, pixels, goals, key):
-        """Return the exact actor mode and the conservative-Q-selected sample."""
+        """Return actor mode and a LeWM/Q-selected actor sample."""
         sample_key, mode_key = jax.random.split(key)
         observations = np.repeat(
             np.asarray(pixels[-1:]), self.proposal_num_samples, axis=0
@@ -573,11 +575,31 @@ class JAXLeWMCEMPolicy:
                 f'({self.proposal_num_samples}, {self.block_action_dim}).'
             )
         proposal_blocks[0] = mode
-        if self.proposal_selection == 'native_q':
+        planner_blocks = self._proposal_to_planner_actions(proposal_blocks)
+        if self.proposal_selection == 'lewm':
+            plans = np.zeros(
+                (
+                    self.proposal_num_samples,
+                    self.horizon,
+                    self.block_action_dim,
+                ),
+                dtype=np.float32,
+            )
+            plans[:, 0] = planner_blocks
+            costs = np.asarray(
+                self._score_plans(
+                    jnp.asarray(pixels),
+                    jnp.asarray(goals),
+                    jnp.asarray(plans),
+                )
+            )
+            selected_index = int(np.argmin(costs))
+        elif self.proposal_selection == 'native_q':
             q1, q2 = self.proposal_agent.network.select('critic')(
                 observations, goal_batch, jnp.asarray(proposal_blocks)
             )
             q_values = jnp.minimum(q1, q2)
+            selected_index = int(jnp.argmax(q_values))
         else:
             observation_latent = self.model.apply(
                 self.variables,
@@ -596,11 +618,10 @@ class JAXLeWMCEMPolicy:
                 jnp.repeat(goal_latent, self.proposal_num_samples, axis=0),
                 jnp.asarray(proposal_blocks),
             )
+            selected_index = int(jnp.argmax(q_values))
         return (
             self._proposal_to_planner_actions(mode),
-            self._proposal_to_planner_actions(
-                proposal_blocks[int(jnp.argmax(q_values))]
-            ),
+            planner_blocks[selected_index],
         )
 
     def _proposal_block(self, pixels, goals, key):
