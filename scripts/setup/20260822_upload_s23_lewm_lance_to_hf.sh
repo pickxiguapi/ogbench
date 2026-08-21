@@ -11,9 +11,37 @@ export HF_ENDPOINT HF_TOKEN_PATH
 export PYTHONPATH=/home/dzb/hf-upload-python${PYTHONPATH:+:$PYTHONPATH}
 
 "$HF_PYTHON" - <<'PY'
+from copy import deepcopy
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
+import huggingface_hub._commit_api as commit_api
 from huggingface_hub import HfApi
+
+
+# hf-mirror's LFS batch response currently advertises hf-mirror.org, which does
+# not resolve. The same signed upload endpoint is available on hf-mirror.com.
+_original_lfs_upload = commit_api.lfs_upload
+
+
+def _mirror_lfs_upload(operation, lfs_batch_action, token=None, headers=None, endpoint=None):
+    patched_action = deepcopy(lfs_batch_action)
+    for action in (patched_action.get("actions") or {}).values():
+        parsed = urlsplit(action["href"])
+        if parsed.hostname == "hf-mirror.org":
+            action["href"] = urlunsplit(
+                (parsed.scheme, "hf-mirror.com", parsed.path, parsed.query, parsed.fragment)
+            )
+    return _original_lfs_upload(
+        operation=operation,
+        lfs_batch_action=patched_action,
+        token=token,
+        headers=headers,
+        endpoint=endpoint,
+    )
+
+
+commit_api.lfs_upload = _mirror_lfs_upload
 
 repo_id = "IffYuan/LeWM-Datasets"
 data_root = "/data/dzb/stablewm-data/datasets"
