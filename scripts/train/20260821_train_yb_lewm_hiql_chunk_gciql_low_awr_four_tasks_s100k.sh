@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # 英博云：依次训练 LeWM 四任务的 HIQL-Chunk-GCIQL-Low-AWR；s100k、k5、sg10、bs256、seed0。
+# 这个版本炸了，训练效果不好
 CLIENT_ID=yb
 DATE=$(date +%Y-%m-%d)
 source /root/data/yyf/ogbench-new/scripts/client_env.sh

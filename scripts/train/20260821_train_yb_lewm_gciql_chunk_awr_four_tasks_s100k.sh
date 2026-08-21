@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # 英博云：依次训练 LeWM 四任务的 GCIQL-Chunk AWR 策略；s100k、k5、bs256、seed0、alpha3。
+# 优先使用的版本
 CLIENT_ID=yb
 DATE=$(date +%Y-%m-%d)
 source /root/data/yyf/ogbench-new/scripts/client_env.sh

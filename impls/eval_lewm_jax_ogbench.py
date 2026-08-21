@@ -45,16 +45,45 @@ def parse_args():
     parser.add_argument('--cem-num-samples', type=int, default=300)
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
+    parser.add_argument('--proposal-method', choices=('gciql_chunk',))
+    parser.add_argument('--proposal-checkpoint-dir')
+    parser.add_argument('--proposal-checkpoint-step', type=int, default=500000)
+    parser.add_argument('--proposal-temperature', type=float, default=0.0)
     parser.add_argument('--output', required=True)
     return parser.parse_args()
 
 
+def load_visual_proposal_agent(env, checkpoint_dir, checkpoint_step):
+    """Restore a visual GCIQL-Chunk agent without materializing its full dataset."""
+    from agents import agents
+    from eval_ogbench_agent_lewm_envs import agent_config
+    from utils.flax_utils import restore_agent
+
+    config = agent_config('gciql_chunk', checkpoint_dir)
+    observation = np.zeros(
+        (1, *env.observation_space.shape), dtype=env.observation_space.dtype
+    )
+    action_width = int(np.prod(env.action_space.shape)) * int(config.chunk_size)
+    actions = np.zeros((1, action_width), dtype=np.float32)
+    agent = agents[config.agent_name].create(0, observation, actions, config)
+    return restore_agent(agent, checkpoint_dir, checkpoint_step)
+
+
 def main():
     args = parse_args()
+    if (args.proposal_method is None) != (args.proposal_checkpoint_dir is None):
+        raise ValueError(
+            '--proposal-method and --proposal-checkpoint-dir must be provided together.'
+        )
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
     env.reset(seed=args.seed)
     scaler = NPZActionScaler(args.dataset_path)
+    proposal_agent = None
+    if args.proposal_method is not None:
+        proposal_agent = load_visual_proposal_agent(
+            env, args.proposal_checkpoint_dir, args.proposal_checkpoint_step
+        )
     policy = JAXLeWMCEMPolicy(
         args.checkpoint,
         scaler,
@@ -66,6 +95,8 @@ def main():
         steps=args.cem_steps,
         topk=args.cem_topk,
         var_scale=1.0,
+        proposal_agent=proposal_agent,
+        proposal_temperature=args.proposal_temperature,
     )
 
     task_infos = env.unwrapped.task_infos
@@ -99,7 +130,11 @@ def main():
 
     result = {
         'environment': args.env_name,
-        'method': 'lewm_jax_cem',
+        'method': (
+            'lewm_jax_cem'
+            if args.proposal_method is None
+            else f'lewm_jax_cem_{args.proposal_method}_proposal'
+        ),
         'checkpoint': args.checkpoint,
         'seed': args.seed,
         'episodes_per_task': args.num_eval,
@@ -116,6 +151,17 @@ def main():
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),
         'evaluation_time': time.time() - started,
+        'proposal': (
+            None
+            if args.proposal_method is None
+            else {
+                'method': args.proposal_method,
+                'checkpoint_dir': args.proposal_checkpoint_dir,
+                'checkpoint_step': args.proposal_checkpoint_step,
+                'temperature': args.proposal_temperature,
+                'injection': 'first_block_initial_mean',
+            }
+        ),
     }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

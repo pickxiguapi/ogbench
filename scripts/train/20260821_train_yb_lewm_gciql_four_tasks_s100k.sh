@@ -2,6 +2,8 @@
 set -euo pipefail
 
 # 英博云：依次训练 Cube、PushT、Reacher、TwoRoom 的 LeWM GCIQL 基线；s100k、bs256、seed0、IMPALA Small、p_aug0.5。
+# 原版 goal-conditioned IQL，DDPG+BC actor；100k、bs256、alpha1、expectile0.9、IMPALA-small。
+# 实验结果不错
 CLIENT_ID=yb
 DATE=$(date +%Y-%m-%d)
 source /root/data/yyf/ogbench-new/scripts/client_env.sh

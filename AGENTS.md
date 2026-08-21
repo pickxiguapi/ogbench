@@ -13,19 +13,47 @@
 - 同一服务器、同一算法、同一套关键超参，若脚本之间只差 task、环境名、数据集和 GPU，则必须合并为一个极简脚本；例如四个 LeWM GCIQL 任务合并为 `YYYYMMDD_train_s23_lewm_gciql_task_s100k.sh`。固定任务集需要一次依次跑完时使用下述并行数组加单层循环；确实需要由外层 launcher 独立分配单任务时，才使用 task 参数和简短 `case`。
 - 不同服务器、不同算法、不同训练量、不同关键超参、不同 checkpoint/seed 或不同实验目的不得为了少写文件而强行合并。此时一个 Bash 仍对应一个确定的实验配置；配置变化时新建带日期脚本，同日可追加 `_v2`、`_seed1` 等明确后缀。
 - 参数化仅用于合并上述“同配置多任务”重复脚本。固定任务集的等长并行数组属于允许的任务映射；禁止用 task/checkpoint/seed 参数矩阵、复杂循环、动态数组拼装或多层函数把不同实验塞进一个 Bash。
-- 关键实验配置必须直接写在脚本中，包括服务器路径、算法、训练量、seed、关键超参和输出根目录。允许外层 launcher 分配 `CUDA_VISIBLE_DEVICES`；`EXPERIMENT_EXP_NAME`、`EXPERIMENT_RUN_ID` 只能作为可选的看板信息，脚本不得依赖它们才能运行。不得用大量 `${VAR:-default}` 隐藏实验设置。
+- 关键实验配置必须直接写在脚本中，包括服务器路径、算法、训练量、seed、关键超参和输出根目录。
 - Python 命令及其 flags 要在脚本中完整展开，方便只看这一个文件就复现实验。不要引入“几十个可选 Bash 参数”的抽象层。
-- 脚本在前台完成真实任务；禁止在脚本内部再用 `tmux`、`screen`、`nohup` 或后台 `&` 派生无法随记录器追踪的实验进程。
-- 每个脚本使用 `#!/usr/bin/env bash` 和 `set -euo pipefail`，真实任务在前台运行。直接运行时输出到当前终端；需要看板记录时由 `recorded_run.sh` 接管 stdout/stderr 和退出状态。脚本内不要重复 `tee` 同一份日志，只创建真实命令必需的输出目录。
 - 新增或修改后至少运行 `bash -n scripts/train/<script>.sh` 或 `bash -n scripts/eval/<script>.sh`。仍留在活跃目录、但仅为兼容历史调用的旧脚本必须使用 `YYYYMMDD_legacy_*.sh` 命名；移入 backup 的脚本保留原名。不得执行或复制 legacy/backup 脚本来发起新实验。
+- 每次新增、重命名、替换或归档 `scripts/train/` 下的训练 Bash，必须在同一次改动中更新本文件的“活跃训练 Bash 实验登记表”。每条登记必须说明脚本名、运行服务器、任务/环境、算法、训练量和关键特殊设置；禁止只添加 Bash 而不解释实验目的。
 
 ### 固定多任务训练脚本格式
 
-- 固定任务集的批量训练脚本以 `scripts/train/20260819_train_s23_lewm_jax_impala_task_e10.sh` 为格式范本：中文单行注释先概括服务器、任务顺序、算法、训练量、batch size、seed 和关键设置，然后依次写 `CLIENT_ID`、`DATE=$(date +%Y-%m-%d)`、source `scripts/client_env.sh`、进入实现目录。
+- 固定任务集的批量训练脚本以 `scripts/train/20260821_train_yb_lewm_jax_impala_four_tasks_e10.sh` 为格式范本：中文单行注释先概括服务器、任务顺序、算法、训练量、batch size、seed 和关键设置，然后依次写 `CLIENT_ID`、`DATE=$(date +%Y-%m-%d)`、source `scripts/client_env.sh`、进入实现目录。
 - 任务差异用等长的 `envs`、`datasets`、`tags`、`gpus` 等小写并行数组集中表达，并用 `for i in "${!datasets[@]}"; do ... done` 单层循环按数组顺序依次训练。数组只放真正随任务变化的字段；算法、训练量和超参数仍直接写在 Python 命令中。
-- 每次循环先构造 `exp_name` 和 `run_dir`，再创建输出目录。`exp_name` 统一包含 `${DATE}`、`${CLIENT_ID}`、算法、数据格式、任务标签、batch size、训练量和 seed；`run_dir` 按算法归入 `RUN_DIR` 下的固定子目录。
+- 每次循环先构造 `exp_name` 和 `run_dir`，再创建输出目录。`exp_name` 统一包含 `${DATE}`、`${CLIENT_ID}`、算法、数据格式、任务标签、batch size、训练量和 seed；`run_dir` 按算法归入该服务器公共输出根目录下的固定子目录。
 - GPU 通过命令前缀 `CUDA_VISIBLE_DEVICES=${gpus[$i]}` 明确分配；JAX、W&B 等运行环境变量紧邻真实 Python 命令。Python flags 按数据与输出、算法配置、训练配置、记录与评测配置分行，保持范本的紧凑展开风格。
-- 这类脚本默认在前台依次跑完整个固定任务集，不再保留必填 task 位置参数，也不在循环内部使用后台 `&`。若需要并行调度，应另建符合日期命名规则的轻量 launcher，而不是改变训练脚本的前台语义。
+
+## 活跃训练 Bash 实验登记表
+
+`scripts/train/` 只保留下表中的正式入口。当前所有脚本运行在英博云，统一使用 `/root/data/yyf/ogbench-new`；历史单任务脚本、launcher、queue、retry、legacy 和其他服务器专用入口位于 `scripts/backup/train/`，不得用于新实验。
+
+公共任务集合：
+
+- **LeWM 四任务**：`visual-lewm-cube-single-expert-v0`、`visual-lewm-pusht-expert-train-v0`、`visual-lewm-reacher-v0`、`visual-lewm-tworoom-v0`，分别使用 `cube_single_expert.lance`、`pusht_expert_train.lance`、`reacher.lance`、`tworoom.lance`。
+- **Visual Play 四任务（世界模型）**：`visual-cube-single-play-v0`、`visual-cube-double-play-v0`、`visual-cube-triple-play-v0`、`visual-scene-play-v0`。
+- **Visual Play/Noisy 八任务**：Cube Single/Double/Triple 与 Scene 各自的 `play-v0` 和 `noisy-v0`。
+- **Visual HIQL 五任务**：Cube Single/Double/Triple/Quadruple 与 Scene 的 `play-v0`。
+
+| 训练 Bash | 环境与实验 | 算法及关键配置 |
+|---|---|---|
+| `20260821_train_yb_lewm_gciql_four_tasks_s100k.sh` | LeWM 四任务 goal-conditioned policy baseline | GCIQL、DDPG+BC actor、s100k、bs256、seed0、alpha1、expectile0.9、IMPALA Small、p_aug0.5 |
+| `20260821_train_yb_lewm_gciql_chunk_ddpgbc_four_tasks_s100k.sh` | LeWM 四任务 action-chunk policy | GCIQL-Chunk DDPG+BC、k5、s100k、bs256、seed0、alpha1、expectile0.9 |
+| `20260821_train_yb_lewm_gciql_chunk_awr_four_tasks_s100k.sh` | LeWM 四任务 AWR action-chunk policy | GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3、expectile0.9 |
+| `20260821_train_yb_lewm_hiql_stable_four_tasks_s100k.sh` | LeWM 四任务稳定化层次策略 | HIQL、s100k、bs256、seed0、subgoal10、high-alpha1、low-alpha3、lr1e-4、p_aug0.2 |
+| `20260821_train_yb_lewm_hiql_chunk_gciql_low_awr_four_tasks_s100k.sh` | LeWM 四任务层次化 action-chunk 策略 | HIQL-Chunk-GCIQL-Low-AWR、k5、subgoal10、s100k、bs256、seed0、low-expectile0.9 |
+| `20260821_train_yb_lewm_hiql_chunk_share_v_four_tasks_s100k.sh` | LeWM 四任务 shared-reachability-value 策略 | HIQL-Chunk-Share-V、高低层共享 value、k5、subgoal10、s100k、bs256、seed0 |
+| `20260821_train_yb_lewm_jax_impala_four_tasks_e10.sh` | LeWM 四任务主世界模型 | LeWM-JAX IMPALA Small、e10、bs128、seed3072、frameskip5、history3、SigReg0.09 |
+| `20260821_train_yb_lewm_jax_impala_four_tasks_seed0_seed42_e10.sh` | LeWM 四任务 × seed0/seed42，共八个世界模型 | LeWM-JAX IMPALA Small、e10、bs128、frameskip5、history3、SigReg0.09，用于随机种子稳定性 |
+| `20260821_train_yb_visual_gciql_chunk_ddpgbc_play_four_tasks_s500k.sh` | Cube Single、Cube Double、Puzzle 3x3、Scene Play 四任务策略 | GCIQL-Chunk DDPG+BC、k5、s500k、bs256、seed0、alpha1 |
+| `20260821_train_yb_visual_gciql_chunk_awr_play_noisy_eight_tasks_s500k.sh` | Visual Play/Noisy 八任务 policy prior | GCIQL-Chunk AWR、k5、s500k、bs512、seed0、alpha3、expectile0.9 |
+| `20260821_train_yb_visual_hiql_official_play_five_tasks_s500k.sh` | Visual HIQL 五任务官方基线 | HIQL、s500k、bs256、seed0、subgoal10、high/low-alpha3、expectile0.7 |
+| `20260821_train_yb_visual_hiql_chunk_two_v_play_five_tasks_s500k.sh` | Visual HIQL 五任务 action-chunk 版本 | HIQL-Chunk Two-V、k5、subgoal10、s500k、bs256、seed0 |
+| `20260821_train_yb_visual_hiql_chunk_gciql_low_awr_play_noisy_eight_tasks_s500k.sh` | Visual Play/Noisy 八任务层次化 action-chunk 策略 | HIQL-Chunk-GCIQL-Low-AWR、k5、subgoal10、s500k、bs512、seed0、low-expectile0.9 |
+| `20260821_train_yb_lewm_jax_visual_play_four_tasks_fs5_bs512_s500k.sh` | Visual Play 四任务 action-block 世界模型 | LeWM-JAX IMPALA Small、s500k、bs512、seed3072、frameskip/action-block5、history3、SigReg0.09；服务于 CEM horizon5、RH1 |
+
+维护要求：表中脚本名必须与 `scripts/train/` 的实际 `.sh` 文件一一对应。修改任务集合、算法、seed、训练量、batch size、chunk/subgoal、正则项或世界模型时间尺度时，必须同步修改 Bash 顶部注释和本表对应行。
 
 ## Bash 清理与归档
 

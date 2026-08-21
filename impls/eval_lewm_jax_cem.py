@@ -39,6 +39,23 @@ def parse_args():
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
+    parser.add_argument(
+        '--cem-cost-mode',
+        choices=('terminal', 'min_over_horizon'),
+        default='terminal',
+    )
+    parser.add_argument('--proposal-method', choices=('gciql_chunk',))
+    parser.add_argument('--proposal-checkpoint-dir')
+    parser.add_argument('--proposal-checkpoint-step', type=int, default=100000)
+    parser.add_argument('--proposal-temperature', type=float, default=0.0)
+    parser.add_argument(
+        '--paired-plan-keys',
+        action='store_true',
+        help=(
+            'Derive CEM sampling keys from (seed, environment index, replan index) '
+            'so vanilla and proposal-guided runs use matched planner randomness.'
+        ),
+    )
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
@@ -67,6 +84,10 @@ class JAXLeWMCEMPolicy:
         steps,
         topk,
         var_scale,
+        cost_mode='terminal',
+        proposal_agent=None,
+        proposal_temperature=0.0,
+        paired_plan_keys=False,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -111,6 +132,7 @@ class JAXLeWMCEMPolicy:
             'image_size': int(config['image_size']),
         }
         self.scaler = scaler
+        self.seed = int(seed)
         self.rng = jax.random.PRNGKey(seed)
         self.horizon = int(horizon)
         self.receding_horizon = int(receding_horizon)
@@ -119,6 +141,10 @@ class JAXLeWMCEMPolicy:
         self.steps = int(steps)
         self.topk = int(topk)
         self.var_scale = float(var_scale)
+        self.cost_mode = str(cost_mode)
+        self.proposal_agent = proposal_agent
+        self.proposal_temperature = float(proposal_temperature)
+        self.paired_plan_keys = bool(paired_plan_keys)
         self._plan_one = jax.jit(self._build_plan_one())
 
     def _build_plan_one(self):
@@ -128,6 +154,12 @@ class JAXLeWMCEMPolicy:
         steps = self.steps
         topk = self.topk
         var_scale = self.var_scale
+        if self.cost_mode == 'terminal':
+            rollout_cost_method = model.rollout_cost
+        elif self.cost_mode == 'min_over_horizon':
+            rollout_cost_method = model.rollout_cost_min_over_horizon
+        else:
+            raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
 
         def plan_one(key, pixels, goals, initial_mean):
             std = jnp.full_like(initial_mean, var_scale)
@@ -150,7 +182,7 @@ class JAXLeWMCEMPolicy:
                     pixels[None, None],
                     goals[None, None],
                     candidates[None],
-                    method=model.rollout_cost,
+                    method=rollout_cost_method,
                 )[0]
                 _, elite_indices = jax.lax.top_k(-costs, topk)
                 elites = candidates[elite_indices]
@@ -167,26 +199,80 @@ class JAXLeWMCEMPolicy:
             raise ValueError(f'Environment action dim {action_dim} differs from dataset dim {self.scaler.action_dim}.')
         self.atomic_action_dim = action_dim
         self.block_action_dim = action_dim * self.action_block
+        if self.proposal_agent is not None:
+            proposal_horizon = int(getattr(self.proposal_agent, 'action_horizon', 1))
+            if proposal_horizon != self.action_block:
+                raise ValueError(
+                    f'Proposal action horizon {proposal_horizon} differs from '
+                    f'LeWM action block {self.action_block}.'
+                )
         self.buffers = [deque() for _ in range(num_envs)]
         self.warm_starts = [None] * num_envs
+        self.plan_counts = np.zeros(num_envs, dtype=np.int64)
 
-    def _initial_mean(self, env_index):
+    def _next_plan_keys(self, env_index):
+        """Return proposal/CEM keys, optionally matched across method variants."""
+        if self.paired_plan_keys:
+            plan_key = jax.random.fold_in(jax.random.PRNGKey(self.seed), int(env_index))
+            plan_key = jax.random.fold_in(plan_key, int(self.plan_counts[env_index]))
+            self.plan_counts[env_index] += 1
+            proposal_key = jax.random.fold_in(plan_key, 1)
+            return proposal_key, plan_key
+
+        if self.proposal_agent is None:
+            self.rng, plan_key = jax.random.split(self.rng)
+            return None, plan_key
+        self.rng, proposal_key, plan_key = jax.random.split(self.rng, 3)
+        return proposal_key, plan_key
+
+    def _proposal_block(self, pixels, goals, key):
+        normalized = np.asarray(
+            self.proposal_agent.sample_actions(
+                observations=np.asarray(pixels[-1:]),
+                goals=np.asarray(goals[-1:]),
+                seed=key,
+                temperature=self.proposal_temperature,
+            )
+        )
+        if normalized.shape != (1, self.block_action_dim):
+            raise ValueError(
+                f'Proposal returned {normalized.shape}; expected '
+                f'(1, {self.block_action_dim}).'
+            )
+        return normalized[0]
+
+    def _initial_mean(self, env_index, pixels=None, goals=None, proposal_key=None):
         initial = np.zeros((self.horizon, self.block_action_dim), dtype=np.float32)
         warm = self.warm_starts[env_index]
         if warm is not None:
             initial[: len(warm)] = warm
+        if self.proposal_agent is not None:
+            if pixels is None or goals is None or proposal_key is None:
+                raise ValueError('Proposal-guided CEM requires pixels, goals, and a PRNG key.')
+            # GCIQL-Chunk predicts exactly one normalized action block from the
+            # real current image and dataset goal.  Only replace the first CEM
+            # block; the remaining horizon stays under the original LeWM warm
+            # start / zero initialization and is optimized by CEM.
+            initial[0] = self._proposal_block(pixels, goals, proposal_key)
         return initial
 
     def get_actions(self, pixels, goals, alive):
         for env_index in np.flatnonzero(alive):
             if self.buffers[env_index]:
                 continue
-            self.rng, plan_key = jax.random.split(self.rng)
+            proposal_key, plan_key = self._next_plan_keys(env_index)
             normalized_blocks, _ = self._plan_one(
                 plan_key,
                 jnp.asarray(pixels[env_index]),
                 jnp.asarray(goals[env_index]),
-                jnp.asarray(self._initial_mean(env_index)),
+                jnp.asarray(
+                    self._initial_mean(
+                        env_index,
+                        pixels=pixels[env_index],
+                        goals=goals[env_index],
+                        proposal_key=proposal_key,
+                    )
+                ),
             )
             normalized_blocks = np.asarray(normalized_blocks)
             keep = normalized_blocks[: self.receding_horizon]
@@ -213,11 +299,26 @@ def json_safe(value):
 
 def main():
     args = parse_args()
-    hdf5_path, _ = task_paths(args.task, args.data_root)
+    if (args.proposal_method is None) != (args.proposal_checkpoint_dir is None):
+        raise ValueError(
+            '--proposal-method and --proposal-checkpoint-dir must be provided together.'
+        )
+
+    hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
     try:
         episodes, starts = dataset.sample_starts(args.num_eval, args.goal_offset_steps, args.seed)
         scaler = StandardActionScaler(dataset.get_column('action'))
+        proposal_agent = None
+        if args.proposal_method is not None:
+            from eval_ogbench_agent_lewm_envs import load_agent
+
+            proposal_agent = load_agent(
+                args.proposal_method,
+                lance_path,
+                args.proposal_checkpoint_dir,
+                args.proposal_checkpoint_step,
+            )
         policy = JAXLeWMCEMPolicy(
             args.checkpoint,
             scaler,
@@ -229,6 +330,10 @@ def main():
             steps=args.cem_steps,
             topk=args.cem_topk,
             var_scale=args.cem_var_scale,
+            cost_mode=args.cem_cost_mode,
+            proposal_agent=proposal_agent,
+            proposal_temperature=args.proposal_temperature,
+            paired_plan_keys=args.paired_plan_keys,
         )
         started = time.time()
         metrics = evaluate_dataset_goals(
@@ -248,7 +353,11 @@ def main():
 
     result = {
         'task': args.task,
-        'method': 'lewm_jax_cem',
+        'method': (
+            'lewm_jax_cem'
+            if args.proposal_method is None
+            else f'lewm_jax_cem_{args.proposal_method}_proposal'
+        ),
         'environment_source': 'ogbench.lewm_envs',
         'encoder': policy.checkpoint_metadata['encoder'],
         'architecture': policy.checkpoint_metadata['architecture'],
@@ -267,10 +376,23 @@ def main():
             'steps': args.cem_steps,
             'topk': args.cem_topk,
             'var_scale': args.cem_var_scale,
+            'cost_mode': args.cem_cost_mode,
             'batch_size': 1,
             'history_len': 1,
             'warm_start': True,
+            'paired_plan_keys': args.paired_plan_keys,
         },
+        'proposal': (
+            None
+            if args.proposal_method is None
+            else {
+                'method': args.proposal_method,
+                'checkpoint_dir': args.proposal_checkpoint_dir,
+                'checkpoint_step': args.proposal_checkpoint_step,
+                'temperature': args.proposal_temperature,
+                'injection': 'first_block_initial_mean',
+            }
+        ),
         'eval_episodes': episodes,
         'eval_start_steps': starts,
         'evaluation_time': elapsed,

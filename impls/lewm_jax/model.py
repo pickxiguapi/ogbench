@@ -79,8 +79,8 @@ class LeWM(nn.Module):
         )
         return embeddings, predictions
 
-    def rollout_cost(self, pixels, goals, action_candidates):
-        """Score candidates by final predicted-to-goal embedding distance."""
+    def _rollout_predictions(self, pixels, goals, action_candidates):
+        """Return goal embeddings and all autoregressive rollout checkpoints."""
         num_samples = action_candidates.shape[1]
         context_embeddings = self.encode_pixels(pixels[:, 0], train=False)
         context_embeddings = jnp.broadcast_to(
@@ -98,6 +98,7 @@ class LeWM(nn.Module):
         embeddings = context_embeddings
 
         batch_size = embeddings.shape[0]
+        rollout_predictions = []
         for step in range(horizon - history):
             flat_embeddings = embeddings.reshape(
                 batch_size * num_samples, embeddings.shape[2], self.embed_dim
@@ -110,6 +111,9 @@ class LeWM(nn.Module):
                 flat_actions[:, -self.history_size :],
                 train=False,
             )[:, -1]
+            rollout_predictions.append(
+                prediction.reshape(batch_size, num_samples, self.embed_dim)
+            )
             embeddings = jnp.concatenate(
                 [embeddings, prediction.reshape(batch_size, num_samples, 1, self.embed_dim)],
                 axis=2,
@@ -130,4 +134,30 @@ class LeWM(nn.Module):
             train=False,
         )[:, -1]
         prediction = prediction.reshape(batch_size, num_samples, self.embed_dim)
-        return jnp.sum((prediction - goal_embeddings[:, None]) ** 2, axis=-1)
+        rollout_predictions.append(prediction)
+        return goal_embeddings, jnp.stack(rollout_predictions, axis=2)
+
+    def rollout_cost(self, pixels, goals, action_candidates):
+        """Score candidates by final predicted-to-goal embedding distance."""
+        goal_embeddings, predictions = self._rollout_predictions(
+            pixels, goals, action_candidates
+        )
+        final_prediction = predictions[:, :, -1]
+        return jnp.sum(
+            (final_prediction - goal_embeddings[:, None]) ** 2, axis=-1
+        )
+
+    def rollout_cost_min_over_horizon(self, pixels, goals, action_candidates):
+        """Score by the closest predicted rollout checkpoint to the goal.
+
+        With the evaluation runtime's single current frame and the default
+        horizon/action block of 5/5, the checkpoints correspond to 5, 10, 15,
+        20, and 25 future atomic actions.  The current observation is excluded.
+        """
+        goal_embeddings, predictions = self._rollout_predictions(
+            pixels, goals, action_candidates
+        )
+        distances = jnp.sum(
+            (predictions - goal_embeddings[:, None, None]) ** 2, axis=-1
+        )
+        return jnp.min(distances, axis=-1)

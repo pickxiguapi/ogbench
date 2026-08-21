@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # 英博云：依次训练 LeWM 四任务的稳定化 HIQL；s100k、bs256、sg10、seed0、低学习率与弱增强。
+# 官方的HIQL：原版层次化 HIQL；subgoal10、high-alpha1、low-alpha3、lr1e-4、p_aug0.2、100k。属于早期降低高层不稳定性的版本。 
 CLIENT_ID=yb
 DATE=$(date +%Y-%m-%d)
 source /root/data/yyf/ogbench-new/scripts/client_env.sh
