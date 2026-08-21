@@ -52,6 +52,7 @@
 | `20260821_train_yb_visual_hiql_chunk_two_v_play_five_tasks_s500k.sh` | Visual HIQL 五任务 action-chunk 版本 | HIQL-Chunk Two-V、k5、subgoal10、s500k、bs256、seed0 |
 | `20260821_train_yb_visual_hiql_chunk_gciql_low_awr_play_noisy_eight_tasks_s500k.sh` | Visual Play/Noisy 八任务层次化 action-chunk 策略 | HIQL-Chunk-GCIQL-Low-AWR、k5、subgoal10、s500k、bs512、seed0、low-expectile0.9 |
 | `20260821_train_yb_lewm_jax_visual_play_four_tasks_fs5_bs512_s500k.sh` | Visual Play 四任务 action-block 世界模型 | LeWM-JAX IMPALA Small、s500k、bs512、seed3072、frameskip/action-block5、history3、SigReg0.09；服务于 CEM horizon5、RH1 |
+| `20260822_train_node2_lewm_jax_visual_play_noisy_eight_tasks_e10.sh` | A800 node2 Visual Play/Noisy 八任务世界模型官方训练量修正 | 8 卡一环境一卡并行；LeWM-JAX IMPALA Small、e10、bs128、seed3072、frameskip/action-block5、history3、SigReg0.09；逐 epoch 保存 checkpoint |
 
 维护要求：表中脚本名必须与 `scripts/train/` 的实际 `.sh` 文件一一对应。修改任务集合、算法、seed、训练量、batch size、chunk/subgoal、正则项或世界模型时间尺度时，必须同步修改 Bash 顶部注释和本表对应行。
 
@@ -65,7 +66,7 @@
 ## 服务器公共路径
 
 - 各服务器反复使用的稳定硬编码路径统一记录在 `scripts/client_env.sh`；实验 Bash 应先 source 该文件，再使用其中的路径变量，禁止在多个活跃脚本中重复散落同一客户端路径。
-- `CLIENT_ID` 只允许使用四个固定短 ID：英博云为 `yb`、Server 23 为 `23`、Server 7002 为 `7002`、Server 11 为 `11`；禁止使用 hostname、IP、长别名或其他拼写。
+- `CLIENT_ID` 只允许使用已登记的固定短 ID：英博云为 `yb`、A800 node2 为 `node2`、Server 23 为 `23`、Server 7002 为 `7002`、Server 11 为 `11`；禁止使用 IP、长别名或其他拼写。
 - `client_env.sh` 除用于按 `CLIENT_ID` 选择服务器的极简 `case` 外，只能包含客户端身份和纯路径赋值；不得加入必填检查、默认值、合法性校验、错误分支或其他兜底逻辑，也不得包含 GPU、task、环境名、算法、超参、`EXP_NAME`、日志名、路径检查、`mkdir`、`cd` 或任何训练/评测命令。
 - 只记录当前有效的公共路径。旧 checkout、一次性 release-audit 和废弃输出目录留在 backup 历史脚本中，不得作为当前客户端默认值。
 - 新增服务器时使用独立且清晰的服务器小节，并保持同一语义的变量名一致；服务器专属差异集中在 `client_env.sh`，实验配置仍留在各实验 Bash 中。
