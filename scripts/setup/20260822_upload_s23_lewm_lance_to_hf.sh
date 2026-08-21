@@ -84,7 +84,7 @@ api.upload_large_folder(
         "reacher.lance/**",
         "tworoom.lance/**",
     ],
-    num_workers=8,
+    num_workers=4,
     print_report=True,
     print_report_every=60,
 )
