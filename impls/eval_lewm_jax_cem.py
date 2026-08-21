@@ -1,4 +1,4 @@
-"""Evaluate a JAX LeWM checkpoint with CEM in OGBench's built-in LeWM environments."""
+"""Evaluate a JAX LeWM checkpoint with CEM or MPPI in LeWM environments."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--goal-offset-steps', type=int, default=25)
     parser.add_argument('--eval-budget', type=int, default=50)
+    parser.add_argument('--planner', choices=('cem', 'mppi'), default='cem')
     parser.add_argument('--cem-horizon', type=int, default=5)
     parser.add_argument('--cem-receding-horizon', type=int, default=5)
     parser.add_argument('--action-block', type=int, default=5)
@@ -39,6 +40,21 @@ def parse_args():
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
+    parser.add_argument(
+        '--mppi-temperature',
+        type=float,
+        default=0.5,
+        help='Temperature for softmax weighting of MPPI top-k candidates.',
+    )
+    parser.add_argument(
+        '--mppi-native-q-beta',
+        type=float,
+        default=0.0,
+        help=(
+            'If positive, add beta times standardized conservative native-Q '
+            'to the MPPI logits after LeWM has selected its top-k candidates.'
+        ),
+    )
     parser.add_argument(
         '--cem-cost-mode',
         choices=('terminal', 'min_over_horizon'),
@@ -48,12 +64,56 @@ def parse_args():
     parser.add_argument('--proposal-checkpoint-dir')
     parser.add_argument('--proposal-checkpoint-step', type=int, default=100000)
     parser.add_argument('--proposal-temperature', type=float, default=0.0)
+    parser.add_argument('--proposal-num-samples', type=int, default=1)
+    parser.add_argument(
+        '--proposal-population-size',
+        type=int,
+        default=0,
+        help=(
+            'If positive, inject this many actor-sampled first blocks into '
+            'iteration zero before LeWM-only CEM ranking; sample zero is mode.'
+        ),
+    )
+    parser.add_argument(
+        '--proposal-selection',
+        choices=('mode', 'native_q', 'shared_q'),
+        default='mode',
+    )
+    parser.add_argument(
+        '--cem-dual-center-q',
+        action='store_true',
+        help=(
+            'Run two independent half-budget CEM searches centered on the '
+            'actor mode and Q-selected actor sample, then let LeWM cost choose '
+            'between their final means. The total population remains '
+            '--cem-num-samples and top-k is split evenly.'
+        ),
+    )
+    parser.add_argument(
+        '--native-q-keep',
+        type=int,
+        default=0,
+        help=(
+            'If positive, keep this many candidates by the proposal agent twin-Q '
+            'before selecting LeWM elites at every CEM iteration.'
+        ),
+    )
+    parser.add_argument('--shared-q-checkpoint-dir')
+    parser.add_argument('--shared-q-checkpoint-step', type=int, default=100_000)
     parser.add_argument(
         '--paired-plan-keys',
         action='store_true',
         help=(
             'Derive CEM sampling keys from (seed, environment index, replan index) '
             'so vanilla and proposal-guided runs use matched planner randomness.'
+        ),
+    )
+    parser.add_argument(
+        '--diagnose-min-horizon',
+        action='store_true',
+        help=(
+            'Record which predicted checkpoint minimizes latent goal distance '
+            'for every executed CEM plan, including per-episode statistics.'
         ),
     )
     parser.add_argument('--video-dir')
@@ -69,7 +129,7 @@ def checkpoint_epoch(path):
 
 
 class JAXLeWMCEMPolicy:
-    """Direct JAX CEM planner with normalized action-block warm starts."""
+    """Direct JAX CEM/MPPI planner with normalized action-block warm starts."""
 
     def __init__(
         self,
@@ -84,10 +144,21 @@ class JAXLeWMCEMPolicy:
         steps,
         topk,
         var_scale,
+        planner='cem',
+        mppi_temperature=0.5,
+        mppi_native_q_beta=0.0,
         cost_mode='terminal',
         proposal_agent=None,
         proposal_temperature=0.0,
+        proposal_action_space='planner',
+        proposal_num_samples=1,
+        proposal_population_size=0,
+        proposal_selection='mode',
+        dual_center_q=False,
+        native_q_keep=0,
+        shared_q_evaluator=None,
         paired_plan_keys=False,
+        diagnose_min_horizon=False,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -95,6 +166,62 @@ class JAXLeWMCEMPolicy:
             raise ValueError('CEM receding horizon cannot exceed the planning horizon.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
+        if planner not in ('cem', 'mppi'):
+            raise ValueError(f'Unsupported planner: {planner!r}.')
+        if mppi_temperature <= 0:
+            raise ValueError('MPPI temperature must be positive.')
+        if mppi_native_q_beta < 0:
+            raise ValueError('MPPI native-Q beta cannot be negative.')
+        if mppi_native_q_beta and planner != 'mppi':
+            raise ValueError('MPPI native-Q weighting requires planner=mppi.')
+        if mppi_native_q_beta and proposal_agent is None:
+            raise ValueError('MPPI native-Q weighting requires a proposal agent.')
+        if planner == 'mppi' and native_q_keep:
+            raise ValueError('Native-Q candidate filtering is only defined for CEM.')
+        if native_q_keep < 0 or native_q_keep > num_samples:
+            raise ValueError('Native-Q keep count must be in [0, num_samples].')
+        if native_q_keep and proposal_agent is None:
+            raise ValueError('Native-Q filtering requires a proposal agent.')
+        if native_q_keep and native_q_keep < topk:
+            raise ValueError('Native-Q keep count cannot be smaller than CEM topk.')
+        if proposal_num_samples < 1:
+            raise ValueError('Proposal sample count must be positive.')
+        if proposal_action_space not in ('planner', 'environment'):
+            raise ValueError(
+                'Proposal action space must be either planner or environment.'
+            )
+        if proposal_action_space == 'environment' and not hasattr(
+            scaler, 'transform'
+        ):
+            raise ValueError(
+                'Environment-space proposals require a scaler with transform().'
+            )
+        if proposal_population_size < 0 or proposal_population_size > num_samples:
+            raise ValueError('Proposal population size must be in [0, num_samples].')
+        if proposal_population_size and proposal_agent is None:
+            raise ValueError('Proposal population injection requires a proposal agent.')
+        if proposal_selection != 'mode' and proposal_num_samples < 2:
+            raise ValueError('Q-selected proposals require at least two policy samples.')
+        if proposal_selection == 'shared_q' and shared_q_evaluator is None:
+            raise ValueError('Shared-Q proposal selection requires a shared evaluator.')
+        if dual_center_q:
+            if planner != 'cem':
+                raise ValueError('Dual-center Q search requires planner=cem.')
+            if proposal_selection not in ('native_q', 'shared_q'):
+                raise ValueError('Dual-center Q search requires Q proposal selection.')
+            if proposal_agent is None:
+                raise ValueError('Dual-center Q search requires a proposal agent.')
+            if proposal_population_size or native_q_keep:
+                raise ValueError(
+                    'Dual-center Q search cannot be combined with population '
+                    'injection or per-iteration Q filtering.'
+                )
+            if num_samples % 2 or topk % 2:
+                raise ValueError(
+                    'Dual-center Q search requires even num-samples and top-k.'
+                )
+            if topk // 2 < 2:
+                raise ValueError('Each dual-center search needs at least two elites.')
 
         payload = flax.serialization.msgpack_restore(Path(checkpoint).read_bytes())
         config = payload['config']
@@ -130,7 +257,12 @@ class JAXLeWMCEMPolicy:
             'encoder': config.get('encoder', 'impala_small'),
             'precision': precision,
             'image_size': int(config['image_size']),
+            'embed_dim': int(config['embed_dim']),
         }
+        if shared_q_evaluator is not None and int(
+            shared_q_evaluator.config['latent_dim']
+        ) != int(config['embed_dim']):
+            raise ValueError('Shared evaluator and LeWM latent dimensions differ.')
         self.scaler = scaler
         self.seed = int(seed)
         self.rng = jax.random.PRNGKey(seed)
@@ -141,19 +273,52 @@ class JAXLeWMCEMPolicy:
         self.steps = int(steps)
         self.topk = int(topk)
         self.var_scale = float(var_scale)
+        self.planner = str(planner)
+        self.mppi_temperature = float(mppi_temperature)
+        self.mppi_native_q_beta = float(mppi_native_q_beta)
         self.cost_mode = str(cost_mode)
         self.proposal_agent = proposal_agent
         self.proposal_temperature = float(proposal_temperature)
+        self.proposal_action_space = str(proposal_action_space)
+        self.proposal_num_samples = int(proposal_num_samples)
+        self.proposal_population_size = int(proposal_population_size)
+        self.proposal_selection = str(proposal_selection)
+        self.dual_center_q = bool(dual_center_q)
+        self.native_q_keep = int(native_q_keep)
+        self.shared_q_evaluator = shared_q_evaluator
         self.paired_plan_keys = bool(paired_plan_keys)
+        self.diagnose_min_horizon = bool(diagnose_min_horizon)
         self._plan_one = jax.jit(self._build_plan_one())
+        self._score_plans = jax.jit(self._build_score_plans())
+        self._plan_distances = jax.jit(self._build_plan_distances())
 
     def _build_plan_one(self):
         model = self.model
         variables = self.variables
-        num_samples = self.num_samples
+        num_samples = self.num_samples // 2 if self.dual_center_q else self.num_samples
         steps = self.steps
-        topk = self.topk
+        topk = self.topk // 2 if self.dual_center_q else self.topk
         var_scale = self.var_scale
+        planner = self.planner
+        mppi_temperature = self.mppi_temperature
+        mppi_native_q_beta = self.mppi_native_q_beta
+        proposal_agent = self.proposal_agent
+        proposal_action_space = self.proposal_action_space
+        native_q_keep = self.native_q_keep
+        shared_q_evaluator = self.shared_q_evaluator
+        proposal_population_size = self.proposal_population_size
+        action_dim = int(self.scaler.action_dim)
+        action_block = self.action_block
+        action_mean = jnp.asarray(self.scaler.mean, dtype=jnp.float32)
+        action_scale = jnp.asarray(self.scaler.scale, dtype=jnp.float32)
+
+        def planner_to_proposal_actions(blocks):
+            if proposal_action_space == 'planner':
+                return blocks
+            shape = blocks.shape
+            atomic = blocks.reshape(-1, action_block, action_dim)
+            atomic = atomic * action_scale + action_mean
+            return atomic.reshape(shape)
         if self.cost_mode == 'terminal':
             rollout_cost_method = model.rollout_cost
         elif self.cost_mode == 'min_over_horizon':
@@ -161,10 +326,33 @@ class JAXLeWMCEMPolicy:
         else:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
 
-        def plan_one(key, pixels, goals, initial_mean):
+        def plan_one(key, pixels, goals, initial_mean, proposal_blocks):
             std = jnp.full_like(initial_mean, var_scale)
+            if native_q_keep:
+                if shared_q_evaluator is None:
+                    q_observations = jnp.repeat(
+                        pixels[-1][None], num_samples, axis=0
+                    )
+                    q_goals = jnp.repeat(goals[-1][None], num_samples, axis=0)
+                else:
+                    observation_latent = model.apply(
+                        variables,
+                        pixels[-1][None],
+                        train=False,
+                        method=model.encode_pixels,
+                    ).astype(jnp.float32)
+                    goal_latent = model.apply(
+                        variables,
+                        goals[-1][None],
+                        train=False,
+                        method=model.encode_pixels,
+                    ).astype(jnp.float32)
+                    q_observations = jnp.repeat(
+                        observation_latent, num_samples, axis=0
+                    )
+                    q_goals = jnp.repeat(goal_latent, num_samples, axis=0)
 
-            def cem_step(_, carry):
+            def optimizer_step(iteration, carry):
                 key, mean, std = carry
                 key, sample_key = jax.random.split(key)
                 candidates = (
@@ -177,6 +365,19 @@ class JAXLeWMCEMPolicy:
                     + mean[None]
                 )
                 candidates = candidates.at[0].set(mean)
+                if proposal_population_size:
+                    # The mode remains the exact nominal candidate at index 0;
+                    # stochastic actor chunks replace only the first block of
+                    # additional iteration-zero candidates.  All candidates
+                    # are then ranked solely by the LeWM rollout cost.
+                    candidates = jax.lax.cond(
+                        iteration == 0,
+                        lambda value: value.at[
+                            :proposal_population_size, 0
+                        ].set(proposal_blocks),
+                        lambda value: value,
+                        candidates,
+                    )
                 costs = model.apply(
                     variables,
                     pixels[None, None],
@@ -184,14 +385,110 @@ class JAXLeWMCEMPolicy:
                     candidates[None],
                     method=rollout_cost_method,
                 )[0]
-                _, elite_indices = jax.lax.top_k(-costs, topk)
-                elites = candidates[elite_indices]
-                return key, elites.mean(axis=0), elites.std(axis=0, ddof=1)
+                if native_q_keep:
+                    q_action_blocks = planner_to_proposal_actions(candidates[:, 0])
+                    if shared_q_evaluator is None:
+                        q1, q2 = proposal_agent.network.select('critic')(
+                            q_observations,
+                            q_goals,
+                            q_action_blocks,
+                        )
+                        q_values = jnp.minimum(q1, q2)
+                    else:
+                        q_values = shared_q_evaluator.score_actions(
+                            q_observations, q_goals, q_action_blocks
+                        )
+                    _, q_indices = jax.lax.top_k(q_values, native_q_keep)
+                    gated_costs = jnp.full_like(costs, jnp.inf)
+                    costs = gated_costs.at[q_indices].set(costs[q_indices])
+                if planner == 'cem':
+                    _, elite_indices = jax.lax.top_k(-costs, topk)
+                    elites = candidates[elite_indices]
+                    mean = elites.mean(axis=0)
+                    std = elites.std(axis=0, ddof=1)
+                else:
+                    # Match stable-worldmodel's official MPPISolver: select
+                    # top-k, softmax raw shifted costs, update only the mean,
+                    # and keep the sampling scale fixed across iterations.
+                    relevant_costs, relevant_indices = jax.lax.top_k(
+                        -costs, topk
+                    )
+                    relevant_costs = -relevant_costs
+                    relevant_candidates = candidates[relevant_indices]
+                    logits = -(
+                        relevant_costs - jnp.min(relevant_costs)
+                    ) / mppi_temperature
+                    if mppi_native_q_beta:
+                        q_observations = jnp.repeat(
+                            pixels[-1][None], topk, axis=0
+                        )
+                        q_goals = jnp.repeat(goals[-1][None], topk, axis=0)
+                        q_action_blocks = planner_to_proposal_actions(
+                            relevant_candidates[:, 0]
+                        )
+                        q1, q2 = proposal_agent.network.select('critic')(
+                            q_observations,
+                            q_goals,
+                            q_action_blocks,
+                        )
+                        q_values = jnp.minimum(q1, q2)
+                        normalized_q = (
+                            q_values - jnp.mean(q_values)
+                        ) / jnp.maximum(jnp.std(q_values), 1e-6)
+                        normalized_q = jnp.clip(normalized_q, -3.0, 3.0)
+                        logits = logits + mppi_native_q_beta * normalized_q
+                    weights = jax.nn.softmax(logits)
+                    mean = jnp.sum(
+                        weights[:, None, None] * relevant_candidates, axis=0
+                    )
+                return key, mean, std
 
-            _, mean, std = jax.lax.fori_loop(0, steps, cem_step, (key, initial_mean, std))
+            _, mean, std = jax.lax.fori_loop(
+                0, steps, optimizer_step, (key, initial_mean, std)
+            )
             return mean, std
 
         return plan_one
+
+    def _build_score_plans(self):
+        model = self.model
+        variables = self.variables
+        if self.cost_mode == 'terminal':
+            rollout_cost_method = model.rollout_cost
+        elif self.cost_mode == 'min_over_horizon':
+            rollout_cost_method = model.rollout_cost_min_over_horizon
+        else:
+            raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
+
+        def score_plans(pixels, goals, plans):
+            return model.apply(
+                variables,
+                pixels[None, None],
+                goals[None, None],
+                plans[None],
+                method=rollout_cost_method,
+            )[0]
+
+        return score_plans
+
+    def _build_plan_distances(self):
+        model = self.model
+        variables = self.variables
+
+        def plan_distances(pixels, goals, plan):
+            goal_embeddings, predictions = model.apply(
+                variables,
+                pixels[None, None],
+                goals[None, None],
+                plan[None, None],
+                method=model._rollout_predictions,
+            )
+            return jnp.sum(
+                (predictions[0, 0] - goal_embeddings[0, None]) ** 2,
+                axis=-1,
+            )
+
+        return plan_distances
 
     def reset(self, action_space, num_envs):
         action_dim = int(np.prod(action_space.shape))
@@ -209,6 +506,14 @@ class JAXLeWMCEMPolicy:
         self.buffers = [deque() for _ in range(num_envs)]
         self.warm_starts = [None] * num_envs
         self.plan_counts = np.zeros(num_envs, dtype=np.int64)
+        self.dual_center_choice_counts = np.zeros(2, dtype=np.int64)
+        self.min_horizon_counts_by_env = np.zeros(
+            (num_envs, self.horizon), dtype=np.int64
+        )
+        self.min_horizon_distance_sums_by_env = np.zeros(
+            (num_envs, self.horizon), dtype=np.float64
+        )
+        self.min_horizon_replans_by_env = np.zeros(num_envs, dtype=np.int64)
 
     def _next_plan_keys(self, env_index):
         """Return proposal/CEM keys, optionally matched across method variants."""
@@ -225,35 +530,150 @@ class JAXLeWMCEMPolicy:
         self.rng, proposal_key, plan_key = jax.random.split(self.rng, 3)
         return proposal_key, plan_key
 
-    def _proposal_block(self, pixels, goals, key):
-        normalized = np.asarray(
+    def _proposal_to_planner_actions(self, blocks):
+        """Convert actor outputs into the standardized LeWM planner space."""
+        blocks = np.asarray(blocks)
+        if self.proposal_action_space == 'planner':
+            return blocks
+        shape = blocks.shape
+        atomic = blocks.reshape(-1, self.atomic_action_dim)
+        return self.scaler.transform(atomic).reshape(shape)
+
+    def _q_selection_blocks(self, pixels, goals, key):
+        """Return the exact actor mode and the conservative-Q-selected sample."""
+        sample_key, mode_key = jax.random.split(key)
+        observations = np.repeat(
+            np.asarray(pixels[-1:]), self.proposal_num_samples, axis=0
+        )
+        goal_batch = np.repeat(
+            np.asarray(goals[-1:]), self.proposal_num_samples, axis=0
+        )
+        proposal_blocks = np.asarray(
+            self.proposal_agent.sample_actions(
+                observations=observations,
+                goals=goal_batch,
+                seed=sample_key,
+                temperature=self.proposal_temperature,
+            )
+        ).copy()
+        mode = np.asarray(
             self.proposal_agent.sample_actions(
                 observations=np.asarray(pixels[-1:]),
                 goals=np.asarray(goals[-1:]),
-                seed=key,
+                seed=mode_key,
+                temperature=0.0,
+            )
+        )[0]
+        if proposal_blocks.shape != (
+            self.proposal_num_samples,
+            self.block_action_dim,
+        ):
+            raise ValueError(
+                f'Proposal returned {proposal_blocks.shape}; expected '
+                f'({self.proposal_num_samples}, {self.block_action_dim}).'
+            )
+        proposal_blocks[0] = mode
+        if self.proposal_selection == 'native_q':
+            q1, q2 = self.proposal_agent.network.select('critic')(
+                observations, goal_batch, jnp.asarray(proposal_blocks)
+            )
+            q_values = jnp.minimum(q1, q2)
+        else:
+            observation_latent = self.model.apply(
+                self.variables,
+                jnp.asarray(pixels[-1:]),
+                train=False,
+                method=self.model.encode_pixels,
+            ).astype(jnp.float32)
+            goal_latent = self.model.apply(
+                self.variables,
+                jnp.asarray(goals[-1:]),
+                train=False,
+                method=self.model.encode_pixels,
+            ).astype(jnp.float32)
+            q_values = self.shared_q_evaluator.score_actions(
+                jnp.repeat(observation_latent, self.proposal_num_samples, axis=0),
+                jnp.repeat(goal_latent, self.proposal_num_samples, axis=0),
+                jnp.asarray(proposal_blocks),
+            )
+        return (
+            self._proposal_to_planner_actions(mode),
+            self._proposal_to_planner_actions(
+                proposal_blocks[int(jnp.argmax(q_values))]
+            ),
+        )
+
+    def _proposal_block(self, pixels, goals, key):
+        if self.proposal_selection == 'mode':
+            proposal_block = np.asarray(
+                self.proposal_agent.sample_actions(
+                    observations=np.asarray(pixels[-1:]),
+                    goals=np.asarray(goals[-1:]),
+                    seed=key,
+                    temperature=self.proposal_temperature,
+                )
+            )
+            if proposal_block.shape != (1, self.block_action_dim):
+                raise ValueError(
+                    f'Proposal returned {proposal_block.shape}; expected '
+                    f'(1, {self.block_action_dim}).'
+                )
+            return self._proposal_to_planner_actions(proposal_block[0])
+
+        _, q_selected = self._q_selection_blocks(pixels, goals, key)
+        return q_selected
+
+    def _proposal_population(self, pixels, goals, key):
+        sample_key, mode_key = jax.random.split(key)
+        count = self.proposal_population_size
+        observations = np.repeat(np.asarray(pixels[-1:]), count, axis=0)
+        goal_batch = np.repeat(np.asarray(goals[-1:]), count, axis=0)
+        blocks = np.asarray(
+            self.proposal_agent.sample_actions(
+                observations=observations,
+                goals=goal_batch,
+                seed=sample_key,
                 temperature=self.proposal_temperature,
             )
-        )
-        if normalized.shape != (1, self.block_action_dim):
+        ).copy()
+        if blocks.shape != (count, self.block_action_dim):
             raise ValueError(
-                f'Proposal returned {normalized.shape}; expected '
-                f'(1, {self.block_action_dim}).'
+                f'Proposal population returned {blocks.shape}; expected '
+                f'({count}, {self.block_action_dim}).'
             )
-        return normalized[0]
+        blocks[0] = np.asarray(
+            self.proposal_agent.sample_actions(
+                observations=np.asarray(pixels[-1:]),
+                goals=np.asarray(goals[-1:]),
+                seed=mode_key,
+                temperature=0.0,
+            )
+        )[0]
+        return self._proposal_to_planner_actions(blocks)
 
-    def _initial_mean(self, env_index, pixels=None, goals=None, proposal_key=None):
+    def _initial_mean(
+        self,
+        env_index,
+        pixels=None,
+        goals=None,
+        proposal_key=None,
+        proposal_block=None,
+    ):
         initial = np.zeros((self.horizon, self.block_action_dim), dtype=np.float32)
         warm = self.warm_starts[env_index]
         if warm is not None:
             initial[: len(warm)] = warm
         if self.proposal_agent is not None:
-            if pixels is None or goals is None or proposal_key is None:
+            if proposal_block is not None:
+                initial[0] = proposal_block
+            elif pixels is None or goals is None or proposal_key is None:
                 raise ValueError('Proposal-guided CEM requires pixels, goals, and a PRNG key.')
-            # GCIQL-Chunk predicts exactly one normalized action block from the
-            # real current image and dataset goal.  Only replace the first CEM
-            # block; the remaining horizon stays under the original LeWM warm
-            # start / zero initialization and is optimized by CEM.
-            initial[0] = self._proposal_block(pixels, goals, proposal_key)
+            else:
+                # GCIQL-Chunk predicts exactly one normalized action block from
+                # the real current image and dataset goal.  Only replace the
+                # first planner block; the remaining horizon stays under the
+                # original LeWM warm start / zero initialization.
+                initial[0] = self._proposal_block(pixels, goals, proposal_key)
         return initial
 
     def get_actions(self, pixels, goals, alive):
@@ -261,20 +681,81 @@ class JAXLeWMCEMPolicy:
             if self.buffers[env_index]:
                 continue
             proposal_key, plan_key = self._next_plan_keys(env_index)
-            normalized_blocks, _ = self._plan_one(
-                plan_key,
-                jnp.asarray(pixels[env_index]),
-                jnp.asarray(goals[env_index]),
-                jnp.asarray(
-                    self._initial_mean(
-                        env_index,
-                        pixels=pixels[env_index],
-                        goals=goals[env_index],
-                        proposal_key=proposal_key,
+            proposal_blocks = None
+            if self.dual_center_q:
+                mode_block, q_block = self._q_selection_blocks(
+                    pixels[env_index], goals[env_index], proposal_key
+                )
+                mode_initial = self._initial_mean(
+                    env_index, proposal_block=mode_block
+                )
+                q_initial = self._initial_mean(
+                    env_index, proposal_block=q_block
+                )
+                empty_blocks = jnp.zeros(
+                    (0, self.block_action_dim), dtype=jnp.float32
+                )
+                mode_plan, _ = self._plan_one(
+                    jax.random.fold_in(plan_key, 2),
+                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(goals[env_index]),
+                    jnp.asarray(mode_initial),
+                    empty_blocks,
+                )
+                q_plan, _ = self._plan_one(
+                    jax.random.fold_in(plan_key, 3),
+                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(goals[env_index]),
+                    jnp.asarray(q_initial),
+                    empty_blocks,
+                )
+                candidate_plans = jnp.stack((mode_plan, q_plan))
+                plan_costs = self._score_plans(
+                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(goals[env_index]),
+                    candidate_plans,
+                )
+                chosen_center = int(jnp.argmin(plan_costs))
+                self.dual_center_choice_counts[chosen_center] += 1
+                normalized_blocks = np.asarray(candidate_plans[chosen_center])
+            elif self.proposal_population_size:
+                proposal_blocks = self._proposal_population(
+                    pixels[env_index], goals[env_index], proposal_key
+                )
+                initial_mean = self._initial_mean(
+                    env_index, proposal_block=proposal_blocks[0]
+                )
+            else:
+                initial_mean = self._initial_mean(
+                    env_index,
+                    pixels=pixels[env_index],
+                    goals=goals[env_index],
+                    proposal_key=proposal_key,
+                )
+                proposal_blocks = np.zeros(
+                    (0, self.block_action_dim), dtype=np.float32
+                )
+            if not self.dual_center_q:
+                normalized_blocks, _ = self._plan_one(
+                    plan_key,
+                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(goals[env_index]),
+                    jnp.asarray(initial_mean),
+                    jnp.asarray(proposal_blocks),
+                )
+                normalized_blocks = np.asarray(normalized_blocks)
+            if self.diagnose_min_horizon:
+                distances = np.asarray(
+                    self._plan_distances(
+                        jnp.asarray(pixels[env_index]),
+                        jnp.asarray(goals[env_index]),
+                        jnp.asarray(normalized_blocks),
                     )
-                ),
-            )
-            normalized_blocks = np.asarray(normalized_blocks)
+                )
+                best_horizon = int(np.argmin(distances))
+                self.min_horizon_counts_by_env[env_index, best_horizon] += 1
+                self.min_horizon_distance_sums_by_env[env_index] += distances
+                self.min_horizon_replans_by_env[env_index] += 1
             keep = normalized_blocks[: self.receding_horizon]
             self.warm_starts[env_index] = normalized_blocks[self.receding_horizon :].copy()
             normalized_atomic = keep.reshape(-1, self.atomic_action_dim)
@@ -295,6 +776,32 @@ def json_safe(value):
     if isinstance(value, dict):
         return {key: json_safe(item) for key, item in value.items()}
     return value
+
+
+def load_shared_q_evaluator(checkpoint_dir, checkpoint_step, action_width):
+    """Restore latent Q/V heads trained by train_lewm_with_gciql_chunk.py."""
+    from agents.gciql_chunk_lewm_shared import (
+        LeWMSharedGCIQLChunkEvaluator,
+        get_config,
+    )
+    from utils.flax_utils import restore_agent
+
+    flags_path = Path(checkpoint_dir) / 'flags.json'
+    if not flags_path.is_file():
+        raise FileNotFoundError(f'Shared evaluator flags not found: {flags_path}')
+    saved = json.loads(flags_path.read_text())
+    config = get_config()
+    for key, value in saved.get('agent', {}).items():
+        if key in config:
+            config[key] = value
+    latent_dim = int(config.latent_dim)
+    evaluator = LeWMSharedGCIQLChunkEvaluator.create(
+        0,
+        jnp.zeros((1, latent_dim), dtype=jnp.float32),
+        jnp.zeros((1, action_width), dtype=jnp.float32),
+        config,
+    )
+    return restore_agent(evaluator, checkpoint_dir, checkpoint_step)
 
 
 def main():
@@ -319,6 +826,15 @@ def main():
                 args.proposal_checkpoint_dir,
                 args.proposal_checkpoint_step,
             )
+        shared_q_evaluator = None
+        if args.shared_q_checkpoint_dir is not None:
+            if args.native_q_keep <= 0:
+                raise ValueError('Shared-Q checkpoint requires --native-q-keep > 0.')
+            shared_q_evaluator = load_shared_q_evaluator(
+                args.shared_q_checkpoint_dir,
+                args.shared_q_checkpoint_step,
+                scaler.action_dim * args.action_block,
+            )
         policy = JAXLeWMCEMPolicy(
             args.checkpoint,
             scaler,
@@ -330,10 +846,21 @@ def main():
             steps=args.cem_steps,
             topk=args.cem_topk,
             var_scale=args.cem_var_scale,
+            planner=args.planner,
+            mppi_temperature=args.mppi_temperature,
+            mppi_native_q_beta=args.mppi_native_q_beta,
             cost_mode=args.cem_cost_mode,
             proposal_agent=proposal_agent,
             proposal_temperature=args.proposal_temperature,
+            proposal_action_space='planner',
+            proposal_num_samples=args.proposal_num_samples,
+            proposal_population_size=args.proposal_population_size,
+            proposal_selection=args.proposal_selection,
+            dual_center_q=args.cem_dual_center_q,
+            native_q_keep=args.native_q_keep,
+            shared_q_evaluator=shared_q_evaluator,
             paired_plan_keys=args.paired_plan_keys,
+            diagnose_min_horizon=args.diagnose_min_horizon,
         )
         started = time.time()
         metrics = evaluate_dataset_goals(
@@ -351,12 +878,38 @@ def main():
     finally:
         dataset.close()
 
+    min_horizon_diagnostics = None
+    if args.diagnose_min_horizon:
+        episode_successes = np.asarray(metrics['episode_successes'], dtype=bool)
+        total_counts = policy.min_horizon_counts_by_env.sum(axis=0)
+        successful_counts = policy.min_horizon_counts_by_env[episode_successes].sum(axis=0)
+        failed_counts = policy.min_horizon_counts_by_env[~episode_successes].sum(axis=0)
+        total_replans = int(policy.min_horizon_replans_by_env.sum())
+        distance_sums = policy.min_horizon_distance_sums_by_env.sum(axis=0)
+        min_horizon_diagnostics = {
+            'checkpoint_atomic_steps': [
+                args.action_block * (index + 1) for index in range(args.cem_horizon)
+            ],
+            'argmin_counts': total_counts,
+            'argmin_percentages': (
+                total_counts / max(total_replans, 1) * 100.0
+            ),
+            'successful_episode_argmin_counts': successful_counts,
+            'failed_episode_argmin_counts': failed_counts,
+            'mean_selected_plan_distance_by_horizon': (
+                distance_sums / max(total_replans, 1)
+            ),
+            'total_replans': total_replans,
+            'replans_by_episode': policy.min_horizon_replans_by_env,
+            'argmin_counts_by_episode': policy.min_horizon_counts_by_env,
+        }
+
     result = {
         'task': args.task,
         'method': (
-            'lewm_jax_cem'
+            f'lewm_jax_{args.planner}'
             if args.proposal_method is None
-            else f'lewm_jax_cem_{args.proposal_method}_proposal'
+            else f'lewm_jax_{args.planner}_{args.proposal_method}_proposal'
         ),
         'environment_source': 'ogbench.lewm_envs',
         'encoder': policy.checkpoint_metadata['encoder'],
@@ -368,7 +921,8 @@ def main():
         'num_eval': args.num_eval,
         'goal_offset_steps': args.goal_offset_steps,
         'eval_budget': args.eval_budget,
-        'cem': {
+        args.planner: {
+            'name': args.planner,
             'horizon': args.cem_horizon,
             'receding_horizon': args.cem_receding_horizon,
             'action_block': args.action_block,
@@ -376,6 +930,18 @@ def main():
             'steps': args.cem_steps,
             'topk': args.cem_topk,
             'var_scale': args.cem_var_scale,
+            'mppi_temperature': (
+                args.mppi_temperature if args.planner == 'mppi' else None
+            ),
+            'mppi_native_q_beta': (
+                args.mppi_native_q_beta if args.planner == 'mppi' else None
+            ),
+            'mppi_native_q_scope': (
+                'lewm_topk_first_block_each_iteration'
+                if args.mppi_native_q_beta > 0
+                else 'disabled'
+            ),
+            'mppi_official_stable_worldmodel_update': args.planner == 'mppi',
             'cost_mode': args.cem_cost_mode,
             'batch_size': 1,
             'history_len': 1,
@@ -390,13 +956,53 @@ def main():
                 'checkpoint_dir': args.proposal_checkpoint_dir,
                 'checkpoint_step': args.proposal_checkpoint_step,
                 'temperature': args.proposal_temperature,
+                'action_space': 'planner',
                 'injection': 'first_block_initial_mean',
+                'num_samples': args.proposal_num_samples,
+                'population_injection_size': args.proposal_population_size,
+                'population_injection_scope': (
+                    'cem_iteration_zero_first_block_lewm_only_ranking'
+                    if args.proposal_population_size > 0
+                    else 'disabled'
+                ),
+                'selection': args.proposal_selection,
+                'dual_center_q': args.cem_dual_center_q,
+                'dual_center_total_population': (
+                    args.cem_num_samples if args.cem_dual_center_q else None
+                ),
+                'dual_center_population_per_branch': (
+                    args.cem_num_samples // 2 if args.cem_dual_center_q else None
+                ),
+                'dual_center_topk_per_branch': (
+                    args.cem_topk // 2 if args.cem_dual_center_q else None
+                ),
+                'dual_center_choice_counts_mode_q': (
+                    policy.dual_center_choice_counts.tolist()
+                    if args.cem_dual_center_q
+                    else None
+                ),
+                'native_q_keep': args.native_q_keep,
+                'native_q_scope': (
+                    'disabled' if args.native_q_keep == 0 else 'each_cem_iteration_first_block'
+                ),
+                'q_source': (
+                    'native_gciql'
+                    if args.shared_q_checkpoint_dir is None
+                    else 'shared_frozen_lewm_encoder'
+                ),
+                'shared_q_checkpoint_dir': args.shared_q_checkpoint_dir,
+                'shared_q_checkpoint_step': (
+                    None
+                    if args.shared_q_checkpoint_dir is None
+                    else args.shared_q_checkpoint_step
+                ),
             }
         ),
         'eval_episodes': episodes,
         'eval_start_steps': starts,
         'evaluation_time': elapsed,
         'metrics': metrics,
+        'min_horizon_diagnostics': min_horizon_diagnostics,
         'success_rate': metrics['success_rate'],
         'episodes': args.num_eval,
     }

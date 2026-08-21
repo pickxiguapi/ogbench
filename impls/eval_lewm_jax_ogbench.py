@@ -31,6 +31,9 @@ class NPZActionScaler:
     def inverse_transform(self, value):
         return np.asarray(value) * self.scale + self.mean
 
+    def transform(self, value):
+        return (np.asarray(value) - self.mean) / self.scale
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -45,10 +48,24 @@ def parse_args():
     parser.add_argument('--cem-num-samples', type=int, default=300)
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
+    parser.add_argument('--cem-var-scale', type=float, default=1.0)
+    parser.add_argument(
+        '--cem-cost-mode',
+        choices=('terminal', 'min_over_horizon'),
+        default='terminal',
+    )
     parser.add_argument('--proposal-method', choices=('gciql_chunk',))
     parser.add_argument('--proposal-checkpoint-dir')
     parser.add_argument('--proposal-checkpoint-step', type=int, default=500000)
     parser.add_argument('--proposal-temperature', type=float, default=0.0)
+    parser.add_argument(
+        '--proposal-action-space',
+        choices=('planner', 'environment'),
+        default='planner',
+    )
+    parser.add_argument('--proposal-population-size', type=int, default=0)
+    parser.add_argument('--paired-plan-keys', action='store_true')
+    parser.add_argument('--native-q-keep', type=int, default=0)
     parser.add_argument('--output', required=True)
     return parser.parse_args()
 
@@ -94,9 +111,14 @@ def main():
         num_samples=args.cem_num_samples,
         steps=args.cem_steps,
         topk=args.cem_topk,
-        var_scale=1.0,
+        var_scale=args.cem_var_scale,
+        cost_mode=args.cem_cost_mode,
         proposal_agent=proposal_agent,
         proposal_temperature=args.proposal_temperature,
+        proposal_action_space=args.proposal_action_space,
+        proposal_population_size=args.proposal_population_size,
+        native_q_keep=args.native_q_keep,
+        paired_plan_keys=args.paired_plan_keys,
     )
 
     task_infos = env.unwrapped.task_infos
@@ -146,7 +168,10 @@ def main():
             'num_samples': args.cem_num_samples,
             'steps': args.cem_steps,
             'topk': args.cem_topk,
+            'var_scale': args.cem_var_scale,
+            'cost_mode': args.cem_cost_mode,
             'history_len': 1,
+            'paired_plan_keys': args.paired_plan_keys,
         },
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),
@@ -160,6 +185,9 @@ def main():
                 'checkpoint_step': args.proposal_checkpoint_step,
                 'temperature': args.proposal_temperature,
                 'injection': 'first_block_initial_mean',
+                'action_space': args.proposal_action_space,
+                'population_injection_size': args.proposal_population_size,
+                'native_q_keep': args.native_q_keep,
             }
         ),
     }

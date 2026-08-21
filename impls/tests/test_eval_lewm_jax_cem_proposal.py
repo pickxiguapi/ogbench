@@ -16,6 +16,15 @@ class FakeChunkAgent:
         return jnp.arange(10, dtype=jnp.float32)[None]
 
 
+class FakeScaler:
+    action_dim = 2
+    mean = np.array([1.0, -2.0], dtype=np.float32)
+    scale = np.array([2.0, 4.0], dtype=np.float32)
+
+    def transform(self, value):
+        return (np.asarray(value) - self.mean) / self.scale
+
+
 def proposal_policy():
     policy = object.__new__(JAXLeWMCEMPolicy)
     policy.horizon = 5
@@ -24,11 +33,33 @@ def proposal_policy():
     policy.block_action_dim = 10
     policy.proposal_agent = FakeChunkAgent()
     policy.proposal_temperature = 0.0
+    policy.proposal_action_space = 'planner'
+    policy.scaler = FakeScaler()
+    policy.proposal_num_samples = 1
+    policy.proposal_selection = 'mode'
+    policy.shared_q_evaluator = None
     policy.warm_starts = [np.full((2, 10), -3.0, dtype=np.float32)]
     return policy
 
 
 class ProposalInitializationTest(unittest.TestCase):
+    def test_native_q_filter_requires_proposal(self):
+        with self.assertRaisesRegex(ValueError, 'requires a proposal agent'):
+            JAXLeWMCEMPolicy.__init__(
+                object.__new__(JAXLeWMCEMPolicy),
+                checkpoint='unused',
+                scaler=None,
+                seed=0,
+                horizon=5,
+                receding_horizon=1,
+                action_block=5,
+                num_samples=300,
+                steps=5,
+                topk=30,
+                var_scale=1.0,
+                native_q_keep=150,
+            )
+
     def test_paired_plan_keys_match_with_and_without_proposal(self):
         vanilla = object.__new__(JAXLeWMCEMPolicy)
         guided = object.__new__(JAXLeWMCEMPolicy)
@@ -59,6 +90,18 @@ class ProposalInitializationTest(unittest.TestCase):
         np.testing.assert_array_equal(initial[0], np.arange(10, dtype=np.float32))
         np.testing.assert_array_equal(initial[1], np.full(10, -3.0, dtype=np.float32))
         np.testing.assert_array_equal(initial[2:], np.zeros((3, 10), dtype=np.float32))
+
+    def test_environment_action_proposal_is_standardized_for_planner(self):
+        policy = proposal_policy()
+        policy.proposal_action_space = 'environment'
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+        block = policy._proposal_block(pixels, pixels, jax.random.PRNGKey(0))
+
+        expected = FakeScaler().transform(
+            np.arange(10, dtype=np.float32).reshape(5, 2)
+        ).reshape(10)
+        np.testing.assert_allclose(block, expected)
 
     def test_proposal_shape_is_checked(self):
         policy = proposal_policy()
