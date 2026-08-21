@@ -14,7 +14,7 @@ lewm_exps=(
   LeWMJAX_ogbench_visual_cube_triple_play_impalasmall_bs512_s500k_seed3072_fs5_chunk5_cemh5_bf16_s23
   LeWMJAX_ogbench_visual_scene_play_impalasmall_bs512_s500k_seed3072_fs5_chunk5_cemh5_bf16_s23
 )
-gpus=(0 1 2 3)
+gpus=(4 5 6 7)
 output_root="$VISUAL_EVAL_ROOT/20260822_gciqlchunk_envscale_mincost_cem300x1_sigma01_h1_rh1_ab5_ep10_seed42"
 
 mkdir -p "$output_root"
