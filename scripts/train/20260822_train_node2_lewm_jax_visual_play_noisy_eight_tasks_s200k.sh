@@ -4,7 +4,7 @@ set -euo pipefail
 # A800 node2：8 卡并行训练 Visual Cube Single/Double/Triple 与 Scene 的 Play/Noisy 八个 LeWM-JAX；s200k、bs128、seed3072、frameskip5/history3、SigReg0.09。
 CLIENT_ID=node2
 DATE=$(date +%Y-%m-%d)
-source /data-training/yyf/ogbench-main/scripts/client_env.sh
+source /home/yyf/ogbench-main/scripts/client_env.sh
 cd "$OGBENCH_ROOT/impls"
 
 envs=(visual-cube-single-play-v0 visual-cube-double-play-v0 visual-cube-triple-play-v0 visual-scene-play-v0 visual-cube-single-noisy-v0 visual-cube-double-noisy-v0 visual-cube-triple-noisy-v0 visual-scene-noisy-v0)

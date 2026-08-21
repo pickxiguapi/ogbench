@@ -36,7 +36,7 @@ case "$CLIENT_ID" in
   node2)
     CLIENT_ROOT=/data-training/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench-main
+    OGBENCH_ROOT=/home/yyf/ogbench-main
     PYTHON_BIN=$CLIENT_ROOT/envs/ogbench/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
