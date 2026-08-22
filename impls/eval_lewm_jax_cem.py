@@ -170,6 +170,7 @@ class JAXLeWMCEMPolicy:
         empirical_action_blocks=None,
         context_history_size=1,
         return_best_candidate=False,
+        empirical_context_rank_penalty=0.0,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -191,6 +192,8 @@ class JAXLeWMCEMPolicy:
             raise ValueError('Planner context history size must be positive.')
         if return_best_candidate and planner != 'cem':
             raise ValueError('Returning the best candidate requires planner=cem.')
+        if empirical_context_rank_penalty < 0:
+            raise ValueError('Empirical context rank penalty cannot be negative.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -376,6 +379,9 @@ class JAXLeWMCEMPolicy:
         self.paired_plan_keys = bool(paired_plan_keys)
         self.diagnose_min_horizon = bool(diagnose_min_horizon)
         self.return_best_candidate = bool(return_best_candidate)
+        self.empirical_context_rank_penalty = float(
+            empirical_context_rank_penalty
+        )
         self.latent_probe_weight = None
         self.latent_probe_bias = None
         self.execution_steps = (
@@ -498,6 +504,7 @@ class JAXLeWMCEMPolicy:
             else jnp.asarray(self.latent_probe_bias, dtype=jnp.float32)
         )
         return_best_candidate = self.return_best_candidate
+        empirical_context_rank_penalty = self.empirical_context_rank_penalty
 
         def planner_to_proposal_actions(blocks):
             if proposal_action_space == 'planner':
@@ -621,7 +628,8 @@ class JAXLeWMCEMPolicy:
                             lambda value: value,
                             candidates,
                         )
-                    candidates = candidates.at[0].set(mean)
+                    if empirical_context_embeddings is None:
+                        candidates = candidates.at[0].set(mean)
                 if planner_action_low is not None:
                     # Score exactly the bounded actions that the environment can
                     # execute.  Otherwise CEM can exploit predictions for an
@@ -672,6 +680,18 @@ class JAXLeWMCEMPolicy:
                         costs = probe_distances[:, :, -1][0]
                     else:
                         costs = jnp.min(probe_distances, axis=-1)[0]
+                if empirical_context_embeddings is not None:
+                    rank_penalty = (
+                        jnp.arange(num_samples, dtype=jnp.float32)
+                        / max(num_samples - 1, 1)
+                        * empirical_context_rank_penalty
+                    )
+                    costs = jax.lax.cond(
+                        iteration == 0,
+                        lambda value: value + rank_penalty,
+                        lambda value: value,
+                        costs,
+                    )
                 best_candidate = candidates[jnp.argmin(costs)]
                 if native_q_keep:
                     q_action_blocks = planner_to_proposal_actions(candidates[:, 0])

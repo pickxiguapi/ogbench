@@ -104,6 +104,7 @@ def parse_args():
     )
     parser.add_argument('--cem-empirical-full-plans', action='store_true')
     parser.add_argument('--cem-empirical-state-conditioned', action='store_true')
+    parser.add_argument('--cem-empirical-context-rank-penalty', type=float, default=0.0)
     parser.add_argument('--cem-return-best-candidate', action='store_true')
     parser.add_argument('--latent-probe-qpos-indices')
     parser.add_argument('--latent-probe-samples', type=int, default=20_000)
@@ -218,6 +219,11 @@ def main():
         raise ValueError('Empirical action initialization cannot use a policy proposal.')
     if args.latent_probe_qpos_indices and args.proposal_method is not None:
         raise ValueError('Latent-probe cost cannot use a policy proposal.')
+    if (
+        args.cem_empirical_context_rank_penalty
+        and not args.cem_empirical_state_conditioned
+    ):
+        raise ValueError('Context rank penalty requires state-conditioned plans.')
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
     env.reset(seed=args.seed)
@@ -274,6 +280,7 @@ def main():
         empirical_action_blocks=empirical_action_blocks,
         context_history_size=args.planner_history_size,
         return_best_candidate=args.cem_return_best_candidate,
+        empirical_context_rank_penalty=args.cem_empirical_context_rank_penalty,
     )
     latent_probe_info = None
     if empirical_context_pixels is not None:
@@ -285,6 +292,7 @@ def main():
         policy.set_empirical_context_embeddings(
             np.concatenate(context_embeddings, axis=0)
         )
+        del empirical_context_pixels
     if args.latent_probe_qpos_indices:
         qpos_indices = tuple(
             int(value) for value in args.latent_probe_qpos_indices.split(',')
@@ -420,6 +428,9 @@ def main():
             ),
             'empirical_full_plans': args.cem_empirical_full_plans,
             'empirical_state_conditioned': args.cem_empirical_state_conditioned,
+            'empirical_context_rank_penalty': (
+                args.cem_empirical_context_rank_penalty
+            ),
             'return_best_candidate': args.cem_return_best_candidate,
         },
         'metrics': metrics,
