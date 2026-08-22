@@ -20,7 +20,7 @@ gpus=(4 5 6 7)
 pids=()
 
 for i in "${!datasets[@]}"; do
-  run_dir="$CLIENT_ROOT/lewm-gciql-chunk-shared-runs/${DATE}_${CLIENT_ID}_LeWM_with_GCIQL_Chunk_AWR_shared_all_${tags[$i]}_lewmseed3072_k5_bs256_s100k_s0"
+  run_dir="$CLIENT_ROOT/ogbench-visual-policy-runs/lewm-gciql-chunk-shared-runs/${DATE}_${CLIENT_ID}_LeWM_with_GCIQL_Chunk_AWR_shared_all_${tags[$i]}_lewmseed3072_k5_bs256_s100k_s0"
   mkdir -p "$run_dir"
   CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
   PYTHONPATH="$CODE_ROOT:$CODE_ROOT/impls" "$PYTHON_BIN" train_lewm_gciql_chunk.py \
