@@ -169,6 +169,7 @@ class JAXLeWMCEMPolicy:
         temporal_parameterization='independent',
         empirical_action_blocks=None,
         context_history_size=1,
+        return_best_candidate=False,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -188,6 +189,8 @@ class JAXLeWMCEMPolicy:
             )
         if context_history_size <= 0:
             raise ValueError('Planner context history size must be positive.')
+        if return_best_candidate and planner != 'cem':
+            raise ValueError('Returning the best candidate requires planner=cem.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -313,14 +316,21 @@ class JAXLeWMCEMPolicy:
                 empirical_action_blocks, dtype=np.float32
             )
             expected_width = int(self.scaler.action_dim) * self.action_block
-            if (
-                empirical_action_blocks.ndim != 2
-                or empirical_action_blocks.shape[1] != expected_width
-                or empirical_action_blocks.shape[0] < 2
-            ):
+            valid_shape = (
+                empirical_action_blocks.ndim == 2
+                and empirical_action_blocks.shape[1] == expected_width
+            ) or (
+                empirical_action_blocks.ndim == 3
+                and empirical_action_blocks.shape[1:] == (
+                    self.horizon,
+                    expected_width,
+                )
+            )
+            if not valid_shape or empirical_action_blocks.shape[0] < 2:
                 raise ValueError(
-                    'Empirical action blocks must have shape '
-                    f'(N >= 2, {expected_width}); got '
+                    'Empirical actions must have shape '
+                    f'(N >= 2, {expected_width}) or '
+                    f'(N >= 2, {self.horizon}, {expected_width}); got '
                     f'{empirical_action_blocks.shape}.'
                 )
             self.empirical_action_blocks = empirical_action_blocks
@@ -364,6 +374,7 @@ class JAXLeWMCEMPolicy:
         self.shared_q_evaluator = shared_q_evaluator
         self.paired_plan_keys = bool(paired_plan_keys)
         self.diagnose_min_horizon = bool(diagnose_min_horizon)
+        self.return_best_candidate = bool(return_best_candidate)
         self.latent_probe_weight = None
         self.latent_probe_bias = None
         self.execution_steps = (
@@ -459,6 +470,7 @@ class JAXLeWMCEMPolicy:
             if self.latent_probe_bias is None
             else jnp.asarray(self.latent_probe_bias, dtype=jnp.float32)
         )
+        return_best_candidate = self.return_best_candidate
 
         def planner_to_proposal_actions(blocks):
             if proposal_action_space == 'planner':
@@ -503,7 +515,7 @@ class JAXLeWMCEMPolicy:
                     q_goals = jnp.repeat(goal_latent, num_samples, axis=0)
 
             def optimizer_step(iteration, carry):
-                key, mean, std = carry
+                key, mean, std, best_candidate = carry
                 key, sample_key, empirical_key = jax.random.split(key, 3)
                 candidates = (
                     jax.random.normal(
@@ -545,14 +557,24 @@ class JAXLeWMCEMPolicy:
                         0,
                         empirical_action_blocks.shape[0],
                     )
-                    candidates = jax.lax.cond(
-                        iteration == 0,
-                        lambda value: value.at[:, 0].set(
-                            empirical_action_blocks[empirical_indices]
-                        ),
-                        lambda value: value,
-                        candidates,
-                    )
+                    if empirical_action_blocks.ndim == 2:
+                        candidates = jax.lax.cond(
+                            iteration == 0,
+                            lambda value: value.at[:, 0].set(
+                                empirical_action_blocks[empirical_indices]
+                            ),
+                            lambda value: value,
+                            candidates,
+                        )
+                    else:
+                        candidates = jax.lax.cond(
+                            iteration == 0,
+                            lambda value: value.at[:].set(
+                                empirical_action_blocks[empirical_indices]
+                            ),
+                            lambda value: value,
+                            candidates,
+                        )
                     candidates = candidates.at[0].set(mean)
                 if planner_action_low is not None:
                     # Score exactly the bounded actions that the environment can
@@ -604,6 +626,7 @@ class JAXLeWMCEMPolicy:
                         costs = probe_distances[:, :, -1][0]
                     else:
                         costs = jnp.min(probe_distances, axis=-1)[0]
+                best_candidate = candidates[jnp.argmin(costs)]
                 if native_q_keep:
                     q_action_blocks = planner_to_proposal_actions(candidates[:, 0])
                     if shared_q_evaluator is None:
@@ -660,14 +683,23 @@ class JAXLeWMCEMPolicy:
                     mean = jnp.sum(
                         weights[:, None, None] * relevant_candidates, axis=0
                     )
-                return key, mean, std
+                return key, mean, std, best_candidate
 
-            _, mean, std = jax.lax.fori_loop(
-                0, steps, optimizer_step, (key, initial_mean, std)
+            _, mean, std, best_candidate = jax.lax.fori_loop(
+                0,
+                steps,
+                optimizer_step,
+                (key, initial_mean, std, initial_mean),
             )
             if planner_action_low is not None:
                 mean = jnp.clip(mean, planner_action_low, planner_action_high)
-            return mean, std
+                best_candidate = jnp.clip(
+                    best_candidate, planner_action_low, planner_action_high
+                )
+            return (
+                best_candidate if return_best_candidate else mean,
+                std,
+            )
 
         return plan_one
 

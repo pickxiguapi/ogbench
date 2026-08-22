@@ -35,15 +35,16 @@ class NPZActionScaler:
     def transform(self, value):
         return (np.asarray(value) - self.mean) / self.scale
 
-    def sample_action_blocks(self, block_size, num_blocks, seed):
+    def sample_action_blocks(
+        self, block_size, num_blocks, seed, plan_horizon=1
+    ):
         with np.load(self.dataset_path) as archive:
             actions = archive['actions'].astype(np.float32, copy=False)
             terminals = archive['terminals'].astype(bool, copy=False)
         invalid = terminals | np.isnan(actions).any(axis=1)
         prefix = np.concatenate(([0], np.cumsum(invalid, dtype=np.int64)))
-        valid_starts = np.flatnonzero(
-            prefix[block_size:] - prefix[:-block_size] == 0
-        )
+        span = block_size * plan_horizon
+        valid_starts = np.flatnonzero(prefix[span:] - prefix[:-span] == 0)
         if not len(valid_starts):
             raise ValueError('Dataset has no valid empirical action blocks.')
         rng = np.random.default_rng(seed)
@@ -53,9 +54,14 @@ class NPZActionScaler:
             replace=len(valid_starts) < num_blocks,
         )
         blocks = np.stack(
-            [actions[starts + offset] for offset in range(block_size)], axis=1
+            [actions[starts + offset] for offset in range(span)], axis=1
         )
-        return self.transform(blocks).reshape(num_blocks, -1).astype(np.float32)
+        blocks = self.transform(blocks).reshape(
+            num_blocks, plan_horizon, block_size * self.action_dim
+        )
+        if plan_horizon == 1:
+            blocks = blocks[:, 0]
+        return blocks.astype(np.float32)
 
 
 def parse_args():
@@ -86,6 +92,8 @@ def parse_args():
     parser.add_argument(
         '--cem-empirical-action-reservoir-size', type=int, default=0
     )
+    parser.add_argument('--cem-empirical-full-plans', action='store_true')
+    parser.add_argument('--cem-return-best-candidate', action='store_true')
     parser.add_argument('--latent-probe-qpos-indices')
     parser.add_argument('--latent-probe-samples', type=int, default=20_000)
     parser.add_argument('--latent-probe-ridge', type=float, default=1e-3)
@@ -209,6 +217,7 @@ def main():
             args.action_block,
             args.cem_empirical_action_reservoir_size,
             args.seed,
+            args.cem_horizon if args.cem_empirical_full_plans else 1,
         )
     proposal_agent = None
     if args.proposal_method is not None:
@@ -243,6 +252,7 @@ def main():
         temporal_parameterization=args.cem_temporal_parameterization,
         empirical_action_blocks=empirical_action_blocks,
         context_history_size=args.planner_history_size,
+        return_best_candidate=args.cem_return_best_candidate,
     )
     latent_probe_info = None
     if args.latent_probe_qpos_indices:
@@ -378,6 +388,8 @@ def main():
             'empirical_action_reservoir_size': (
                 args.cem_empirical_action_reservoir_size
             ),
+            'empirical_full_plans': args.cem_empirical_full_plans,
+            'return_best_candidate': args.cem_return_best_candidate,
         },
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),
