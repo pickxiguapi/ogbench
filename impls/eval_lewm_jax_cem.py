@@ -166,6 +166,8 @@ class JAXLeWMCEMPolicy:
         execution_steps=None,
         action_low=None,
         action_high=None,
+        temporal_parameterization='independent',
+        empirical_action_blocks=None,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -179,6 +181,10 @@ class JAXLeWMCEMPolicy:
             )
         if (action_low is None) != (action_high is None):
             raise ValueError('Action low and high bounds must be provided together.')
+        if temporal_parameterization not in ('independent', 'constant'):
+            raise ValueError(
+                'Temporal action parameterization must be independent or constant.'
+            )
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -292,6 +298,24 @@ class JAXLeWMCEMPolicy:
         self.horizon = int(horizon)
         self.receding_horizon = int(receding_horizon)
         self.action_block = int(action_block)
+        self.temporal_parameterization = str(temporal_parameterization)
+        self.empirical_action_blocks = None
+        if empirical_action_blocks is not None:
+            empirical_action_blocks = np.asarray(
+                empirical_action_blocks, dtype=np.float32
+            )
+            expected_width = int(self.scaler.action_dim) * self.action_block
+            if (
+                empirical_action_blocks.ndim != 2
+                or empirical_action_blocks.shape[1] != expected_width
+                or empirical_action_blocks.shape[0] < 2
+            ):
+                raise ValueError(
+                    'Empirical action blocks must have shape '
+                    f'(N >= 2, {expected_width}); got '
+                    f'{empirical_action_blocks.shape}.'
+                )
+            self.empirical_action_blocks = empirical_action_blocks
         self.planner_action_low = None
         self.planner_action_high = None
         if action_low is not None:
@@ -370,6 +394,12 @@ class JAXLeWMCEMPolicy:
             if self.planner_action_high is None
             else jnp.asarray(self.planner_action_high, dtype=jnp.float32)
         )
+        temporal_parameterization = self.temporal_parameterization
+        empirical_action_blocks = (
+            None
+            if self.empirical_action_blocks is None
+            else jnp.asarray(self.empirical_action_blocks, dtype=jnp.float32)
+        )
 
         def planner_to_proposal_actions(blocks):
             if proposal_action_space == 'planner':
@@ -413,7 +443,7 @@ class JAXLeWMCEMPolicy:
 
             def optimizer_step(iteration, carry):
                 key, mean, std = carry
-                key, sample_key = jax.random.split(key)
+                key, sample_key, empirical_key = jax.random.split(key, 3)
                 candidates = (
                     jax.random.normal(
                         sample_key,
@@ -423,6 +453,16 @@ class JAXLeWMCEMPolicy:
                     * std[None]
                     + mean[None]
                 )
+                if temporal_parameterization == 'constant':
+                    atomic = candidates.reshape(
+                        num_samples,
+                        initial_mean.shape[0],
+                        action_block,
+                        action_dim,
+                    )
+                    candidates = jnp.repeat(
+                        atomic[:, :, :1], action_block, axis=2
+                    ).reshape(candidates.shape)
                 candidates = candidates.at[0].set(mean)
                 if proposal_population_size:
                     # The mode remains the exact nominal candidate at index 0;
@@ -437,6 +477,22 @@ class JAXLeWMCEMPolicy:
                         lambda value: value,
                         candidates,
                     )
+                if empirical_action_blocks is not None:
+                    empirical_indices = jax.random.randint(
+                        empirical_key,
+                        (num_samples,),
+                        0,
+                        empirical_action_blocks.shape[0],
+                    )
+                    candidates = jax.lax.cond(
+                        iteration == 0,
+                        lambda value: value.at[:, 0].set(
+                            empirical_action_blocks[empirical_indices]
+                        ),
+                        lambda value: value,
+                        candidates,
+                    )
+                    candidates = candidates.at[0].set(mean)
                 if planner_action_low is not None:
                     # Score exactly the bounded actions that the environment can
                     # execute.  Otherwise CEM can exploit predictions for an

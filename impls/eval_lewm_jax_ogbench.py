@@ -18,6 +18,7 @@ class NPZActionScaler:
     """Match the action normalization used by LeWMNPZSequenceDataset."""
 
     def __init__(self, dataset_path):
+        self.dataset_path = str(dataset_path)
         with np.load(dataset_path) as archive:
             actions = archive['actions']
             terminals = archive['terminals'].astype(bool, copy=False)
@@ -33,6 +34,28 @@ class NPZActionScaler:
 
     def transform(self, value):
         return (np.asarray(value) - self.mean) / self.scale
+
+    def sample_action_blocks(self, block_size, num_blocks, seed):
+        with np.load(self.dataset_path) as archive:
+            actions = archive['actions'].astype(np.float32, copy=False)
+            terminals = archive['terminals'].astype(bool, copy=False)
+        invalid = terminals | np.isnan(actions).any(axis=1)
+        prefix = np.concatenate(([0], np.cumsum(invalid, dtype=np.int64)))
+        valid_starts = np.flatnonzero(
+            prefix[block_size:] - prefix[:-block_size] == 0
+        )
+        if not len(valid_starts):
+            raise ValueError('Dataset has no valid empirical action blocks.')
+        rng = np.random.default_rng(seed)
+        starts = rng.choice(
+            valid_starts,
+            size=num_blocks,
+            replace=len(valid_starts) < num_blocks,
+        )
+        blocks = np.stack(
+            [actions[starts + offset] for offset in range(block_size)], axis=1
+        )
+        return self.transform(blocks).reshape(num_blocks, -1).astype(np.float32)
 
 
 def parse_args():
@@ -54,6 +77,14 @@ def parse_args():
     parser.add_argument('--cem-steps', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
+    parser.add_argument(
+        '--cem-temporal-parameterization',
+        choices=('independent', 'constant'),
+        default='independent',
+    )
+    parser.add_argument(
+        '--cem-empirical-action-reservoir-size', type=int, default=0
+    )
     parser.add_argument(
         '--cem-cost-mode',
         choices=('terminal', 'min_over_horizon'),
@@ -101,14 +132,25 @@ def load_visual_proposal_agent(env, checkpoint_dir, checkpoint_step):
 
 def main():
     args = parse_args()
+    if args.cem_empirical_action_reservoir_size < 0:
+        raise ValueError('Empirical action reservoir size cannot be negative.')
     if (args.proposal_method is None) != (args.proposal_checkpoint_dir is None):
         raise ValueError(
             '--proposal-method and --proposal-checkpoint-dir must be provided together.'
         )
+    if args.cem_empirical_action_reservoir_size and args.proposal_method is not None:
+        raise ValueError('Empirical action initialization cannot use a policy proposal.')
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
     env.reset(seed=args.seed)
     scaler = NPZActionScaler(args.dataset_path)
+    empirical_action_blocks = None
+    if args.cem_empirical_action_reservoir_size:
+        empirical_action_blocks = scaler.sample_action_blocks(
+            args.action_block,
+            args.cem_empirical_action_reservoir_size,
+            args.seed,
+        )
     proposal_agent = None
     if args.proposal_method is not None:
         proposal_agent = load_visual_proposal_agent(
@@ -139,6 +181,8 @@ def main():
         execution_steps=args.execution_steps,
         action_low=env.action_space.low,
         action_high=env.action_space.high,
+        temporal_parameterization=args.cem_temporal_parameterization,
+        empirical_action_blocks=empirical_action_blocks,
     )
 
     task_infos = env.unwrapped.task_infos
@@ -194,6 +238,10 @@ def main():
             'execution_steps': policy.execution_steps,
             'paired_plan_keys': args.paired_plan_keys,
             'environment_action_bounds_enforced_during_planning': True,
+            'temporal_parameterization': args.cem_temporal_parameterization,
+            'empirical_action_reservoir_size': (
+                args.cem_empirical_action_reservoir_size
+            ),
         },
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),
