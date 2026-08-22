@@ -57,11 +57,12 @@ case "$CLIENT_ID" in
   node4)
     CLIENT_ROOT=/data-training/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
-    PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
+    OGBENCH_ROOT=$CLIENT_ROOT/ogbench/clean-main
+    PYTHON_BIN=$CLIENT_ROOT/ogbench/.venv/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
     LEWM_DATA_ROOT=$CLIENT_ROOT/datasets/latent-geometry
+    LEWM_JAX_RUNS_ROOT=$CLIENT_ROOT/ogbench/lewm-jax-visual-runs
     EGL_LIB_DIR=/usr/lib/x86_64-linux-gnu
     ;;
 esac
