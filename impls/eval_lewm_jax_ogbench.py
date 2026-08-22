@@ -72,9 +72,11 @@ def parse_args():
     parser.add_argument('--proposal-num-samples', type=int, default=1)
     parser.add_argument(
         '--proposal-selection',
-        choices=('mode', 'lewm', 'native_q'),
+        choices=('mode', 'lewm', 'lewm_cem', 'native_q'),
         default='mode',
     )
+    parser.add_argument('--proposal-elite-size', type=int, default=1)
+    parser.add_argument('--proposal-residual-weight', type=float, default=1.0)
     parser.add_argument('--paired-plan-keys', action='store_true')
     parser.add_argument('--native-q-keep', type=int, default=0)
     parser.add_argument('--output', required=True)
@@ -130,6 +132,8 @@ def main():
         proposal_num_samples=args.proposal_num_samples,
         proposal_population_size=args.proposal_population_size,
         proposal_selection=args.proposal_selection,
+        proposal_elite_size=args.proposal_elite_size,
+        proposal_residual_weight=args.proposal_residual_weight,
         native_q_keep=args.native_q_keep,
         paired_plan_keys=args.paired_plan_keys,
         execution_steps=args.execution_steps,
@@ -203,6 +207,8 @@ def main():
                 'action_space': args.proposal_action_space,
                 'num_samples': args.proposal_num_samples,
                 'selection': args.proposal_selection,
+                'elite_size': args.proposal_elite_size,
+                'residual_weight': args.proposal_residual_weight,
                 'population_injection_size': args.proposal_population_size,
                 'native_q_keep': args.native_q_keep,
             }

@@ -76,9 +76,11 @@ def parse_args():
     )
     parser.add_argument(
         '--proposal-selection',
-        choices=('mode', 'lewm', 'native_q', 'shared_q'),
+        choices=('mode', 'lewm', 'lewm_cem', 'native_q', 'shared_q'),
         default='mode',
     )
+    parser.add_argument('--proposal-elite-size', type=int, default=1)
+    parser.add_argument('--proposal-residual-weight', type=float, default=1.0)
     parser.add_argument(
         '--cem-dual-center-q',
         action='store_true',
@@ -154,6 +156,8 @@ class JAXLeWMCEMPolicy:
         proposal_num_samples=1,
         proposal_population_size=0,
         proposal_selection='mode',
+        proposal_elite_size=1,
+        proposal_residual_weight=1.0,
         dual_center_q=False,
         native_q_keep=0,
         shared_q_evaluator=None,
@@ -211,6 +215,12 @@ class JAXLeWMCEMPolicy:
             raise ValueError('Proposal selection requires a proposal agent.')
         if proposal_selection != 'mode' and proposal_num_samples < 2:
             raise ValueError('Proposal selection requires at least two policy samples.')
+        if not 1 <= proposal_elite_size <= proposal_num_samples:
+            raise ValueError('Proposal elite size must be in [1, proposal_num_samples].')
+        if proposal_selection == 'lewm_cem' and proposal_elite_size < 2:
+            raise ValueError('Policy-population CEM requires at least two elites.')
+        if not 0.0 <= proposal_residual_weight <= 1.0:
+            raise ValueError('Proposal residual weight must be in [0, 1].')
         if proposal_selection == 'shared_q' and shared_q_evaluator is None:
             raise ValueError('Shared-Q proposal selection requires a shared evaluator.')
         if dual_center_q:
@@ -292,6 +302,8 @@ class JAXLeWMCEMPolicy:
         self.proposal_num_samples = int(proposal_num_samples)
         self.proposal_population_size = int(proposal_population_size)
         self.proposal_selection = str(proposal_selection)
+        self.proposal_elite_size = int(proposal_elite_size)
+        self.proposal_residual_weight = float(proposal_residual_weight)
         self.dual_center_q = bool(dual_center_q)
         self.native_q_keep = int(native_q_keep)
         self.shared_q_evaluator = shared_q_evaluator
@@ -588,7 +600,7 @@ class JAXLeWMCEMPolicy:
             )
         proposal_blocks[0] = mode
         planner_blocks = self._proposal_to_planner_actions(proposal_blocks)
-        if self.proposal_selection == 'lewm':
+        if self.proposal_selection in ('lewm', 'lewm_cem'):
             plans = np.zeros(
                 (
                     self.proposal_num_samples,
@@ -605,13 +617,20 @@ class JAXLeWMCEMPolicy:
                     jnp.asarray(plans),
                 )
             )
-            selected_index = int(np.argmin(costs))
+            if self.proposal_selection == 'lewm':
+                selected_block = planner_blocks[int(np.argmin(costs))]
+            else:
+                elite_indices = np.argsort(costs)[: self.proposal_elite_size]
+                elite_mean = planner_blocks[elite_indices].mean(axis=0)
+                selected_block = planner_blocks[0] + self.proposal_residual_weight * (
+                    elite_mean - planner_blocks[0]
+                )
         elif self.proposal_selection == 'native_q':
             q1, q2 = self.proposal_agent.network.select('critic')(
                 observations, goal_batch, jnp.asarray(proposal_blocks)
             )
             q_values = jnp.minimum(q1, q2)
-            selected_index = int(jnp.argmax(q_values))
+            selected_block = planner_blocks[int(jnp.argmax(q_values))]
         else:
             observation_latent = self.model.apply(
                 self.variables,
@@ -630,10 +649,10 @@ class JAXLeWMCEMPolicy:
                 jnp.repeat(goal_latent, self.proposal_num_samples, axis=0),
                 jnp.asarray(proposal_blocks),
             )
-            selected_index = int(jnp.argmax(q_values))
+            selected_block = planner_blocks[int(jnp.argmax(q_values))]
         return (
-            self._proposal_to_planner_actions(mode),
-            planner_blocks[selected_index],
+            planner_blocks[0],
+            selected_block,
         )
 
     def _proposal_block(self, pixels, goals, key):
@@ -898,6 +917,8 @@ def main():
             proposal_num_samples=args.proposal_num_samples,
             proposal_population_size=args.proposal_population_size,
             proposal_selection=args.proposal_selection,
+            proposal_elite_size=args.proposal_elite_size,
+            proposal_residual_weight=args.proposal_residual_weight,
             dual_center_q=args.cem_dual_center_q,
             native_q_keep=args.native_q_keep,
             shared_q_evaluator=shared_q_evaluator,
@@ -1008,6 +1029,8 @@ def main():
                     else 'disabled'
                 ),
                 'selection': args.proposal_selection,
+                'elite_size': args.proposal_elite_size,
+                'residual_weight': args.proposal_residual_weight,
                 'dual_center_q': args.cem_dual_center_q,
                 'dual_center_total_population': (
                     args.cem_num_samples if args.cem_dual_center_q else None

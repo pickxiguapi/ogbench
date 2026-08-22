@@ -47,6 +47,8 @@ def proposal_policy():
     policy.scaler = FakeScaler()
     policy.proposal_num_samples = 1
     policy.proposal_selection = 'mode'
+    policy.proposal_elite_size = 1
+    policy.proposal_residual_weight = 1.0
     policy.shared_q_evaluator = None
     policy.warm_starts = [np.full((2, 10), -3.0, dtype=np.float32)]
     return policy
@@ -166,6 +168,27 @@ class ProposalInitializationTest(unittest.TestCase):
         expected = np.arange(10, dtype=np.float32)
         expected[0] = 10.0
         np.testing.assert_array_equal(selected, expected)
+
+    def test_policy_population_cem_blends_elite_mean_toward_mode(self):
+        policy = proposal_policy()
+        policy.proposal_agent = FakeMultiChunkAgent()
+        policy.proposal_num_samples = 4
+        policy.proposal_selection = 'lewm_cem'
+        policy.proposal_elite_size = 2
+        policy.proposal_residual_weight = 0.25
+        policy._score_plans = lambda pixels, goals, plans: jnp.asarray(
+            [3.0, 0.0, 1.0, 2.0]
+        )
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+        mode, selected = policy._q_selection_blocks(
+            pixels, pixels, jax.random.PRNGKey(0)
+        )
+
+        np.testing.assert_array_equal(mode, np.arange(10, dtype=np.float32))
+        expected = np.arange(10, dtype=np.float32)
+        expected[0] = 3.75
+        np.testing.assert_allclose(selected, expected)
 
     def test_proposal_shape_is_checked(self):
         policy = proposal_policy()
