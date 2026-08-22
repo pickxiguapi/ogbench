@@ -92,6 +92,9 @@ J0 的10-episode筛选为40.0%，当前 evaluator 的50-episode复核为40.1%，
 | residual 0.25，10 ep/task | 56.0 | 26.0 | 20.0 | 54.0 | 39.0 |
 | residual 0.375，10 ep/task | 52.0 | 38.0 | 20.0 | 54.0 | 41.0 |
 | residual 0.5，10 ep/task | 50.0 | 40.0 | 20.0 | 54.0 | 41.0 |
+| residual 0.5，H2，10 ep/task | 52.0 | 34.0 | 20.0 | 50.0 | 39.0 |
 | **residual 0.5，50 ep/task** | **62.0** | **30.4** | **18.0** | **53.6** | **41.0** |
 
 同协议 mode 为40.1%，因此这个版本在保住 Single 的同时让 Double 提高1.2、Scene提高1.6，宏平均提高0.9个百分点；但统一配置仍略低于无 elite-mean 的 K2 二选一（41.2%）。结论是 CEM 可以有存在感，但必须满足三个约束：population 100% 来自 policy、只做一次 elite refit、最终 residual 仍锚定 mode。正式复现 Bash 为 `20260822_eval_node1_visual_play_policy_population_cem_r05_ep50.sh`。
+
+H2 追加消融保持 K32/E4/temperature0.05/residual0.5/RH1 不变，只把 LeWM planning horizon 从1改为2。筛选均值从 H1 的41.0%降到39.0%：Single +2，Double -6，Triple持平，Scene -4。这说明 Visual Play 上额外一个预测 block 没有提供统一收益，不扩展到50 episodes。H2 复现 Bash 为 `20260822_eval_node1_visual_play_policy_population_cem_r05_h2_ep10.sh`。
