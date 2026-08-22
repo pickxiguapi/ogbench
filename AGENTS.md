@@ -60,6 +60,9 @@
 | `20260822_train_node2_lewm_jax_visual_play_noisy_eight_tasks_s200k.sh` | A800 node2 Visual Play/Noisy 八任务世界模型统一训练量修正 | 8 卡一环境一卡并行；LeWM-JAX IMPALA Small、s200k、bs128、seed3072、frameskip/action-block5、history3、SigReg0.09；每 50k 保存 checkpoint |
 | `20260822_train_node4_lewm_reacher_gciql_chunk_awr_four_seeds_s100k.sh` | A800 node4 Reacher 随机种子稳定性复核 | GPU 2/3/6/7 并行 seed0/42/123/456；GCIQL-Chunk AWR、k5、s100k、bs256、alpha3、expectile0.9、IMPALA Small、p_aug0.5 |
 | `20260822_train_node4_lewm_pusht_gciql_chunk_awr_three_more_seeds_s100k.sh` | A800 node4 PushT 随机种子稳定性追加复核 | GPU 0/1/5 并行 seed0/42/123；GCIQL-Chunk AWR、k5、s100k、bs256、alpha3、expectile0.9、IMPALA Small、p_aug0.5 |
+| `20260822_train_node2_lewm_gciql_chunk_pi_shared_four_tasks_s100k.sh` | A800 node2 LeWM 四任务 π-only 表征共享 | GPU 0–3 并行；π 使用冻结 seed3072 LeWM，Q/V 使用独立 IMPALA Small；GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3 |
+| `20260822_train_node2_lewm_gciql_chunk_qvpi_shared_four_tasks_s100k.sh` | A800 node2 LeWM 四任务 Q/V/π 全共享表征 | GPU 4–7 并行；Q/V/π 使用同一冻结 seed3072 LeWM、heads 独立；GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3 |
+| `20260822_launch_node2_lewm_gciql_chunk_pi_only_and_shared_all_after_eval.sh` | A800 node2 两套共享表征实验接续入口 | 等待当前 state-dependent std 评测结束后，同时启动 π-only 与 shared-all 两个四任务 Bash，共 8 卡 |
 
 维护要求：表中脚本名必须与 `scripts/train/` 的实际 `.sh` 文件一一对应。修改任务集合、算法、seed、训练量、batch size、chunk/subgoal、正则项或世界模型时间尺度时，必须同步修改 Bash 顶部注释和本表对应行。
 
