@@ -137,6 +137,8 @@ def main():
         native_q_keep=args.native_q_keep,
         paired_plan_keys=args.paired_plan_keys,
         execution_steps=args.execution_steps,
+        action_low=env.action_space.low,
+        action_high=env.action_space.high,
     )
 
     task_infos = env.unwrapped.task_infos
@@ -191,6 +193,7 @@ def main():
             'history_len': 1,
             'execution_steps': policy.execution_steps,
             'paired_plan_keys': args.paired_plan_keys,
+            'environment_action_bounds_enforced_during_planning': True,
         },
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),

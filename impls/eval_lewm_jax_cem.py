@@ -164,6 +164,8 @@ class JAXLeWMCEMPolicy:
         paired_plan_keys=False,
         diagnose_min_horizon=False,
         execution_steps=None,
+        action_low=None,
+        action_high=None,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -175,6 +177,8 @@ class JAXLeWMCEMPolicy:
             raise ValueError(
                 'Execution steps must be in [1, receding_horizon * action_block].'
             )
+        if (action_low is None) != (action_high is None):
+            raise ValueError('Action low and high bounds must be provided together.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -288,6 +292,25 @@ class JAXLeWMCEMPolicy:
         self.horizon = int(horizon)
         self.receding_horizon = int(receding_horizon)
         self.action_block = int(action_block)
+        self.planner_action_low = None
+        self.planner_action_high = None
+        if action_low is not None:
+            action_low = np.asarray(action_low, dtype=np.float32)
+            action_high = np.asarray(action_high, dtype=np.float32)
+            expected_shape = (int(self.scaler.action_dim),)
+            if action_low.shape != expected_shape or action_high.shape != expected_shape:
+                raise ValueError(
+                    f'Action bounds must have shape {expected_shape}; got '
+                    f'{action_low.shape} and {action_high.shape}.'
+                )
+            if np.any(action_low >= action_high):
+                raise ValueError('Each action low bound must be smaller than its high bound.')
+            self.planner_action_low = np.tile(
+                self.scaler.transform(action_low), self.action_block
+            ).astype(np.float32)
+            self.planner_action_high = np.tile(
+                self.scaler.transform(action_high), self.action_block
+            ).astype(np.float32)
         self.num_samples = int(num_samples)
         self.steps = int(steps)
         self.topk = int(topk)
@@ -337,6 +360,16 @@ class JAXLeWMCEMPolicy:
         action_block = self.action_block
         action_mean = jnp.asarray(self.scaler.mean, dtype=jnp.float32)
         action_scale = jnp.asarray(self.scaler.scale, dtype=jnp.float32)
+        planner_action_low = (
+            None
+            if self.planner_action_low is None
+            else jnp.asarray(self.planner_action_low, dtype=jnp.float32)
+        )
+        planner_action_high = (
+            None
+            if self.planner_action_high is None
+            else jnp.asarray(self.planner_action_high, dtype=jnp.float32)
+        )
 
         def planner_to_proposal_actions(blocks):
             if proposal_action_space == 'planner':
@@ -403,6 +436,15 @@ class JAXLeWMCEMPolicy:
                         ].set(proposal_blocks),
                         lambda value: value,
                         candidates,
+                    )
+                if planner_action_low is not None:
+                    # Score exactly the bounded actions that the environment can
+                    # execute.  Otherwise CEM can exploit predictions for an
+                    # out-of-bounds action that is clipped only after planning.
+                    candidates = jnp.clip(
+                        candidates,
+                        planner_action_low[None, None],
+                        planner_action_high[None, None],
                     )
                 costs = model.apply(
                     variables,
@@ -472,6 +514,8 @@ class JAXLeWMCEMPolicy:
             _, mean, std = jax.lax.fori_loop(
                 0, steps, optimizer_step, (key, initial_mean, std)
             )
+            if planner_action_low is not None:
+                mean = jnp.clip(mean, planner_action_low, planner_action_high)
             return mean, std
 
         return plan_one
