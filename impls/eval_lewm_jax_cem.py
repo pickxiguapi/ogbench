@@ -703,7 +703,9 @@ class JAXLeWMCEMPolicy:
         atomic = blocks.reshape(-1, self.atomic_action_dim)
         return self.scaler.transform(atomic).reshape(shape)
 
-    def _q_selection_blocks(self, pixels, goals, past_action_blocks, key):
+    def _q_selection_blocks(
+        self, pixels, goals, key, past_action_blocks=None
+    ):
         """Return actor mode and a LeWM/Q-selected actor sample."""
         sample_key, mode_key = jax.random.split(key)
         observations = np.repeat(
@@ -748,14 +750,23 @@ class JAXLeWMCEMPolicy:
                 dtype=np.float32,
             )
             plans[:, 0] = planner_blocks
-            costs = np.asarray(
-                self._score_plans(
-                    jnp.asarray(pixels),
-                    jnp.asarray(goals),
-                    jnp.asarray(past_action_blocks),
-                    jnp.asarray(plans),
+            if past_action_blocks is None:
+                costs = np.asarray(
+                    self._score_plans(
+                        jnp.asarray(pixels),
+                        jnp.asarray(goals),
+                        jnp.asarray(plans),
+                    )
                 )
-            )
+            else:
+                costs = np.asarray(
+                    self._score_plans(
+                        jnp.asarray(pixels),
+                        jnp.asarray(goals),
+                        jnp.asarray(past_action_blocks),
+                        jnp.asarray(plans),
+                    )
+                )
             if self.proposal_selection == 'lewm':
                 selected_block = planner_blocks[int(np.argmin(costs))]
             else:
@@ -794,7 +805,9 @@ class JAXLeWMCEMPolicy:
             selected_block,
         )
 
-    def _proposal_block(self, pixels, goals, past_action_blocks, key):
+    def _proposal_block(
+        self, pixels, goals, key, past_action_blocks=None
+    ):
         if self.proposal_selection == 'mode':
             proposal_block = np.asarray(
                 self.proposal_agent.sample_actions(
@@ -812,7 +825,7 @@ class JAXLeWMCEMPolicy:
             return self._proposal_to_planner_actions(proposal_block[0])
 
         _, q_selected = self._q_selection_blocks(
-            pixels, goals, past_action_blocks, key
+            pixels, goals, key, past_action_blocks
         )
         return q_selected
 
@@ -868,7 +881,7 @@ class JAXLeWMCEMPolicy:
                 # first planner block; the remaining horizon stays under the
                 # original LeWM warm start / zero initialization.
                 initial[0] = self._proposal_block(
-                    pixels, goals, past_action_blocks, proposal_key
+                    pixels, goals, proposal_key, past_action_blocks
                 )
         return initial
 
@@ -899,8 +912,8 @@ class JAXLeWMCEMPolicy:
                 mode_block, q_block = self._q_selection_blocks(
                     context_pixels,
                     goals[env_index],
-                    past_action_blocks,
                     proposal_key,
+                    past_action_blocks,
                 )
                 mode_initial = self._initial_mean(
                     env_index, proposal_block=mode_block
