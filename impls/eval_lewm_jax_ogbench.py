@@ -111,6 +111,7 @@ def parse_args():
     parser.add_argument('--proposal-residual-weight', type=float, default=1.0)
     parser.add_argument('--paired-plan-keys', action='store_true')
     parser.add_argument('--native-q-keep', type=int, default=0)
+    parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
 
@@ -190,13 +191,30 @@ def main():
     task_infos = env.unwrapped.task_infos
     metrics = {}
     all_successes = []
+    all_actions = []
+    episode_diagnostics = []
+    video_dir = Path(args.video_dir) if args.video_dir else None
+    if video_dir is not None:
+        video_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
     try:
         for task_id, task_info in enumerate(task_infos, start=1):
             successes = []
-            for _ in trange(args.num_eval, desc=task_info['task_name']):
+            for episode_index in trange(args.num_eval, desc=task_info['task_name']):
                 observation, info = env.reset(options={'task_id': task_id})
                 goal = np.asarray(info['goal'], dtype=np.uint8)
+                initial_qpos = np.asarray(info['qpos']).copy()
+                initial_privileged_positions = {
+                    key: np.asarray(value).copy()
+                    for key, value in info.items()
+                    if key.startswith('privileged/')
+                    and key.endswith('_pos')
+                    and np.asarray(value).shape == (3,)
+                }
+                previous_effector = np.asarray(info['proprio/effector_pos']).copy()
+                effector_path_length = 0.0
+                episode_actions = []
+                video_frames = [np.asarray(observation)] if video_dir is not None else None
                 policy.reset(env.action_space, num_envs=1)
                 done = False
                 while not done:
@@ -206,9 +224,54 @@ def main():
                         np.asarray([True]),
                     )[0]
                     action = np.clip(action, env.action_space.low, env.action_space.high)
+                    episode_actions.append(np.asarray(action).copy())
                     observation, _, terminated, truncated, info = env.step(action)
+                    effector = np.asarray(info['proprio/effector_pos'])
+                    effector_path_length += float(
+                        np.linalg.norm(effector - previous_effector)
+                    )
+                    previous_effector = effector.copy()
+                    if video_frames is not None:
+                        video_frames.append(np.asarray(observation))
                     done = terminated or truncated
-                successes.append(float(info['success']))
+                success = float(info['success'])
+                successes.append(success)
+                episode_actions = np.asarray(episode_actions)
+                all_actions.append(episode_actions)
+                episode_diagnostics.append(
+                    {
+                        'task': task_info['task_name'],
+                        'episode': episode_index,
+                        'success': success,
+                        'num_steps': len(episode_actions),
+                        'mean_abs_action': float(np.mean(np.abs(episode_actions))),
+                        'saturated_action_fraction': float(
+                            np.mean(
+                                np.isclose(episode_actions, env.action_space.low)
+                                | np.isclose(episode_actions, env.action_space.high)
+                            )
+                        ),
+                        'effector_path_length': effector_path_length,
+                        'qpos_displacement': float(
+                            np.linalg.norm(np.asarray(info['qpos']) - initial_qpos)
+                        ),
+                        'privileged_position_displacements': {
+                            key: float(
+                                np.linalg.norm(np.asarray(info[key]) - initial_value)
+                            )
+                            for key, initial_value in initial_privileged_positions.items()
+                        },
+                    }
+                )
+                if video_frames is not None:
+                    import imageio.v2 as imageio
+
+                    imageio.mimsave(
+                        video_dir
+                        / f"{task_id:02d}_{task_info['task_name']}_ep{episode_index}.mp4",
+                        video_frames,
+                        fps=20,
+                    )
             score = float(np.mean(successes))
             metrics[task_info['task_name']] = score
             all_successes.extend(successes)
@@ -247,6 +310,22 @@ def main():
         },
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),
+        'action_diagnostics': {
+            'mean_abs_action': float(
+                np.mean(np.abs(np.concatenate(all_actions, axis=0)))
+            ),
+            'saturated_action_fraction': float(
+                np.mean(
+                    np.isclose(
+                        np.concatenate(all_actions, axis=0), env.action_space.low
+                    )
+                    | np.isclose(
+                        np.concatenate(all_actions, axis=0), env.action_space.high
+                    )
+                )
+            ),
+            'episodes': episode_diagnostics,
+        },
         'evaluation_time': time.time() - started,
         'proposal': (
             None
