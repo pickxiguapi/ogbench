@@ -36,7 +36,12 @@ class NPZActionScaler:
         return (np.asarray(value) - self.mean) / self.scale
 
     def sample_action_blocks(
-        self, block_size, num_blocks, seed, plan_horizon=1
+        self,
+        block_size,
+        num_blocks,
+        seed,
+        plan_horizon=1,
+        return_context_pixels=False,
     ):
         with np.load(self.dataset_path) as archive:
             actions = archive['actions'].astype(np.float32, copy=False)
@@ -61,7 +66,12 @@ class NPZActionScaler:
         )
         if plan_horizon == 1:
             blocks = blocks[:, 0]
-        return blocks.astype(np.float32)
+        blocks = blocks.astype(np.float32)
+        if not return_context_pixels:
+            return blocks
+        with np.load(self.dataset_path) as archive:
+            context_pixels = archive['observations'][starts]
+        return blocks, context_pixels
 
 
 def parse_args():
@@ -93,6 +103,7 @@ def parse_args():
         '--cem-empirical-action-reservoir-size', type=int, default=0
     )
     parser.add_argument('--cem-empirical-full-plans', action='store_true')
+    parser.add_argument('--cem-empirical-state-conditioned', action='store_true')
     parser.add_argument('--cem-return-best-candidate', action='store_true')
     parser.add_argument('--latent-probe-qpos-indices')
     parser.add_argument('--latent-probe-samples', type=int, default=20_000)
@@ -212,12 +223,22 @@ def main():
     env.reset(seed=args.seed)
     scaler = NPZActionScaler(args.dataset_path)
     empirical_action_blocks = None
+    empirical_context_pixels = None
     if args.cem_empirical_action_reservoir_size:
-        empirical_action_blocks = scaler.sample_action_blocks(
+        empirical_result = scaler.sample_action_blocks(
             args.action_block,
             args.cem_empirical_action_reservoir_size,
             args.seed,
             args.cem_horizon if args.cem_empirical_full_plans else 1,
+            args.cem_empirical_state_conditioned,
+        )
+        if args.cem_empirical_state_conditioned:
+            empirical_action_blocks, empirical_context_pixels = empirical_result
+        else:
+            empirical_action_blocks = empirical_result
+    elif args.cem_empirical_state_conditioned:
+        raise ValueError(
+            'State-conditioned empirical plans require a nonzero reservoir size.'
         )
     proposal_agent = None
     if args.proposal_method is not None:
@@ -255,6 +276,15 @@ def main():
         return_best_candidate=args.cem_return_best_candidate,
     )
     latent_probe_info = None
+    if empirical_context_pixels is not None:
+        context_embeddings = []
+        for offset in range(0, len(empirical_context_pixels), 512):
+            context_embeddings.append(
+                policy.encode_pixels(empirical_context_pixels[offset : offset + 512])
+            )
+        policy.set_empirical_context_embeddings(
+            np.concatenate(context_embeddings, axis=0)
+        )
     if args.latent_probe_qpos_indices:
         qpos_indices = tuple(
             int(value) for value in args.latent_probe_qpos_indices.split(',')
@@ -389,6 +419,7 @@ def main():
                 args.cem_empirical_action_reservoir_size
             ),
             'empirical_full_plans': args.cem_empirical_full_plans,
+            'empirical_state_conditioned': args.cem_empirical_state_conditioned,
             'return_best_candidate': args.cem_return_best_candidate,
         },
         'metrics': metrics,

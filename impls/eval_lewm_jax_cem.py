@@ -311,6 +311,7 @@ class JAXLeWMCEMPolicy:
         self.context_history_size = int(context_history_size)
         self.temporal_parameterization = str(temporal_parameterization)
         self.empirical_action_blocks = None
+        self.empirical_context_embeddings = None
         if empirical_action_blocks is not None:
             empirical_action_blocks = np.asarray(
                 empirical_action_blocks, dtype=np.float32
@@ -425,6 +426,27 @@ class JAXLeWMCEMPolicy:
         self._score_plans = jax.jit(self._build_score_plans())
         self._plan_distances = jax.jit(self._build_plan_distances())
 
+    def set_empirical_context_embeddings(self, embeddings):
+        if self.empirical_action_blocks is None:
+            raise ValueError('Empirical context requires empirical action plans.')
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+        expected_shape = (
+            self.empirical_action_blocks.shape[0],
+            int(self.checkpoint_metadata['embed_dim']),
+        )
+        if embeddings.shape != expected_shape:
+            raise ValueError(
+                f'Empirical context embeddings must have shape {expected_shape}; '
+                f'got {embeddings.shape}.'
+            )
+        planner_samples = self.num_samples // 2 if self.dual_center_q else self.num_samples
+        if len(embeddings) < planner_samples:
+            raise ValueError(
+                'Empirical context reservoir cannot be smaller than the CEM population.'
+            )
+        self.empirical_context_embeddings = embeddings
+        self._plan_one = jax.jit(self._build_plan_one())
+
     def _build_plan_one(self):
         model = self.model
         variables = self.variables
@@ -460,6 +482,11 @@ class JAXLeWMCEMPolicy:
             if self.empirical_action_blocks is None
             else jnp.asarray(self.empirical_action_blocks, dtype=jnp.float32)
         )
+        empirical_context_embeddings = (
+            None
+            if self.empirical_context_embeddings is None
+            else jnp.asarray(self.empirical_context_embeddings, dtype=jnp.float32)
+        )
         latent_probe_weight = (
             None
             if self.latent_probe_weight is None
@@ -490,6 +517,21 @@ class JAXLeWMCEMPolicy:
             key, pixels, goals, past_action_blocks, initial_mean, proposal_blocks
         ):
             std = jnp.full_like(initial_mean, var_scale)
+            nearest_empirical_indices = None
+            if empirical_context_embeddings is not None:
+                current_embedding = model.apply(
+                    variables,
+                    pixels[-1][None],
+                    train=False,
+                    method=model.encode_pixels,
+                )[0].astype(jnp.float32)
+                context_distances = jnp.sum(
+                    (empirical_context_embeddings - current_embedding[None]) ** 2,
+                    axis=-1,
+                )
+                _, nearest_empirical_indices = jax.lax.top_k(
+                    -context_distances, num_samples
+                )
             if native_q_keep:
                 if shared_q_evaluator is None:
                     q_observations = jnp.repeat(
@@ -551,11 +593,15 @@ class JAXLeWMCEMPolicy:
                         candidates,
                     )
                 if empirical_action_blocks is not None:
-                    empirical_indices = jax.random.randint(
-                        empirical_key,
-                        (num_samples,),
-                        0,
-                        empirical_action_blocks.shape[0],
+                    empirical_indices = (
+                        nearest_empirical_indices
+                        if nearest_empirical_indices is not None
+                        else jax.random.randint(
+                            empirical_key,
+                            (num_samples,),
+                            0,
+                            empirical_action_blocks.shape[0],
+                        )
                     )
                     if empirical_action_blocks.ndim == 2:
                         candidates = jax.lax.cond(
