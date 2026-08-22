@@ -69,7 +69,7 @@ J0 的10-episode筛选为40.0%，当前 evaluator 的50-episode复核为40.1%，
 
 1. **统一配置最高分：41.2%。** 每次重规划只生成确定性 mode 和1个 `temperature=0.05` 的真实 actor chunk，LeWM 用 H1/min cost 在二者中选择，执行选中的完整5步 chunk；不做高斯 CEM、不做 elite 平均。50 ep/task 为 Single 64.4、Double 28.8、Triple 19.6、Scene 52.0。相对同协议 mode 的40.1%提高1.1个百分点，相对旧 hybrid 的0.5%提高40.7个百分点。
 2. **稳健 task-specific 方案：41.1%。** 只在两轮都稳定获益的 Scene 使用 K4/temp0.05（56.0），其余环境保持 mode（62.0/29.2/17.2）；宏平均41.1%。对应复现 Bash 为 `20260822_eval_node1_visual_play_final_scene_selective_lewm_ep50.sh`。
-3. **最高观察值（探索性上界）：42.3%。** 按完整评估后的每环境最优结果选择 Single K2、Double mode、Triple K2、Scene K4，得到64.4/29.2/19.6/56.0。因为 K 是在同一批 full 结果后选择，不能当作无偏主结果；对应 Bash 为 `20260822_eval_node1_visual_play_final_taskwise_best_observed_ep50.sh`。
+3. **最高观察值（探索性上界）：42.6%。** 按完整评估后的每环境最优结果选择 Single K2、Double policy-population CEM、Triple K2、Scene K4，得到64.4/30.4/19.6/56.0。因为配置是在同一批 full 结果后选择，不能当作无偏主结果；对应 Bash 为 `20260822_eval_node1_visual_play_final_taskwise_best_observed_ep50.sh`。
 4. 迁移旧四任务的“大 CEM”经验不成立。Visual Play 上随着干预增强，J0/J1/J5 为40.0/25.0/4.5；真实 policy candidates 的 K2/K4/K8/K32 也呈现选择过优化。有效原则是让 LeWM 只做极弱、支持集内、无均值化的偏置。
 
 ## 可复现性审计
@@ -77,4 +77,21 @@ J0 的10-episode筛选为40.0%，当前 evaluator 的50-episode复核为40.1%，
 - 代码基准：GitHub `pickxiguapi/ogbench` 的 `main`，所有正式实验从仓库内日期前缀 Bash 启动。
 - 执行节点：A800 node1，代码 `/home/yyf/ogbench-main`，资产 `/data-training/yyf/lewm-gciql-visual-eval-assets`，结果 `/data-training/yyf/lewm-gciql-visual-evals`。
 - 四个 LeWM 与四个 GCIQL-Chunk checkpoint 从 Server23 直接流式复制到 node1；16个文件逐个 SHA256 与源端一致。
-- evaluator 的动作空间校准、精确 actor-chunk 选择与逐原子动作消融均有单元测试；node1 CPU 后端8项测试通过。
+- evaluator 的动作空间校准、精确 actor-chunk 选择、policy-population CEM 与逐原子动作消融均有单元测试；node1 CPU 后端9项测试通过。
+
+## IQL-TD-MPC 论文启发的 policy-population CEM
+
+[IQL-TD-MPC](https://arxiv.org/pdf/2306.00867) 指出 offline MPC 会利用模型盲点，因此将随机候选 `nr` 从487改成0、把全部512个候选都改为 policy samples，并使用64个 elites；论文同时取消迭代式 MPPI refinement，避免再次离开数据支持集。这里保留其 1/8 elite 比例，并增加一个显式但受约束的 CEM residual：
+
+1. GCIQL-Chunk 以 `temperature=0.05` 生成32个真实 action chunks，确定性 mode 固定为第一个候选；不加入任何自由高斯候选。
+2. LeWM 用 H1/min cost 排序，CEM 对 top4 elites 拟合 `elite_mean`。
+3. 最终执行 `mode + residual_weight × (elite_mean - mode)`，不迭代重采样，并执行完整5步 chunk。
+
+| 配置 | Single | Double | Triple | Scene | 平均 |
+|---|---:|---:|---:|---:|---:|
+| residual 0.25，10 ep/task | 56.0 | 26.0 | 20.0 | 54.0 | 39.0 |
+| residual 0.375，10 ep/task | 52.0 | 38.0 | 20.0 | 54.0 | 41.0 |
+| residual 0.5，10 ep/task | 50.0 | 40.0 | 20.0 | 54.0 | 41.0 |
+| **residual 0.5，50 ep/task** | **62.0** | **30.4** | **18.0** | **53.6** | **41.0** |
+
+同协议 mode 为40.1%，因此这个版本在保住 Single 的同时让 Double 提高1.2、Scene提高1.6，宏平均提高0.9个百分点；但统一配置仍略低于无 elite-mean 的 K2 二选一（41.2%）。结论是 CEM 可以有存在感，但必须满足三个约束：population 100% 来自 policy、只做一次 elite refit、最终 residual 仍锚定 mode。正式复现 Bash 为 `20260822_eval_node1_visual_play_policy_population_cem_r05_ep50.sh`。

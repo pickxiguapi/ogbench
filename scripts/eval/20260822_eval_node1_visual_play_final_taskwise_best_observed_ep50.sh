@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A800 node1：四卡并行复现 full-eval 后的 taskwise 最高观察值（探索性上界）；Single/Triple 用 K2、Double 用 mode、Scene 用 K4，LeWM 均只做 H1 真实 chunk 选择，每内部任务50 episodes、seed42。
+# A800 node1：四卡并行复现 full-eval 后的 taskwise 最高观察值（探索性上界）；Single/Triple 用 K2、Double 用 policy-population CEM、Scene 用 K4，LeWM 均只做 H1 真实 chunk 选择，每内部任务50 episodes、seed42。
 CLIENT_ID=node1
 source /home/yyf/ogbench-main/scripts/client_env.sh
 cd "$OGBENCH_ROOT/impls"
@@ -14,9 +14,11 @@ lewm_exps=(
   LeWMJAX_ogbench_visual_cube_triple_play_impalasmall_bs512_s500k_seed3072_fs5_chunk5_cemh5_bf16_s23
   LeWMJAX_ogbench_visual_scene_play_impalasmall_bs512_s500k_seed3072_fs5_chunk5_cemh5_bf16_s23
 )
-proposal_samples=(2 1 2 4)
-proposal_temperatures=(0.05 0.0 0.05 0.05)
-proposal_selections=(lewm mode lewm lewm)
+proposal_samples=(2 32 2 4)
+proposal_temperatures=(0.05 0.05 0.05 0.05)
+proposal_selections=(lewm lewm_cem lewm lewm)
+proposal_elite_sizes=(1 4 1 1)
+proposal_residual_weights=(1.0 0.5 1.0 1.0)
 gpus=(0 1 2 3)
 output_root="$VISUAL_EVAL_ROOT/20260822_final_taskwise_best_observed_h1_ep50_seed42"
 
@@ -41,6 +43,8 @@ for i in "${!envs[@]}"; do
     --proposal-action-space=environment \
     --proposal-num-samples="${proposal_samples[$i]}" \
     --proposal-selection="${proposal_selections[$i]}" \
+    --proposal-elite-size="${proposal_elite_sizes[$i]}" \
+    --proposal-residual-weight="${proposal_residual_weights[$i]}" \
     --output="$output_root/${tags[$i]}.json" \
     >"$output_root/${tags[$i]}.log" 2>&1 &
   pids+=("$!")
