@@ -68,6 +68,7 @@ def parse_args():
     parser.add_argument('--cem-horizon', type=int, default=5)
     parser.add_argument('--cem-receding-horizon', type=int, default=5)
     parser.add_argument('--action-block', type=int, default=1)
+    parser.add_argument('--planner-history-size', type=int, default=1)
     parser.add_argument(
         '--execution-steps',
         type=int,
@@ -183,6 +184,7 @@ def main():
         action_high=env.action_space.high,
         temporal_parameterization=args.cem_temporal_parameterization,
         empirical_action_blocks=empirical_action_blocks,
+        context_history_size=args.planner_history_size,
     )
 
     task_infos = env.unwrapped.task_infos
@@ -234,7 +236,7 @@ def main():
             'topk': args.cem_topk,
             'var_scale': args.cem_var_scale,
             'cost_mode': args.cem_cost_mode,
-            'history_len': 1,
+            'history_len': args.planner_history_size,
             'execution_steps': policy.execution_steps,
             'paired_plan_keys': args.paired_plan_keys,
             'environment_action_bounds_enforced_during_planning': True,

@@ -168,6 +168,7 @@ class JAXLeWMCEMPolicy:
         action_high=None,
         temporal_parameterization='independent',
         empirical_action_blocks=None,
+        context_history_size=1,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -185,6 +186,8 @@ class JAXLeWMCEMPolicy:
             raise ValueError(
                 'Temporal action parameterization must be independent or constant.'
             )
+        if context_history_size <= 0:
+            raise ValueError('Planner context history size must be positive.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -256,6 +259,10 @@ class JAXLeWMCEMPolicy:
         config = payload['config']
         if config.get('architecture') != ARCHITECTURE:
             raise ValueError(f'Checkpoint architecture {config.get("architecture")!r} is not {ARCHITECTURE!r}.')
+        if context_history_size > int(config['history_size']):
+            raise ValueError(
+                'Planner context history cannot exceed the checkpoint history size.'
+            )
         precision = config.get('precision', 'bf16')
         if precision == 'bf16':
             model_dtype = jnp.bfloat16
@@ -298,6 +305,7 @@ class JAXLeWMCEMPolicy:
         self.horizon = int(horizon)
         self.receding_horizon = int(receding_horizon)
         self.action_block = int(action_block)
+        self.context_history_size = int(context_history_size)
         self.temporal_parameterization = str(temporal_parameterization)
         self.empirical_action_blocks = None
         if empirical_action_blocks is not None:
@@ -361,6 +369,14 @@ class JAXLeWMCEMPolicy:
             if execution_steps is None
             else int(execution_steps)
         )
+        if (
+            self.context_history_size > 1
+            and self.execution_steps != self.action_block
+        ):
+            raise ValueError(
+                'Multi-frame planner context requires replanning after exactly '
+                'one action block.'
+            )
         self._plan_one = jax.jit(self._build_plan_one())
         self._score_plans = jax.jit(self._build_score_plans())
         self._plan_distances = jax.jit(self._build_plan_distances())
@@ -415,7 +431,9 @@ class JAXLeWMCEMPolicy:
         else:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
 
-        def plan_one(key, pixels, goals, initial_mean, proposal_blocks):
+        def plan_one(
+            key, pixels, goals, past_action_blocks, initial_mean, proposal_blocks
+        ):
             std = jnp.full_like(initial_mean, var_scale)
             if native_q_keep:
                 if shared_q_evaluator is None:
@@ -502,11 +520,18 @@ class JAXLeWMCEMPolicy:
                         planner_action_low[None, None],
                         planner_action_high[None, None],
                     )
+                past_candidates = jnp.broadcast_to(
+                    past_action_blocks[None],
+                    (num_samples, *past_action_blocks.shape),
+                )
+                scored_candidates = jnp.concatenate(
+                    [past_candidates, candidates], axis=1
+                )
                 costs = model.apply(
                     variables,
                     pixels[None, None],
                     goals[None, None],
-                    candidates[None],
+                    scored_candidates[None],
                     method=rollout_cost_method,
                 )[0]
                 if native_q_keep:
@@ -586,12 +611,17 @@ class JAXLeWMCEMPolicy:
         else:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
 
-        def score_plans(pixels, goals, plans):
+        def score_plans(pixels, goals, past_action_blocks, plans):
+            past_plans = jnp.broadcast_to(
+                past_action_blocks[None],
+                (plans.shape[0], *past_action_blocks.shape),
+            )
+            scored_plans = jnp.concatenate([past_plans, plans], axis=1)
             return model.apply(
                 variables,
                 pixels[None, None],
                 goals[None, None],
-                plans[None],
+                scored_plans[None],
                 method=rollout_cost_method,
             )[0]
 
@@ -601,12 +631,13 @@ class JAXLeWMCEMPolicy:
         model = self.model
         variables = self.variables
 
-        def plan_distances(pixels, goals, plan):
+        def plan_distances(pixels, goals, past_action_blocks, plan):
+            scored_plan = jnp.concatenate([past_action_blocks, plan], axis=0)
             goal_embeddings, predictions = model.apply(
                 variables,
                 pixels[None, None],
                 goals[None, None],
-                plan[None, None],
+                scored_plan[None, None],
                 method=model._rollout_predictions,
             )
             return jnp.sum(
@@ -631,6 +662,13 @@ class JAXLeWMCEMPolicy:
                 )
         self.buffers = [deque() for _ in range(num_envs)]
         self.warm_starts = [None] * num_envs
+        self.pixel_histories = [
+            deque(maxlen=self.context_history_size) for _ in range(num_envs)
+        ]
+        self.action_histories = [
+            deque(maxlen=max(self.context_history_size - 1, 1))
+            for _ in range(num_envs)
+        ]
         self.plan_counts = np.zeros(num_envs, dtype=np.int64)
         self.dual_center_choice_counts = np.zeros(2, dtype=np.int64)
         self.min_horizon_counts_by_env = np.zeros(
@@ -665,7 +703,7 @@ class JAXLeWMCEMPolicy:
         atomic = blocks.reshape(-1, self.atomic_action_dim)
         return self.scaler.transform(atomic).reshape(shape)
 
-    def _q_selection_blocks(self, pixels, goals, key):
+    def _q_selection_blocks(self, pixels, goals, past_action_blocks, key):
         """Return actor mode and a LeWM/Q-selected actor sample."""
         sample_key, mode_key = jax.random.split(key)
         observations = np.repeat(
@@ -714,6 +752,7 @@ class JAXLeWMCEMPolicy:
                 self._score_plans(
                     jnp.asarray(pixels),
                     jnp.asarray(goals),
+                    jnp.asarray(past_action_blocks),
                     jnp.asarray(plans),
                 )
             )
@@ -755,7 +794,7 @@ class JAXLeWMCEMPolicy:
             selected_block,
         )
 
-    def _proposal_block(self, pixels, goals, key):
+    def _proposal_block(self, pixels, goals, past_action_blocks, key):
         if self.proposal_selection == 'mode':
             proposal_block = np.asarray(
                 self.proposal_agent.sample_actions(
@@ -772,7 +811,9 @@ class JAXLeWMCEMPolicy:
                 )
             return self._proposal_to_planner_actions(proposal_block[0])
 
-        _, q_selected = self._q_selection_blocks(pixels, goals, key)
+        _, q_selected = self._q_selection_blocks(
+            pixels, goals, past_action_blocks, key
+        )
         return q_selected
 
     def _proposal_population(self, pixels, goals, key):
@@ -810,6 +851,7 @@ class JAXLeWMCEMPolicy:
         goals=None,
         proposal_key=None,
         proposal_block=None,
+        past_action_blocks=None,
     ):
         initial = np.zeros((self.horizon, self.block_action_dim), dtype=np.float32)
         warm = self.warm_starts[env_index]
@@ -825,18 +867,40 @@ class JAXLeWMCEMPolicy:
                 # the real current image and dataset goal.  Only replace the
                 # first planner block; the remaining horizon stays under the
                 # original LeWM warm start / zero initialization.
-                initial[0] = self._proposal_block(pixels, goals, proposal_key)
+                initial[0] = self._proposal_block(
+                    pixels, goals, past_action_blocks, proposal_key
+                )
         return initial
+
+    def _planning_context(self, env_index, pixels):
+        current = np.asarray(pixels[-1])
+        pixel_history = self.pixel_histories[env_index]
+        pixel_history.append(current)
+        context = list(pixel_history)
+        context = [context[0]] * (self.context_history_size - len(context)) + context
+
+        past = list(self.action_histories[env_index])
+        missing = self.context_history_size - 1 - len(past)
+        past = [np.zeros(self.block_action_dim, dtype=np.float32)] * missing + past
+        return np.stack(context), np.asarray(past, dtype=np.float32).reshape(
+            self.context_history_size - 1, self.block_action_dim
+        )
 
     def get_actions(self, pixels, goals, alive):
         for env_index in np.flatnonzero(alive):
             if self.buffers[env_index]:
                 continue
+            context_pixels, past_action_blocks = self._planning_context(
+                env_index, pixels[env_index]
+            )
             proposal_key, plan_key = self._next_plan_keys(env_index)
             proposal_blocks = None
             if self.dual_center_q:
                 mode_block, q_block = self._q_selection_blocks(
-                    pixels[env_index], goals[env_index], proposal_key
+                    context_pixels,
+                    goals[env_index],
+                    past_action_blocks,
+                    proposal_key,
                 )
                 mode_initial = self._initial_mean(
                     env_index, proposal_block=mode_block
@@ -849,22 +913,25 @@ class JAXLeWMCEMPolicy:
                 )
                 mode_plan, _ = self._plan_one(
                     jax.random.fold_in(plan_key, 2),
-                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(past_action_blocks),
                     jnp.asarray(mode_initial),
                     empty_blocks,
                 )
                 q_plan, _ = self._plan_one(
                     jax.random.fold_in(plan_key, 3),
-                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(past_action_blocks),
                     jnp.asarray(q_initial),
                     empty_blocks,
                 )
                 candidate_plans = jnp.stack((mode_plan, q_plan))
                 plan_costs = self._score_plans(
-                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(past_action_blocks),
                     candidate_plans,
                 )
                 chosen_center = int(jnp.argmin(plan_costs))
@@ -880,9 +947,10 @@ class JAXLeWMCEMPolicy:
             else:
                 initial_mean = self._initial_mean(
                     env_index,
-                    pixels=pixels[env_index],
+                    pixels=context_pixels,
                     goals=goals[env_index],
                     proposal_key=proposal_key,
+                    past_action_blocks=past_action_blocks,
                 )
                 proposal_blocks = np.zeros(
                     (0, self.block_action_dim), dtype=np.float32
@@ -890,8 +958,9 @@ class JAXLeWMCEMPolicy:
             if not self.dual_center_q:
                 normalized_blocks, _ = self._plan_one(
                     plan_key,
-                    jnp.asarray(pixels[env_index]),
+                    jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(past_action_blocks),
                     jnp.asarray(initial_mean),
                     jnp.asarray(proposal_blocks),
                 )
@@ -899,8 +968,9 @@ class JAXLeWMCEMPolicy:
             if self.diagnose_min_horizon:
                 distances = np.asarray(
                     self._plan_distances(
-                        jnp.asarray(pixels[env_index]),
+                        jnp.asarray(context_pixels),
                         jnp.asarray(goals[env_index]),
+                        jnp.asarray(past_action_blocks),
                         jnp.asarray(normalized_blocks),
                     )
                 )
@@ -920,6 +990,8 @@ class JAXLeWMCEMPolicy:
                 self.warm_starts[env_index] = None
             normalized_atomic = keep.reshape(-1, self.atomic_action_dim)
             normalized_atomic = normalized_atomic[: self.execution_steps]
+            if self.context_history_size > 1:
+                self.action_histories[env_index].append(normalized_blocks[0].copy())
             atomic = self.scaler.inverse_transform(normalized_atomic)
             self.buffers[env_index].extend(atomic)
 
