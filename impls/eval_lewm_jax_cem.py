@@ -315,6 +315,8 @@ class JAXLeWMCEMPolicy:
         self.temporal_parameterization = str(temporal_parameterization)
         self.empirical_action_blocks = None
         self.empirical_context_embeddings = None
+        self.empirical_goal_embeddings = None
+        self.empirical_goal_distance_weight = 1.0
         if empirical_action_blocks is not None:
             empirical_action_blocks = np.asarray(
                 empirical_action_blocks, dtype=np.float32
@@ -432,7 +434,9 @@ class JAXLeWMCEMPolicy:
         self._score_plans = jax.jit(self._build_score_plans())
         self._plan_distances = jax.jit(self._build_plan_distances())
 
-    def set_empirical_context_embeddings(self, embeddings):
+    def set_empirical_context_embeddings(
+        self, embeddings, goal_embeddings=None, goal_distance_weight=1.0
+    ):
         if self.empirical_action_blocks is None:
             raise ValueError('Empirical context requires empirical action plans.')
         embeddings = np.asarray(embeddings, dtype=np.float32)
@@ -451,6 +455,17 @@ class JAXLeWMCEMPolicy:
                 'Empirical context reservoir cannot be smaller than the CEM population.'
             )
         self.empirical_context_embeddings = embeddings
+        if goal_embeddings is not None:
+            goal_embeddings = np.asarray(goal_embeddings, dtype=np.float32)
+            if goal_embeddings.shape != expected_shape:
+                raise ValueError(
+                    f'Empirical goal embeddings must have shape {expected_shape}; '
+                    f'got {goal_embeddings.shape}.'
+                )
+            if goal_distance_weight < 0:
+                raise ValueError('Empirical goal distance weight cannot be negative.')
+            self.empirical_goal_embeddings = goal_embeddings
+            self.empirical_goal_distance_weight = float(goal_distance_weight)
         self._plan_one = jax.jit(self._build_plan_one())
 
     def _build_plan_one(self):
@@ -493,6 +508,12 @@ class JAXLeWMCEMPolicy:
             if self.empirical_context_embeddings is None
             else jnp.asarray(self.empirical_context_embeddings, dtype=jnp.float32)
         )
+        empirical_goal_embeddings = (
+            None
+            if self.empirical_goal_embeddings is None
+            else jnp.asarray(self.empirical_goal_embeddings, dtype=jnp.float32)
+        )
+        empirical_goal_distance_weight = self.empirical_goal_distance_weight
         latent_probe_weight = (
             None
             if self.latent_probe_weight is None
@@ -536,6 +557,22 @@ class JAXLeWMCEMPolicy:
                     (empirical_context_embeddings - current_embedding[None]) ** 2,
                     axis=-1,
                 )
+                if empirical_goal_embeddings is not None:
+                    desired_goal_embedding = model.apply(
+                        variables,
+                        goals[-1][None],
+                        train=False,
+                        method=model.encode_pixels,
+                    )[0].astype(jnp.float32)
+                    goal_distances = jnp.sum(
+                        (empirical_goal_embeddings - desired_goal_embedding[None])
+                        ** 2,
+                        axis=-1,
+                    )
+                    context_distances = (
+                        context_distances
+                        + empirical_goal_distance_weight * goal_distances
+                    )
                 _, nearest_empirical_indices = jax.lax.top_k(
                     -context_distances, num_samples
                 )

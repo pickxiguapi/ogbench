@@ -42,6 +42,7 @@ class NPZActionScaler:
         seed,
         plan_horizon=1,
         return_context_pixels=False,
+        goal_offset_steps=0,
     ):
         with np.load(self.dataset_path) as archive:
             actions = archive['actions'].astype(np.float32, copy=False)
@@ -49,7 +50,10 @@ class NPZActionScaler:
         invalid = terminals | np.isnan(actions).any(axis=1)
         prefix = np.concatenate(([0], np.cumsum(invalid, dtype=np.int64)))
         span = block_size * plan_horizon
-        valid_starts = np.flatnonzero(prefix[span:] - prefix[:-span] == 0)
+        valid_span = max(span, goal_offset_steps + 1)
+        valid_starts = np.flatnonzero(
+            prefix[valid_span:] - prefix[:-valid_span] == 0
+        )
         if not len(valid_starts):
             raise ValueError('Dataset has no valid empirical action blocks.')
         rng = np.random.default_rng(seed)
@@ -71,6 +75,10 @@ class NPZActionScaler:
             return blocks
         with np.load(self.dataset_path) as archive:
             context_pixels = archive['observations'][starts]
+            if goal_offset_steps:
+                goal_pixels = archive['observations'][starts + goal_offset_steps]
+        if goal_offset_steps:
+            return blocks, context_pixels, goal_pixels
         return blocks, context_pixels
 
 
@@ -104,6 +112,8 @@ def parse_args():
     )
     parser.add_argument('--cem-empirical-full-plans', action='store_true')
     parser.add_argument('--cem-empirical-state-conditioned', action='store_true')
+    parser.add_argument('--cem-empirical-goal-offset-steps', type=int, default=0)
+    parser.add_argument('--cem-empirical-goal-distance-weight', type=float, default=1.0)
     parser.add_argument('--cem-empirical-context-rank-penalty', type=float, default=0.0)
     parser.add_argument('--cem-return-best-candidate', action='store_true')
     parser.add_argument('--latent-probe-qpos-indices')
@@ -224,12 +234,20 @@ def main():
         and not args.cem_empirical_state_conditioned
     ):
         raise ValueError('Context rank penalty requires state-conditioned plans.')
+    if args.cem_empirical_goal_offset_steps < 0:
+        raise ValueError('Empirical goal offset cannot be negative.')
+    if (
+        args.cem_empirical_goal_offset_steps
+        and not args.cem_empirical_state_conditioned
+    ):
+        raise ValueError('Empirical goal retrieval requires state-conditioned plans.')
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
     env.reset(seed=args.seed)
     scaler = NPZActionScaler(args.dataset_path)
     empirical_action_blocks = None
     empirical_context_pixels = None
+    empirical_goal_pixels = None
     if args.cem_empirical_action_reservoir_size:
         empirical_result = scaler.sample_action_blocks(
             args.action_block,
@@ -237,9 +255,17 @@ def main():
             args.seed,
             args.cem_horizon if args.cem_empirical_full_plans else 1,
             args.cem_empirical_state_conditioned,
+            args.cem_empirical_goal_offset_steps,
         )
         if args.cem_empirical_state_conditioned:
-            empirical_action_blocks, empirical_context_pixels = empirical_result
+            if args.cem_empirical_goal_offset_steps:
+                (
+                    empirical_action_blocks,
+                    empirical_context_pixels,
+                    empirical_goal_pixels,
+                ) = empirical_result
+            else:
+                empirical_action_blocks, empirical_context_pixels = empirical_result
         else:
             empirical_action_blocks = empirical_result
     elif args.cem_empirical_state_conditioned:
@@ -289,10 +315,22 @@ def main():
             context_embeddings.append(
                 policy.encode_pixels(empirical_context_pixels[offset : offset + 512])
             )
+        goal_embeddings = None
+        if empirical_goal_pixels is not None:
+            goal_embedding_batches = []
+            for offset in range(0, len(empirical_goal_pixels), 512):
+                goal_embedding_batches.append(
+                    policy.encode_pixels(empirical_goal_pixels[offset : offset + 512])
+                )
+            goal_embeddings = np.concatenate(goal_embedding_batches, axis=0)
         policy.set_empirical_context_embeddings(
-            np.concatenate(context_embeddings, axis=0)
+            np.concatenate(context_embeddings, axis=0),
+            goal_embeddings,
+            args.cem_empirical_goal_distance_weight,
         )
         del empirical_context_pixels
+        if empirical_goal_pixels is not None:
+            del empirical_goal_pixels
     if args.latent_probe_qpos_indices:
         qpos_indices = tuple(
             int(value) for value in args.latent_probe_qpos_indices.split(',')
@@ -430,6 +468,10 @@ def main():
             'empirical_state_conditioned': args.cem_empirical_state_conditioned,
             'empirical_context_rank_penalty': (
                 args.cem_empirical_context_rank_penalty
+            ),
+            'empirical_goal_offset_steps': args.cem_empirical_goal_offset_steps,
+            'empirical_goal_distance_weight': (
+                args.cem_empirical_goal_distance_weight
             ),
             'return_best_candidate': args.cem_return_best_candidate,
         },
