@@ -86,6 +86,9 @@ def parse_args():
     parser.add_argument(
         '--cem-empirical-action-reservoir-size', type=int, default=0
     )
+    parser.add_argument('--latent-probe-qpos-indices')
+    parser.add_argument('--latent-probe-samples', type=int, default=20_000)
+    parser.add_argument('--latent-probe-ridge', type=float, default=1e-3)
     parser.add_argument(
         '--cem-cost-mode',
         choices=('terminal', 'min_over_horizon'),
@@ -132,6 +135,58 @@ def load_visual_proposal_agent(env, checkpoint_dir, checkpoint_step):
     return restore_agent(agent, checkpoint_dir, checkpoint_step)
 
 
+def fit_latent_probe(policy, dataset_path, qpos_indices, num_samples, ridge, seed):
+    if num_samples < 100:
+        raise ValueError('Latent probe requires at least 100 samples.')
+    if ridge < 0:
+        raise ValueError('Latent probe ridge coefficient cannot be negative.')
+    with np.load(dataset_path) as archive:
+        total = len(archive['terminals'])
+        rng = np.random.default_rng(seed)
+        sample_indices = rng.choice(total, size=min(num_samples, total), replace=False)
+        observations = archive['observations'][sample_indices]
+        targets = archive['qpos'][sample_indices][:, qpos_indices].astype(np.float32)
+
+    embeddings = []
+    for offset in range(0, len(observations), 512):
+        embeddings.append(policy.encode_pixels(observations[offset : offset + 512]))
+    embeddings = np.concatenate(embeddings, axis=0).astype(np.float32)
+
+    order = rng.permutation(len(embeddings))
+    split = max(int(len(order) * 0.8), 1)
+    train_indices, test_indices = order[:split], order[split:]
+    train_x, train_y = embeddings[train_indices], targets[train_indices]
+    x_mean = train_x.mean(axis=0)
+    y_mean = train_y.mean(axis=0)
+    y_scale = train_y.std(axis=0, ddof=1)
+    y_scale = np.where(y_scale > 1e-6, y_scale, 1.0)
+    centered_x = train_x - x_mean
+    standardized_y = (train_y - y_mean) / y_scale
+    covariance = centered_x.T @ centered_x / len(centered_x)
+    cross_covariance = centered_x.T @ standardized_y / len(centered_x)
+    weight = np.linalg.solve(
+        covariance + ridge * np.eye(covariance.shape[0], dtype=np.float32),
+        cross_covariance,
+    ).astype(np.float32)
+    bias = (-x_mean @ weight).astype(np.float32)
+
+    test_predictions = embeddings[test_indices] @ weight + bias
+    test_targets = (targets[test_indices] - y_mean) / y_scale
+    residual = np.sum((test_predictions - test_targets) ** 2, axis=0)
+    total_variance = np.sum(
+        (test_targets - test_targets.mean(axis=0)) ** 2, axis=0
+    )
+    r2 = 1.0 - residual / np.maximum(total_variance, 1e-12)
+    return weight, bias, {
+        'qpos_indices': list(qpos_indices),
+        'num_samples': len(embeddings),
+        'ridge': ridge,
+        'target_mean': y_mean,
+        'target_scale': y_scale,
+        'test_r2': r2,
+    }
+
+
 def main():
     args = parse_args()
     if args.cem_empirical_action_reservoir_size < 0:
@@ -142,6 +197,8 @@ def main():
         )
     if args.cem_empirical_action_reservoir_size and args.proposal_method is not None:
         raise ValueError('Empirical action initialization cannot use a policy proposal.')
+    if args.latent_probe_qpos_indices and args.proposal_method is not None:
+        raise ValueError('Latent-probe cost cannot use a policy proposal.')
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
     env.reset(seed=args.seed)
@@ -187,6 +244,20 @@ def main():
         empirical_action_blocks=empirical_action_blocks,
         context_history_size=args.planner_history_size,
     )
+    latent_probe_info = None
+    if args.latent_probe_qpos_indices:
+        qpos_indices = tuple(
+            int(value) for value in args.latent_probe_qpos_indices.split(',')
+        )
+        weight, bias, latent_probe_info = fit_latent_probe(
+            policy,
+            args.dataset_path,
+            qpos_indices,
+            args.latent_probe_samples,
+            args.latent_probe_ridge,
+            args.seed,
+        )
+        policy.set_latent_probe(weight, bias)
 
     task_infos = env.unwrapped.task_infos
     metrics = {}
@@ -310,6 +381,7 @@ def main():
         },
         'metrics': metrics,
         'overall_success': float(np.mean(all_successes)),
+        'latent_probe': latent_probe_info,
         'action_diagnostics': {
             'mean_abs_action': float(
                 np.mean(np.abs(np.concatenate(all_actions, axis=0)))

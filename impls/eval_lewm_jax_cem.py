@@ -364,6 +364,8 @@ class JAXLeWMCEMPolicy:
         self.shared_q_evaluator = shared_q_evaluator
         self.paired_plan_keys = bool(paired_plan_keys)
         self.diagnose_min_horizon = bool(diagnose_min_horizon)
+        self.latent_probe_weight = None
+        self.latent_probe_bias = None
         self.execution_steps = (
             self.receding_horizon * self.action_block
             if execution_steps is None
@@ -377,6 +379,37 @@ class JAXLeWMCEMPolicy:
                 'Multi-frame planner context requires replanning after exactly '
                 'one action block.'
             )
+        self._plan_one = jax.jit(self._build_plan_one())
+        self._score_plans = jax.jit(self._build_score_plans())
+        self._plan_distances = jax.jit(self._build_plan_distances())
+        self._encode_pixels_batch = jax.jit(
+            lambda value: self.model.apply(
+                self.variables,
+                value,
+                train=False,
+                method=self.model.encode_pixels,
+            )
+        )
+
+    def encode_pixels(self, pixels):
+        return np.asarray(self._encode_pixels_batch(jnp.asarray(pixels)))
+
+    def set_latent_probe(self, weight, bias):
+        weight = np.asarray(weight, dtype=np.float32)
+        bias = np.asarray(bias, dtype=np.float32)
+        embed_dim = int(self.checkpoint_metadata['embed_dim'])
+        if weight.ndim != 2 or weight.shape[0] != embed_dim:
+            raise ValueError(
+                f'Latent probe weight must have shape ({embed_dim}, K); got '
+                f'{weight.shape}.'
+            )
+        if bias.shape != (weight.shape[1],):
+            raise ValueError(
+                f'Latent probe bias must have shape ({weight.shape[1]},); got '
+                f'{bias.shape}.'
+            )
+        self.latent_probe_weight = weight
+        self.latent_probe_bias = bias
         self._plan_one = jax.jit(self._build_plan_one())
         self._score_plans = jax.jit(self._build_score_plans())
         self._plan_distances = jax.jit(self._build_plan_distances())
@@ -415,6 +448,16 @@ class JAXLeWMCEMPolicy:
             None
             if self.empirical_action_blocks is None
             else jnp.asarray(self.empirical_action_blocks, dtype=jnp.float32)
+        )
+        latent_probe_weight = (
+            None
+            if self.latent_probe_weight is None
+            else jnp.asarray(self.latent_probe_weight, dtype=jnp.float32)
+        )
+        latent_probe_bias = (
+            None
+            if self.latent_probe_bias is None
+            else jnp.asarray(self.latent_probe_bias, dtype=jnp.float32)
         )
 
         def planner_to_proposal_actions(blocks):
@@ -527,13 +570,40 @@ class JAXLeWMCEMPolicy:
                 scored_candidates = jnp.concatenate(
                     [past_candidates, candidates], axis=1
                 )
-                costs = model.apply(
-                    variables,
-                    pixels[None, None],
-                    goals[None, None],
-                    scored_candidates[None],
-                    method=rollout_cost_method,
-                )[0]
+                if latent_probe_weight is None:
+                    costs = model.apply(
+                        variables,
+                        pixels[None, None],
+                        goals[None, None],
+                        scored_candidates[None],
+                        method=rollout_cost_method,
+                    )[0]
+                else:
+                    goal_embeddings, predictions = model.apply(
+                        variables,
+                        pixels[None, None],
+                        goals[None, None],
+                        scored_candidates[None],
+                        method=model._rollout_predictions,
+                    )
+                    goal_state = (
+                        goal_embeddings @ latent_probe_weight + latent_probe_bias
+                    )
+                    predicted_states = (
+                        predictions @ latent_probe_weight + latent_probe_bias
+                    )
+                    probe_distances = jnp.sum(
+                        (
+                            predicted_states
+                            - goal_state[:, None, None]
+                        )
+                        ** 2,
+                        axis=-1,
+                    )
+                    if self.cost_mode == 'terminal':
+                        costs = probe_distances[:, :, -1][0]
+                    else:
+                        costs = jnp.min(probe_distances, axis=-1)[0]
                 if native_q_keep:
                     q_action_blocks = planner_to_proposal_actions(candidates[:, 0])
                     if shared_q_evaluator is None:
@@ -610,6 +680,16 @@ class JAXLeWMCEMPolicy:
             rollout_cost_method = model.rollout_cost_min_over_horizon
         else:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
+        latent_probe_weight = (
+            None
+            if self.latent_probe_weight is None
+            else jnp.asarray(self.latent_probe_weight, dtype=jnp.float32)
+        )
+        latent_probe_bias = (
+            None
+            if self.latent_probe_bias is None
+            else jnp.asarray(self.latent_probe_bias, dtype=jnp.float32)
+        )
 
         def score_plans(pixels, goals, past_action_blocks, plans):
             past_plans = jnp.broadcast_to(
@@ -617,19 +697,46 @@ class JAXLeWMCEMPolicy:
                 (plans.shape[0], *past_action_blocks.shape),
             )
             scored_plans = jnp.concatenate([past_plans, plans], axis=1)
-            return model.apply(
+            if latent_probe_weight is None:
+                return model.apply(
+                    variables,
+                    pixels[None, None],
+                    goals[None, None],
+                    scored_plans[None],
+                    method=rollout_cost_method,
+                )[0]
+            goal_embeddings, predictions = model.apply(
                 variables,
                 pixels[None, None],
                 goals[None, None],
                 scored_plans[None],
-                method=rollout_cost_method,
-            )[0]
+                method=model._rollout_predictions,
+            )
+            goal_state = goal_embeddings @ latent_probe_weight + latent_probe_bias
+            predicted_states = predictions @ latent_probe_weight + latent_probe_bias
+            distances = jnp.sum(
+                (predicted_states - goal_state[:, None, None]) ** 2,
+                axis=-1,
+            )
+            if self.cost_mode == 'terminal':
+                return distances[:, :, -1][0]
+            return jnp.min(distances, axis=-1)[0]
 
         return score_plans
 
     def _build_plan_distances(self):
         model = self.model
         variables = self.variables
+        latent_probe_weight = (
+            None
+            if self.latent_probe_weight is None
+            else jnp.asarray(self.latent_probe_weight, dtype=jnp.float32)
+        )
+        latent_probe_bias = (
+            None
+            if self.latent_probe_bias is None
+            else jnp.asarray(self.latent_probe_bias, dtype=jnp.float32)
+        )
 
         def plan_distances(pixels, goals, past_action_blocks, plan):
             scored_plan = jnp.concatenate([past_action_blocks, plan], axis=0)
@@ -640,8 +747,15 @@ class JAXLeWMCEMPolicy:
                 scored_plan[None, None],
                 method=model._rollout_predictions,
             )
+            if latent_probe_weight is None:
+                return jnp.sum(
+                    (predictions[0, 0] - goal_embeddings[0, None]) ** 2,
+                    axis=-1,
+                )
+            goal_state = goal_embeddings @ latent_probe_weight + latent_probe_bias
+            predicted_states = predictions @ latent_probe_weight + latent_probe_bias
             return jnp.sum(
-                (predictions[0, 0] - goal_embeddings[0, None]) ** 2,
+                (predicted_states[0, 0] - goal_state[0, None]) ** 2,
                 axis=-1,
             )
 
