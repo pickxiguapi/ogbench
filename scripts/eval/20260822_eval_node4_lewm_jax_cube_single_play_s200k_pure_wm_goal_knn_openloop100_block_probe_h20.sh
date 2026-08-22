@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# A800 node4 GPU4：固定 LeWM-JAX 200k checkpoint，以当前图像和离线轨迹200步后目标图像联合检索真实H20计划并完整执行100步；Cube Single Play 每 task 1 episode，无 policy。
+CLIENT_ID=node4
+source /data-training/yyf/ogbench/clean-main/scripts/client_env.sh
+cd "$OGBENCH_ROOT/impls"
+
+run_dir="$LEWM_JAX_RUNS_ROOT/2026-08-22_node2_LeWMJAX_cs_play_npz_impalasmall_bs128_s200k_s3072_fs5_h3_sigreg009"
+output_dir="$run_dir/diagnose_node4_pure_wm_goalknn131072_off200_rank1e6_blockprobe20k_h20_exec100_n128_seed42_ep1"
+mkdir -p "$output_dir/videos"
+
+CUDA_VISIBLE_DEVICES=4 XLA_PYTHON_CLIENT_PREALLOCATE=false \
+MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless PYTHONUNBUFFERED=1 \
+PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
+"$PYTHON_BIN" eval_lewm_jax_ogbench.py \
+  --env-name=visual-cube-single-play-v0 \
+  --dataset-path="$OGBENCH_DATA_DIR/visual-cube-single-play-v0.npz" \
+  --checkpoint="$run_dir/weights_step_200000.msgpack" \
+  --num-eval=1 --seed=42 --planner-history-size=1 \
+  --latent-probe-qpos-indices=14,15,16 --latent-probe-samples=20000 --latent-probe-ridge=0.001 \
+  --cem-horizon=20 --cem-receding-horizon=20 --action-block=5 --execution-steps=100 \
+  --cem-num-samples=128 --cem-steps=1 --cem-topk=16 --cem-var-scale=1.0 \
+  --cem-empirical-action-reservoir-size=131072 --cem-empirical-full-plans \
+  --cem-empirical-state-conditioned --cem-empirical-goal-offset-steps=200 \
+  --cem-empirical-goal-distance-weight=1 --cem-empirical-context-rank-penalty=1000000 \
+  --cem-return-best-candidate --cem-cost-mode=terminal \
+  --video-dir="$output_dir/videos" --output="$output_dir/result.json" \
+  >"$output_dir/eval.log" 2>&1
