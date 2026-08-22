@@ -8,9 +8,9 @@ DATA_ROOT="$CLIENT_ROOT/datasets/latent-geometry"
 CODE_ROOT="$CLIENT_ROOT/ogbench-visual-policy-runs/code/ogbench-shared-policy"
 
 names=(cube_single_expert.lance pusht_expert_train.lance reacher.lance tworoom.lance)
-sizes=(18971786407 14177721312 17202942600 4063845248)
+sizes=(18971745447 14177663968 17202901640 4063804288)
 for i in "${!names[@]}"; do
-  while [[ ! -e "$DATA_ROOT/${names[$i]}" ]] || [[ $(du -sb "$DATA_ROOT/${names[$i]}" | cut -f1) -ne ${sizes[$i]} ]]; do sleep 30; done
+  while [[ ! -e "$DATA_ROOT/${names[$i]}" ]] || [[ $(find "$DATA_ROOT/${names[$i]}" -type f -printf '%s\n' | awk '{s += $1} END {printf "%.0f", s}') -ne ${sizes[$i]} ]]; do sleep 30; done
 done
 
 cd "$CODE_ROOT/impls"
