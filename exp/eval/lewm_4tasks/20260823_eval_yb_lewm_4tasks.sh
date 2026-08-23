@@ -24,6 +24,7 @@ PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
 source /root/data/yyf/ogbench-new/scripts/client_env.sh
+EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-$CLIENT_ROOT/tmp/lewm-4tasks-eval}
 cd "$OGBENCH_ROOT/impls"
 
 case "$MODE" in policy|lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, guided, or native_q" >&2; exit 2 ;; esac
@@ -41,8 +42,9 @@ for i in "${!tasks[@]}"; do
   [[ "$MODE" != policy ]] && args+=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
   [[ "$MODE" != lewm ]] && args+=(--policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS")
   output_dir="$output_root/${tags[$i]}"
-  mkdir -p "$output_dir"
-  CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  task_tmp="$EVAL_TMP_ROOT/${tags[$i]}"
+  mkdir -p "$output_dir" "$task_tmp"
+  TMPDIR="$task_tmp" CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
   MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless \
   LD_LIBRARY_PATH="$EGL_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
