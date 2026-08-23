@@ -3,6 +3,8 @@ set -euo pipefail
 
 # 英博云：四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
 CLIENT_ID=yb
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 MODE=${MODE:-guided}
 REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}
 POLICY_STEPS=${POLICY_STEPS:-100000}
@@ -23,7 +25,7 @@ CEM_TOPK=${CEM_TOPK:-30}
 PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
-source /root/data/yyf/ogbench-new/scripts/client_env.sh
+source "$OGBENCH_ROOT/scripts/client_env.sh"
 EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-$CLIENT_ROOT/tmp/lewm-4tasks-eval}
 cd "$OGBENCH_ROOT/impls"
 

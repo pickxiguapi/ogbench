@@ -3,6 +3,8 @@ set -euo pipefail
 
 # A800 node2：八卡并行训练 OGBench-Env-8Tasks GCIQL-Chunk；REPRESENTATION_MODE 可设 independent/pi/qv/all，默认关闭增强以做受控消融。
 CLIENT_ID=node2
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}
 P_AUG=${P_AUG:-0.0}
 POLICY_STEPS=${POLICY_STEPS:-500000}
@@ -11,7 +13,7 @@ POLICY_SEED=${POLICY_SEED:-0}
 LEWM_STEPS=${LEWM_STEPS:-200000}
 LEWM_SEED=${LEWM_SEED:-3072}
 LEWM_BATCH_SIZE=${LEWM_BATCH_SIZE:-128}
-source /home/yyf/ogbench-main/scripts/client_env.sh
+source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac

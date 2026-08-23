@@ -3,7 +3,7 @@ case "$CLIENT_ID" in
   yb)
     CLIENT_ROOT=/root/data/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench-new
+    OGBENCH_ROOT=${OGBENCH_ROOT:-$CLIENT_ROOT/ogbench-new}
     PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
@@ -13,7 +13,7 @@ case "$CLIENT_ID" in
   23)
     CLIENT_ROOT=/home/dzb
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    OGBENCH_ROOT=${OGBENCH_ROOT:-$CLIENT_ROOT/ogbench}
     PYTHON_BIN=$OGBENCH_ROOT/.venv/bin/python
 
     LEWM_DATA_ROOT=/data/dzb/stablewm-data/datasets
@@ -22,13 +22,13 @@ case "$CLIENT_ID" in
   7002)
     CLIENT_ROOT=/home/yyf/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    OGBENCH_ROOT=${OGBENCH_ROOT:-$CLIENT_ROOT/ogbench}
     PYTHON_BIN=$OGBENCH_ROOT/.venv-s23/bin/python
     ;;
   11)
     CLIENT_ROOT=/home/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    OGBENCH_ROOT=${OGBENCH_ROOT:-$CLIENT_ROOT/ogbench}
     PYTHON_BIN=/data/yyf/H-LeWM/envs/ogbench/bin/python
 
     LEWM_DATA_ROOT=/data/yyf/H-LeWM/datasets
@@ -36,7 +36,7 @@ case "$CLIENT_ID" in
   node1)
     CLIENT_ROOT=/data-training/yyf
 
-    OGBENCH_ROOT=/home/yyf/ogbench-main
+    OGBENCH_ROOT=${OGBENCH_ROOT:-/home/yyf/ogbench-main}
     PYTHON_BIN=$CLIENT_ROOT/envs/ogbench/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
@@ -47,7 +47,7 @@ case "$CLIENT_ID" in
   node2)
     CLIENT_ROOT=/data-training/yyf
 
-    OGBENCH_ROOT=/home/yyf/ogbench-main
+    OGBENCH_ROOT=${OGBENCH_ROOT:-/home/yyf/ogbench-main}
     PYTHON_BIN=$CLIENT_ROOT/envs/ogbench/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
@@ -57,7 +57,7 @@ case "$CLIENT_ID" in
   node3)
     CLIENT_ROOT=/data-training/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    OGBENCH_ROOT=${OGBENCH_ROOT:-$CLIENT_ROOT/ogbench}
     PYTHON_BIN=$CLIENT_ROOT/envs/ogbench/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
@@ -66,7 +66,7 @@ case "$CLIENT_ID" in
   node4)
     CLIENT_ROOT=/data-training/yyf
 
-    OGBENCH_ROOT=$CLIENT_ROOT/ogbench/clean-main
+    OGBENCH_ROOT=${OGBENCH_ROOT:-$CLIENT_ROOT/ogbench/clean-main}
     PYTHON_BIN=$CLIENT_ROOT/ogbench/.venv/bin/python
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data

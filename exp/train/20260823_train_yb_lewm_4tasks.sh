@@ -3,13 +3,15 @@ set -euo pipefail
 
 # 英博云：四卡并行训练 LeWM-4Tasks 的 canonical LeWM-JAX；默认 e10、bs128、seed3072、fs5、SigReg0.09，参数可在下方修改。
 CLIENT_ID=yb
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 LEWM_EPOCH=${LEWM_EPOCH:-10}
 LEWM_BATCH_SIZE=${LEWM_BATCH_SIZE:-128}
 LEWM_SEED=${LEWM_SEED:-3072}
 FRAMESKIP=${FRAMESKIP:-5}
 LEARNING_RATE=${LEARNING_RATE:-5e-5}
 SIGREG_WEIGHT=${SIGREG_WEIGHT:-0.09}
-source /root/data/yyf/ogbench-new/scripts/client_env.sh
+source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 datasets=(cube_single_expert pusht_expert_train reacher tworoom)

@@ -81,6 +81,17 @@ def test_reproduction_wrappers_cover_the_main_matrices():
             assert f'MODE={mode} REPRESENTATION_MODE="$representation"' in text
 
 
+def test_executors_source_client_env_from_the_current_checkout():
+    executors = sorted(EXP.rglob('*train_*.sh')) + sorted(EXP.rglob('*eval_*.sh'))
+    executors = [path for path in executors if 'reproduce_' not in path.name]
+    assert len(executors) == 6
+    for path in executors:
+        text = path.read_text()
+        assert 'source "$OGBENCH_ROOT/scripts/client_env.sh"' in text
+        assert 'source /home/' not in text
+        assert 'source /root/' not in text
+
+
 def test_backup_launchers_are_not_executable():
     for path in (ROOT / 'backup').rglob('*.sh'):
         assert not os.access(path, os.X_OK), path

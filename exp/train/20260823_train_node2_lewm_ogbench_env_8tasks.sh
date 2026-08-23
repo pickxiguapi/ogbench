@@ -3,13 +3,15 @@ set -euo pipefail
 
 # A800 node2：八卡并行训练 OGBench-Env-8Tasks canonical LeWM-JAX；默认 s200k、bs128、seed3072、fs5、SigReg0.09。
 CLIENT_ID=node2
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 LEWM_STEPS=${LEWM_STEPS:-200000}
 LEWM_BATCH_SIZE=${LEWM_BATCH_SIZE:-128}
 LEWM_SEED=${LEWM_SEED:-3072}
 FRAMESKIP=${FRAMESKIP:-5}
 LEARNING_RATE=${LEARNING_RATE:-5e-5}
 SIGREG_WEIGHT=${SIGREG_WEIGHT:-0.09}
-source /home/yyf/ogbench-main/scripts/client_env.sh
+source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 envs=(visual-cube-single-play-v0 visual-cube-double-play-v0 visual-cube-triple-play-v0 visual-scene-play-v0 visual-cube-single-noisy-v0 visual-cube-double-noisy-v0 visual-cube-triple-noisy-v0 visual-scene-noisy-v0)

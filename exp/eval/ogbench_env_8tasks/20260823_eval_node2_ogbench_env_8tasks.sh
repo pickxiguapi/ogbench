@@ -3,6 +3,8 @@ set -euo pipefail
 
 # A800 node2：八卡并行评测 OGBench-Env-8Tasks；MODE 可设 policy/lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
 CLIENT_ID=node2
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 MODE=${MODE:-guided}
 REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}
 POLICY_STEPS=${POLICY_STEPS:-500000}
@@ -21,7 +23,7 @@ CEM_TOPK=${CEM_TOPK:-30}
 PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_STEPS}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
-source /home/yyf/ogbench-main/scripts/client_env.sh
+source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 case "$MODE" in policy|lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, guided, or native_q" >&2; exit 2 ;; esac

@@ -2,6 +2,10 @@
 
 Only Bash files in this directory are active experiment entrypoints.
 
+Each executor resolves `OGBENCH_ROOT` from its own location and sources that
+checkout's `scripts/client_env.sh`; the repository may therefore live at a
+different absolute path on each server.
+
 For each policy training or evaluation Bash, set `REPRESENTATION_MODE` to one of `independent`, `pi`, `qv`, or `all`. Formal representation comparisons default to `P_AUG=0.0`.
 
 Canonical order:

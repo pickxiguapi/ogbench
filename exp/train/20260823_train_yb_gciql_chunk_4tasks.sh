@@ -3,6 +3,8 @@ set -euo pipefail
 
 # 英博云：四卡并行训练 LeWM-4Tasks GCIQL-Chunk；REPRESENTATION_MODE 可设 independent/pi/qv/all，默认正式消融关闭增强。
 CLIENT_ID=yb
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}
 P_AUG=${P_AUG:-0.0}
 POLICY_STEPS=${POLICY_STEPS:-100000}
@@ -11,7 +13,7 @@ POLICY_SEED=${POLICY_SEED:-0}
 LEWM_SEED=${LEWM_SEED:-3072}
 LEWM_EPOCH=${LEWM_EPOCH:-10}
 LEWM_BATCH_SIZE=${LEWM_BATCH_SIZE:-128}
-source /root/data/yyf/ogbench-new/scripts/client_env.sh
+source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
