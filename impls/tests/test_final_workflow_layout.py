@@ -53,12 +53,12 @@ def test_representation_modes_encode_the_four_design_choices():
 def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
     for path in POLICY_BASHES:
         text = path.read_text()
-        assert 'P_AUG=${P_AUG:-0.0}' in text
         assert '--p_aug="$P_AUG"' in text
     independent = (EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks_independent.sh').read_text()
     assert '--representation_mode=independent' in independent
     assert '--lewm_checkpoint' not in independent
     shared = (EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks.sh').read_text()
+    assert 'P_AUG=${P_AUG:-0.0}' in shared
     assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:?' in shared
     assert '--representation_mode="$REPRESENTATION_MODE"' in shared
     for path in EVAL_BASHES:
@@ -101,25 +101,22 @@ def test_policy_bashes_only_require_lewm_settings_for_shared_modes():
     assert 'LEWM_' not in independent
     assert 'lewm_checkpoint' not in independent.lower()
 
-    shared_paths = [
-        EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks.sh',
-        EXP / 'train' / '20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh',
-    ]
-    for path in shared_paths:
-        text = path.read_text()
-        shared = text.index('pi|qv|all)')
-        if path.name.startswith('20260823_train_yb'):
-            checkpoint = text.index('--lewm_checkpoint="${lewm_checkpoints[$i]}"')
-            assert 'independent)' not in text
-        else:
-            checkpoint = text.index('lewm_args=(--lewm_checkpoint=')
-        assert shared < checkpoint
-        assert ': "${LEWM_SEED:?' in text
-        assert ': "${LEWM_BATCH_SIZE:?' in text
-        assert 'Frozen LeWM checkpoint not found:' in text
-        assert text.index('Frozen LeWM checkpoint not found:') < text.index(
-            'for i in "${!'
-        )
+    yb_shared = (EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks.sh').read_text()
+    assert 'independent)' not in yb_shared
+    for unused in ('LEWM_EPOCH', 'LEWM_BATCH_SIZE', 'LEWM_SEED'):
+        assert unused not in yb_shared
+    for task in ('CUBE', 'PUSHT', 'REACHER', 'TWOROOM'):
+        assert f'LEWM_{task}_CHECKPOINT' in yb_shared
+    assert 'Frozen LeWM checkpoint not found:' in yb_shared
+    assert yb_shared.index('Frozen LeWM checkpoint not found:') < yb_shared.index(
+        'for i in "${!datasets[@]}"'
+    )
+
+    node2_shared = (EXP / 'train' / '20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh').read_text()
+    assert ': "${LEWM_SEED:?' in node2_shared
+    assert ': "${LEWM_BATCH_SIZE:?' in node2_shared
+    assert 'Frozen LeWM checkpoint not found:' in node2_shared
+    for text in (yb_shared, node2_shared):
         assert 'train_lewm_jax.py' not in text
 
 

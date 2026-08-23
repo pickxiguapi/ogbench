@@ -16,9 +16,6 @@ cd "$OGBENCH_ROOT/impls"
 case "$REPRESENTATION_MODE" in
   pi|qv|all)
     MODE_TAG=$REPRESENTATION_MODE
-    : "${LEWM_EPOCH:?Set LEWM_EPOCH for shared representation mode $REPRESENTATION_MODE}"
-    : "${LEWM_BATCH_SIZE:?Set LEWM_BATCH_SIZE for shared representation mode $REPRESENTATION_MODE}"
-    : "${LEWM_SEED:?Set LEWM_SEED for shared representation mode $REPRESENTATION_MODE}"
     ;;
   *)
     echo "REPRESENTATION_MODE must be pi, qv, or all; use 20260823_train_yb_gciql_chunk_4tasks_independent.sh for the independent baseline" >&2
@@ -30,8 +27,13 @@ tags=(cube pusht reacher tworoom)
 gpus=(0 1 2 3)
 pids=()
 lewm_checkpoints=()
-for tag in "${tags[@]}"; do
-  lewm_checkpoint="$CLIENT_ROOT/lewm-final/lewm-4tasks/lewm_4tasks_${tag}_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}/weights_epoch_${LEWM_EPOCH}.msgpack"
+checkpoint_vars=(LEWM_CUBE_CHECKPOINT LEWM_PUSHT_CHECKPOINT LEWM_REACHER_CHECKPOINT LEWM_TWOROOM_CHECKPOINT)
+for checkpoint_var in "${checkpoint_vars[@]}"; do
+  lewm_checkpoint=${!checkpoint_var:-}
+  if [[ -z "$lewm_checkpoint" ]]; then
+    echo "Set $checkpoint_var to a trained LeWM checkpoint for shared representation mode $REPRESENTATION_MODE" >&2
+    exit 2
+  fi
   if [[ ! -f "$lewm_checkpoint" ]]; then
     echo "Frozen LeWM checkpoint not found: $lewm_checkpoint" >&2
     exit 2

@@ -36,9 +36,12 @@ LeWM-4Tasks example:
 ```bash
 bash exp/train/20260823_train_yb_gciql_chunk_4tasks_independent.sh
 bash exp/train/20260823_train_yb_lewm_4tasks.sh
+export LEWM_CUBE_CHECKPOINT=/path/to/cube.msgpack
+export LEWM_PUSHT_CHECKPOINT=/path/to/pusht.msgpack
+export LEWM_REACHER_CHECKPOINT=/path/to/reacher.msgpack
+export LEWM_TWOROOM_CHECKPOINT=/path/to/tworoom.msgpack
 for mode in pi qv all; do
-  REPRESENTATION_MODE="$mode" LEWM_EPOCH=10 LEWM_BATCH_SIZE=128 LEWM_SEED=3072 \
-    bash exp/train/20260823_train_yb_gciql_chunk_4tasks.sh
+  REPRESENTATION_MODE="$mode" bash exp/train/20260823_train_yb_gciql_chunk_4tasks.sh
 done
 MODE=guided REPRESENTATION_MODE=pi \
   bash exp/eval/lewm_4tasks/20260823_eval_yb_lewm_4tasks.sh
@@ -48,9 +51,10 @@ Use the two `node2` Bash files analogously for OGBench-Env-8Tasks. The policy
 and evaluation Bash files derive checkpoint directories from the same exposed
 step, seed, batch-size, augmentation, and representation-mode variables.
 Independent policy training neither accepts nor resolves a LeWM checkpoint.
-For `pi`, `qv`, and `all`, the policy Bash requires explicit `LEWM_*` checkpoint
-identity variables and only loads the resulting frozen checkpoint; LeWM itself
-is trained exclusively by `train_lewm_jax.py` through its own Bash.
+For `pi`, `qv`, and `all`, the LeWM-4Tasks policy Bash requires one explicit
+checkpoint path per task and only loads those frozen checkpoints. LeWM training
+metadata such as its batch size and seed is not a policy-training parameter.
+LeWM itself is trained exclusively by `train_lewm_jax.py` through its own Bash.
 Policy experiment names use the compact shared format
 `gc{4|8}_${task}_${mode}_n${steps}_b${batch}_a${p_aug}_sd${seed}` (with
 `independent` shortened to `ind`). Both training and evaluation reject names
