@@ -17,12 +17,17 @@ source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
+case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 envs=(visual-cube-single-play-v0 visual-cube-double-play-v0 visual-cube-triple-play-v0 visual-scene-play-v0 visual-cube-single-noisy-v0 visual-cube-double-noisy-v0 visual-cube-triple-noisy-v0 visual-scene-noisy-v0)
 tags=(cs_play cd_play ct_play scene_play cs_noisy cd_noisy ct_noisy scene_noisy)
 pids=()
 
 for i in "${!envs[@]}"; do
-  exp_name="gciql_chunk_ogbench8_${tags[$i]}_${REPRESENTATION_MODE}_s${POLICY_STEPS}_bs${POLICY_BATCH_SIZE}_paug${P_AUG}_s${POLICY_SEED}"
+  exp_name="gc8_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
+  if (( ${#exp_name} >= 64 )); then
+    echo "Experiment name must be shorter than 64 characters: $exp_name" >&2
+    exit 2
+  fi
   run_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-ogbench8/$exp_name"
   lewm_args=()
   if [[ "$REPRESENTATION_MODE" != independent ]]; then

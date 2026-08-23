@@ -28,6 +28,7 @@ cd "$OGBENCH_ROOT/impls"
 
 case "$MODE" in policy|lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, guided, or native_q" >&2; exit 2 ;; esac
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
+case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 envs=(visual-cube-single-play-v0 visual-cube-double-play-v0 visual-cube-triple-play-v0 visual-scene-play-v0 visual-cube-single-noisy-v0 visual-cube-double-noisy-v0 visual-cube-triple-noisy-v0 visual-scene-noisy-v0)
 tags=(cs_play cd_play ct_play scene_play cs_noisy cd_noisy ct_noisy scene_noisy)
 output_root="$CLIENT_ROOT/lewm-final/evals/ogbench-env-8tasks/${MODE}_${REPRESENTATION_MODE}_${EVAL_TAG}_seed${EVAL_SEED}"
@@ -35,7 +36,12 @@ pids=()
 
 for i in "${!envs[@]}"; do
   lewm_dir="$CLIENT_ROOT/lewm-final/lewm-ogbench8/lewm_ogbench8_${tags[$i]}_s${LEWM_STEPS}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}"
-  policy_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-ogbench8/gciql_chunk_ogbench8_${tags[$i]}_${REPRESENTATION_MODE}_s${POLICY_STEPS}_bs${POLICY_BATCH_SIZE}_paug${P_AUG}_s${POLICY_SEED}"
+  policy_name="gc8_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
+  if (( ${#policy_name} >= 64 )); then
+    echo "Policy experiment name must be shorter than 64 characters: $policy_name" >&2
+    exit 2
+  fi
+  policy_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-ogbench8/$policy_name"
   args=()
   [[ "$MODE" != policy ]] && args+=(--lewm-checkpoint="$lewm_dir/weights_step_${LEWM_STEPS}.msgpack")
   [[ "$MODE" != lewm ]] && args+=(--policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS")

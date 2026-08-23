@@ -17,13 +17,18 @@ source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
+case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 datasets=(cube_single_expert pusht_expert_train reacher tworoom)
 tags=(cube pusht reacher tworoom)
 gpus=(0 1 2 3)
 pids=()
 
 for i in "${!datasets[@]}"; do
-  exp_name="gciql_chunk_4tasks_${tags[$i]}_${REPRESENTATION_MODE}_s${POLICY_STEPS}_bs${POLICY_BATCH_SIZE}_paug${P_AUG}_s${POLICY_SEED}"
+  exp_name="gc4_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
+  if (( ${#exp_name} >= 64 )); then
+    echo "Experiment name must be shorter than 64 characters: $exp_name" >&2
+    exit 2
+  fi
   run_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-4tasks/$exp_name"
   lewm_args=()
   if [[ "$REPRESENTATION_MODE" != independent ]]; then

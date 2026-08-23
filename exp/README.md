@@ -45,6 +45,11 @@ MODE=guided REPRESENTATION_MODE=pi \
 Use the two `node2` Bash files analogously for OGBench-Env-8Tasks. The policy
 and evaluation Bash files derive checkpoint directories from the same exposed
 step, seed, batch-size, augmentation, and representation-mode variables.
+Policy experiment names use the compact shared format
+`gc{4|8}_${task}_${mode}_n${steps}_b${batch}_a${p_aug}_sd${seed}` (with
+`independent` shortened to `ind`). Both training and evaluation reject names
+that are 64 characters or longer, so customized values cannot create an
+invalid checkpoint name silently.
 Evaluation directories include the main checkpoint/CEM settings; set
 `EVAL_TAG` explicitly when running another variant that should remain separate.
 

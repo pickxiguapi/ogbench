@@ -31,6 +31,7 @@ cd "$OGBENCH_ROOT/impls"
 
 case "$MODE" in policy|lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, guided, or native_q" >&2; exit 2 ;; esac
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
+case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 tasks=(cube pusht reacher tworoom)
 tags=(cube pusht reacher tworoom)
 gpus=(0 1 2 3)
@@ -39,7 +40,12 @@ pids=()
 
 for i in "${!tasks[@]}"; do
   lewm_dir="$CLIENT_ROOT/lewm-final/lewm-4tasks/lewm_4tasks_${tags[$i]}_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}"
-  policy_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-4tasks/gciql_chunk_4tasks_${tags[$i]}_${REPRESENTATION_MODE}_s${POLICY_STEPS}_bs${POLICY_BATCH_SIZE}_paug${P_AUG}_s${POLICY_SEED}"
+  policy_name="gc4_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
+  if (( ${#policy_name} >= 64 )); then
+    echo "Policy experiment name must be shorter than 64 characters: $policy_name" >&2
+    exit 2
+  fi
+  policy_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-4tasks/$policy_name"
   args=()
   [[ "$MODE" != policy ]] && args+=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
   [[ "$MODE" != lewm ]] && args+=(--policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS")

@@ -58,6 +58,22 @@ def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
         assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}' in text
 
 
+def test_policy_experiment_names_are_compact_and_guarded():
+    policy_bashes = sorted(EXP.rglob('*gciql_chunk*.sh'))
+    eval_bashes = sorted(EXP.rglob('*eval*.sh'))
+    for path in policy_bashes + eval_bashes:
+        text = path.read_text()
+        assert 'MODE_TAG=ind' in text
+        assert '${#exp_name} >= 64' in text or '${#policy_name} >= 64' in text
+
+    names = [
+        f'gc8_{tag}_{mode}_n500000_b512_a0.0_sd0'
+        for tag in 'cs_play cd_play ct_play scene_play cs_noisy cd_noisy ct_noisy scene_noisy'.split()
+        for mode in 'ind pi qv all'.split()
+    ]
+    assert max(map(len, names)) < 64
+
+
 def test_reproduction_wrappers_cover_the_main_matrices():
     train_wrappers = sorted((EXP / 'train').glob('*reproduce*main_matrix.sh'))
     eval_wrappers = sorted((EXP / 'eval').rglob('*reproduce*main_matrix.sh'))
