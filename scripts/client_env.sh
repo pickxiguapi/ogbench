@@ -1,4 +1,4 @@
-# 客户端公共路径。CLIENT_ID 只允许 yb、23、7002、11、node1、node2、node4；新增路径时补全对应分支。
+# 客户端公共路径。CLIENT_ID 只允许 yb、23、7002、11、node1、node2、node3、node4；新增路径时补全对应分支。
 case "$CLIENT_ID" in
   yb)
     CLIENT_ROOT=/root/data/yyf
@@ -52,6 +52,15 @@ case "$CLIENT_ID" in
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
     LEWM_JAX_RUNS_ROOT=$CLIENT_ROOT/ogbench/lewm-jax-visual-runs
+    EGL_LIB_DIR=/usr/lib/x86_64-linux-gnu
+    ;;
+  node3)
+    CLIENT_ROOT=/data-training/yyf
+
+    OGBENCH_ROOT=$CLIENT_ROOT/ogbench
+    PYTHON_BIN=$CLIENT_ROOT/envs/ogbench/bin/python
+
+    OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
     EGL_LIB_DIR=/usr/lib/x86_64-linux-gnu
     ;;
   node4)
