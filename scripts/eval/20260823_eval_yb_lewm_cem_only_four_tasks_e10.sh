@@ -15,12 +15,14 @@ lewm_exps=(
 )
 gpus=(4 5 6 7)
 output_root="$CLIENT_ROOT/lewm-gciql-chunk-shared-evals/20260823_cem_only_j5_h5_rh1_ep50_seed42"
+tmp_root="$CLIENT_ROOT/tmp"
+mkdir -p "$tmp_root"
 
 pids=()
 for i in "${!tasks[@]}"; do
   output_dir="$output_root/${tasks[$i]}"
   mkdir -p "$output_dir"
-  CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  TMPDIR="$tmp_root" CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
   MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless \
   LD_LIBRARY_PATH="$EGL_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \

@@ -11,13 +11,15 @@ tags=(cube pusht reacher tworoom)
 gpus=(0 1 2 3)
 checkpoint_root="$CLIENT_ROOT/lewm-gciql-chunk-shared-runs"
 output_root="$CLIENT_ROOT/lewm-gciql-chunk-shared-evals/20260823_shared_pi_only_policy_s100k_ep50_seed42"
+tmp_root="$CLIENT_ROOT/tmp"
+mkdir -p "$tmp_root"
 
 pids=()
 for i in "${!tasks[@]}"; do
   checkpoint_dir="$checkpoint_root/2026-08-22_yb_LeWM_with_GCIQL_Chunk_AWR_shared_pi_only_${tags[$i]}_k5_bs256_s100k_s0"
   output_dir="$output_root/${tags[$i]}"
   mkdir -p "$output_dir"
-  CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  TMPDIR="$tmp_root" CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \
   MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless \
   LD_LIBRARY_PATH="$EGL_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
