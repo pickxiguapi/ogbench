@@ -6,7 +6,10 @@ Each executor resolves `OGBENCH_ROOT` from its own location and sources that
 checkout's `scripts/client_env.sh`; the repository may therefore live at a
 different absolute path on each server.
 
-For each policy training or evaluation Bash, set `REPRESENTATION_MODE` to one of `independent`, `pi`, `qv`, or `all`. Formal representation comparisons default to `P_AUG=0.0`.
+Formal representation comparisons default to `P_AUG=0.0`. On LeWM-4Tasks,
+the independent GCIQL-Chunk baseline has its own Bash; the shared policy Bash
+requires `REPRESENTATION_MODE=pi`, `qv`, or `all`. Evaluation accepts all four
+modes.
 
 Canonical order:
 
@@ -31,7 +34,7 @@ from training through checkpoint lookup and evaluation.
 LeWM-4Tasks example:
 
 ```bash
-REPRESENTATION_MODE=independent bash exp/train/20260823_train_yb_gciql_chunk_4tasks.sh
+bash exp/train/20260823_train_yb_gciql_chunk_4tasks_independent.sh
 bash exp/train/20260823_train_yb_lewm_4tasks.sh
 for mode in pi qv all; do
   REPRESENTATION_MODE="$mode" LEWM_EPOCH=10 LEWM_BATCH_SIZE=128 LEWM_SEED=3072 \

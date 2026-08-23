@@ -7,6 +7,16 @@ ROOT = Path(__file__).resolve().parents[2]
 IMPLS = ROOT / 'impls'
 EXP = ROOT / 'exp'
 
+POLICY_BASHES = [
+    EXP / 'train' / '20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh',
+    EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks.sh',
+    EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks_independent.sh',
+]
+EVAL_BASHES = [
+    EXP / 'eval' / 'lewm_4tasks' / '20260823_eval_yb_lewm_4tasks.sh',
+    EXP / 'eval' / 'ogbench_env_8tasks' / '20260823_eval_node2_ogbench_env_8tasks.sh',
+]
+
 
 def _literal_assignment(path, name):
     tree = ast.parse(path.read_text())
@@ -41,17 +51,17 @@ def test_representation_modes_encode_the_four_design_choices():
 
 
 def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
-    policy_bashes = sorted(EXP.rglob('*gciql_chunk*.sh'))
-    eval_bashes = sorted(EXP.rglob('*eval*.sh'))
-    assert len(policy_bashes) == 2
-    assert len(eval_bashes) == 2
-    for path in policy_bashes:
+    for path in POLICY_BASHES:
         text = path.read_text()
-        assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}' in text
         assert 'P_AUG=${P_AUG:-0.0}' in text
-        assert '--representation_mode="$REPRESENTATION_MODE"' in text
         assert '--p_aug="$P_AUG"' in text
-    for path in eval_bashes:
+    independent = (EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks_independent.sh').read_text()
+    assert '--representation_mode=independent' in independent
+    assert '--lewm_checkpoint' not in independent
+    shared = (EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks.sh').read_text()
+    assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:?' in shared
+    assert '--representation_mode="$REPRESENTATION_MODE"' in shared
+    for path in EVAL_BASHES:
         text = path.read_text()
         assert 'MODE=${MODE:-guided}' in text
         assert 'policy|lewm|guided|native_q' in text
@@ -59,11 +69,8 @@ def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
 
 
 def test_policy_experiment_names_are_compact_and_guarded():
-    policy_bashes = sorted(EXP.rglob('*gciql_chunk*.sh'))
-    eval_bashes = sorted(EXP.rglob('*eval*.sh'))
-    for path in policy_bashes + eval_bashes:
+    for path in POLICY_BASHES + EVAL_BASHES:
         text = path.read_text()
-        assert 'MODE_TAG=ind' in text
         assert '${#exp_name} >= 64' in text or '${#policy_name} >= 64' in text
 
     names = [
@@ -88,13 +95,25 @@ def test_only_evaluation_uses_reproduction_wrappers():
 
 
 def test_policy_bashes_only_require_lewm_settings_for_shared_modes():
-    policy_bashes = sorted(EXP.rglob('*gciql_chunk*.sh'))
-    for path in policy_bashes:
+    independent_path = EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks_independent.sh'
+    independent = independent_path.read_text()
+    assert 'REPRESENTATION_MODE' not in independent
+    assert 'LEWM_' not in independent
+    assert 'lewm_checkpoint' not in independent.lower()
+
+    shared_paths = [
+        EXP / 'train' / '20260823_train_yb_gciql_chunk_4tasks.sh',
+        EXP / 'train' / '20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh',
+    ]
+    for path in shared_paths:
         text = path.read_text()
-        independent = text.index('independent)')
         shared = text.index('pi|qv|all)')
-        checkpoint = text.index('lewm_args=(--lewm_checkpoint=')
-        assert independent < shared < checkpoint
+        if path.name.startswith('20260823_train_yb'):
+            checkpoint = text.index('--lewm_checkpoint="${lewm_checkpoints[$i]}"')
+            assert 'independent)' not in text
+        else:
+            checkpoint = text.index('lewm_args=(--lewm_checkpoint=')
+        assert shared < checkpoint
         assert ': "${LEWM_SEED:?' in text
         assert ': "${LEWM_BATCH_SIZE:?' in text
         assert 'Frozen LeWM checkpoint not found:' in text
@@ -105,9 +124,10 @@ def test_policy_bashes_only_require_lewm_settings_for_shared_modes():
 
 
 def test_executors_source_client_env_from_the_current_checkout():
-    executors = sorted(EXP.rglob('*train_*.sh')) + sorted(EXP.rglob('*eval_*.sh'))
-    executors = [path for path in executors if 'reproduce_' not in path.name]
-    assert len(executors) == 6
+    executors = POLICY_BASHES + EVAL_BASHES + [
+        EXP / 'train' / '20260823_train_node2_lewm_ogbench_env_8tasks.sh',
+        EXP / 'train' / '20260823_train_yb_lewm_4tasks.sh',
+    ]
     for path in executors:
         text = path.read_text()
         assert 'source "$OGBENCH_ROOT/scripts/client_env.sh"' in text

@@ -8,6 +8,8 @@ case "$CLIENT_ID" in
 
     OGBENCH_DATA_DIR=$CLIENT_ROOT/ogbench-cache/data
     LEWM_DATA_ROOT=$CLIENT_ROOT/stable-worldmodel/datasets
+    GCIQL_DATA_ROOT=${GCIQL_DATA_ROOT:-$CLIENT_ROOT/stable-worldmodel/datasets}
+    GCIQL_RUNS_ROOT=${GCIQL_RUNS_ROOT:-$CLIENT_ROOT/lewm-final}
     EGL_LIB_DIR=$CLIENT_ROOT/egl-runtime/root/usr/lib/x86_64-linux-gnu
     ;;
   23)
