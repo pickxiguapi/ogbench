@@ -38,6 +38,11 @@ def parse_args():
     parser.add_argument('--cem-steps', type=int, default=5)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
+    parser.add_argument(
+        '--cem-cost-mode',
+        choices=('terminal', 'min_over_horizon'),
+        default='min_over_horizon',
+    )
     parser.add_argument('--proposal-num-samples', type=int, default=64)
     parser.add_argument('--proposal-temperature', type=float, default=0.1)
     parser.add_argument('--video-dir')
@@ -86,7 +91,7 @@ def main():
                 steps=args.cem_steps,
                 topk=args.cem_topk,
                 var_scale=args.cem_var_scale,
-                cost_mode='min_over_horizon',
+                cost_mode=args.cem_cost_mode,
                 proposal_agent=proposal_agent,
                 proposal_temperature=(
                     args.proposal_temperature if args.mode == 'native_q' else 0.0
@@ -134,7 +139,7 @@ def main():
                 'steps': args.cem_steps,
                 'topk': args.cem_topk,
                 'var_scale': args.cem_var_scale,
-                'cost_mode': 'min_over_horizon',
+                'cost_mode': args.cem_cost_mode,
             }
         ),
         'metrics': metrics,
