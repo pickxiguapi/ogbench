@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 英博云：四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
-CLIENT_ID=yb
+# 四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
+CLIENT_ID=${CLIENT_ID:-yb}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 MODE=${MODE:-guided}
@@ -27,6 +27,7 @@ PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-$CLIENT_ROOT/tmp/lewm-4tasks-eval}
+EGL_LIB_DIR=${EGL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}
 cd "$OGBENCH_ROOT/impls"
 
 case "$MODE" in policy|lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, guided, or native_q" >&2; exit 2 ;; esac
@@ -34,12 +35,23 @@ case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION
 case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 tasks=(cube pusht reacher tworoom)
 tags=(cube pusht reacher tworoom)
-gpus=(0 1 2 3)
-output_root="$CLIENT_ROOT/lewm-final/evals/lewm-4tasks/${MODE}_${REPRESENTATION_MODE}_${EVAL_TAG}_seed${EVAL_SEED}"
+read -r -a gpus <<< "${GPU_IDS:-0 1 2 3}"
+if (( ${#gpus[@]} != ${#tasks[@]} )); then
+  echo "GPU_IDS must contain exactly four whitespace-separated GPU IDs." >&2
+  exit 2
+fi
+default_lewm_root="$CLIENT_ROOT/lewm-final/lewm-4tasks"
+lewm_dirs=(
+  "${LEWM_CUBE_DIR:-$default_lewm_root/lewm_4tasks_cube_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}}"
+  "${LEWM_PUSHT_DIR:-$default_lewm_root/lewm_4tasks_pusht_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}}"
+  "${LEWM_REACHER_DIR:-$default_lewm_root/lewm_4tasks_reacher_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}}"
+  "${LEWM_TWOROOM_DIR:-$default_lewm_root/lewm_4tasks_tworoom_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}}"
+)
+output_root=${OUTPUT_ROOT:-$CLIENT_ROOT/lewm-final/evals/lewm-4tasks/${MODE}_${REPRESENTATION_MODE}_${EVAL_TAG}_seed${EVAL_SEED}}
 pids=()
 
 for i in "${!tasks[@]}"; do
-  lewm_dir="$CLIENT_ROOT/lewm-final/lewm-4tasks/lewm_4tasks_${tags[$i]}_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}"
+  lewm_dir=${lewm_dirs[$i]}
   policy_name="gc4_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
   if (( ${#policy_name} >= 64 )); then
     echo "Policy experiment name must be shorter than 64 characters: $policy_name" >&2
