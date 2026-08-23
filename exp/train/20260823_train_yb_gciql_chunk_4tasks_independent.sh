@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 英博云：四卡并行训练纯 GCIQL-Chunk baseline；不加载任何 LeWM 模型或 checkpoint。
-CLIENT_ID=yb
+# 英博云或 Server11：四卡并行训练纯 GCIQL-Chunk baseline；不加载任何 LeWM 模型或 checkpoint。
+CLIENT_ID=${CLIENT_ID:-yb}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
-P_AUG=${P_AUG:-0.0}
+P_AUG=${P_AUG:-0.5}
 POLICY_STEPS=${POLICY_STEPS:-100000}
 POLICY_BATCH_SIZE=${POLICY_BATCH_SIZE:-256}
 POLICY_SEED=${POLICY_SEED:-0}
@@ -14,7 +14,11 @@ cd "$OGBENCH_ROOT/impls"
 
 datasets=(cube_single_expert pusht_expert_train reacher tworoom)
 tags=(cube pusht reacher tworoom)
-gpus=(0 1 2 3)
+read -r -a gpus <<< "${GPU_IDS:-0 1 2 3}"
+if (( ${#gpus[@]} != ${#datasets[@]} )); then
+  echo "GPU_IDS must contain exactly four whitespace-separated GPU IDs." >&2
+  exit 2
+fi
 pids=()
 
 for i in "${!datasets[@]}"; do
