@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import h5py
 import numpy as np
 
-from eval_ogbench_agent_lewm_envs import OGBenchAgentPolicy
+from eval_ogbench_agent_lewm_envs import LeWMEncodedAgent, OGBenchAgentPolicy
 from ogbench.lewm_envs.evaluation import HDF5EvaluationDataset, StandardActionScaler, evaluate_dataset_goals
 from utils.evaluation import evaluate
 
@@ -102,6 +102,27 @@ def test_ogbench_agent_policy_uses_explicit_action_horizon():
     np.testing.assert_allclose(first, [[0.0, 2.0], [4.0, 10.0]])
     np.testing.assert_allclose(second[0], [2.0, 6.0])
     assert np.isnan(second[1]).all()
+
+
+class _LatentChunkAgent:
+    action_horizon = 2
+
+    def sample_actions(self, observations, goals, seed, temperature):
+        np.testing.assert_allclose(observations, [[3.0], [3.0]])
+        np.testing.assert_allclose(goals, [[12.0], [12.0]])
+        return np.zeros((2, 4), dtype=np.float32)
+
+
+def test_lewm_encoded_agent_encodes_actor_pixels_and_goals():
+    def encode_pixels(pixels):
+        return np.asarray(pixels).mean(axis=(1, 2, 3), keepdims=False)[:, None]
+
+    agent = LeWMEncodedAgent(_LatentChunkAgent(), encode_pixels, share_pi_encoder=True)
+    observations = np.full((2, 2, 2, 3), 3.0, dtype=np.float32)
+    goals = np.full((2, 2, 2, 3), 12.0, dtype=np.float32)
+    actions = agent.sample_actions(observations, goals, seed=None, temperature=0.0)
+    assert agent.action_horizon == 2
+    assert actions.shape == (2, 4)
 
 
 class _AtomicAgentWithUnrelatedChunkConfig:

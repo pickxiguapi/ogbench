@@ -60,7 +60,10 @@ def parse_args():
         choices=('terminal', 'min_over_horizon'),
         default='terminal',
     )
-    parser.add_argument('--proposal-method', choices=('gciql_chunk',))
+    parser.add_argument(
+        '--proposal-method',
+        choices=('gciql_chunk', 'gciql_chunk_lewm'),
+    )
     parser.add_argument('--proposal-checkpoint-dir')
     parser.add_argument('--proposal-checkpoint-step', type=int, default=100000)
     parser.add_argument('--proposal-temperature', type=float, default=0.0)

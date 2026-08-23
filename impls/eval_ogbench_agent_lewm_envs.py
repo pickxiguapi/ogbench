@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from ogbench.lewm_envs.evaluation import (
@@ -23,7 +24,14 @@ def parse_args():
     parser.add_argument('--task', choices=('cube', 'pusht', 'tworoom', 'reacher'), required=True)
     parser.add_argument(
         '--method',
-        choices=('gciql', 'gciql_chunk', 'hiql', 'hiql_chunk', 'hiql_chunk_share_v'),
+        choices=(
+            'gciql',
+            'gciql_chunk',
+            'gciql_chunk_lewm',
+            'hiql',
+            'hiql_chunk',
+            'hiql_chunk_share_v',
+        ),
         required=True,
     )
     parser.add_argument('--checkpoint-dir', required=True)
@@ -46,6 +54,10 @@ def agent_config(method, checkpoint_dir=None):
         config.alpha = 1.0
     elif method == 'gciql_chunk':
         from agents.gciql_chunk import get_config
+
+        config = get_config()
+    elif method == 'gciql_chunk_lewm':
+        from agents.gciql_chunk_lewm import get_config
 
         config = get_config()
     elif method == 'hiql':
@@ -103,14 +115,59 @@ def load_agent(method, lance_path, checkpoint_dir, checkpoint_step):
     wrapper = {
         'gciql': GCDataset,
         'gciql_chunk': GCChunkDataset,
+        'gciql_chunk_lewm': GCChunkDataset,
         'hiql': HGCDataset,
         'hiql_chunk': HIQLChunkDataset,
         'hiql_chunk_share_v': HIQLChunkDataset,
     }[method]
     dataset = wrapper(base, config, preprocess_frame_stack=False)
     example = dataset.sample(1, evaluation=True)
+    if method == 'gciql_chunk_lewm':
+        from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent
+        from train_lewm_gciql_chunk import load_frozen_lewm
+
+        saved = json.loads((Path(checkpoint_dir) / 'flags.json').read_text())
+        model, variables, lewm_config = load_frozen_lewm(saved['lewm_checkpoint'])
+        agent = LeWMGCIQLChunkAgent.create(
+            0,
+            jnp.asarray(example['observations']),
+            jnp.zeros((1, int(lewm_config['embed_dim'])), dtype=jnp.float32),
+            jnp.asarray(example['actions'], dtype=jnp.float32),
+            config,
+        )
+        agent = restore_agent(agent, checkpoint_dir, checkpoint_step)
+        encode_pixels = jax.jit(
+            lambda pixels: model.apply(
+                variables,
+                pixels,
+                train=False,
+                method=model.encode_pixels,
+            ).astype(jnp.float32)
+        )
+        return LeWMEncodedAgent(agent, encode_pixels, config.share_pi_encoder)
     agent = agents[config.agent_name].create(0, example['observations'], example['actions'], config)
     return restore_agent(agent, checkpoint_dir, checkpoint_step)
+
+
+class LeWMEncodedAgent:
+    """Adapt a selectively shared agent to the public pixel-policy interface."""
+
+    def __init__(self, agent, encode_pixels, share_pi_encoder):
+        self.agent = agent
+        self.encode_pixels = encode_pixels
+        self.share_pi_encoder = bool(share_pi_encoder)
+        self.action_horizon = int(agent.action_horizon)
+
+    def sample_actions(self, observations, goals, seed, temperature):
+        if self.share_pi_encoder:
+            observations = self.encode_pixels(jnp.asarray(observations))
+            goals = self.encode_pixels(jnp.asarray(goals))
+        return self.agent.sample_actions(
+            observations=observations,
+            goals=goals,
+            seed=seed,
+            temperature=temperature,
+        )
 
 
 class OGBenchAgentPolicy:
