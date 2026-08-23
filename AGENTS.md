@@ -63,6 +63,7 @@ Seed 3072 四个 checkpoint 有以下镜像；已对英博云、Server 23、A800
 | Bash | 用途 |
 |---|---|
 | `exp/train/20260823_train_yb_lewm_4tasks.sh` | 英博云训练 LeWM-4Tasks canonical LeWM-JAX |
+| `exp/train/20260823_train_s23_lewm_cube_pusht_seeds42_777.sh` | Server23 GPU2–5 训练 Cube/PushT × seed42/777 LeWM-JAX |
 | `exp/train/20260823_train_yb_gciql_chunk_4tasks.sh` | 英博云训练 LeWM-4Tasks 四种 GCIQL-Chunk 表征模式 |
 | `exp/train/20260823_train_node2_lewm_ogbench_env_8tasks.sh` | node2 训练 OGBench-Env-8Tasks canonical LeWM-JAX |
 | `exp/train/20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh` | node2 训练 OGBench-Env-8Tasks 四种 GCIQL-Chunk 表征模式 |
