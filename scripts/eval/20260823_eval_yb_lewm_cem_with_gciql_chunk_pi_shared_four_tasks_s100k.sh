@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 英博云：GPU 0–3 并行评测 LeWM CEM + GCIQL-Chunk shared-π-only；π mode 初始化首个 block，CEM300×5、H5/RH1/action-block5、min-over-horizon、50 episodes、seed42。
+# 英博云：GPU 4–7 并行评测 LeWM CEM + GCIQL-Chunk shared-π-only；π mode 初始化首个 block，CEM300×5、H5/RH1/action-block5、min-over-horizon、50 episodes、seed42。
 CLIENT_ID=yb
 source /root/data/yyf/ogbench-new/scripts/client_env.sh
 cd "$OGBENCH_ROOT/impls"
@@ -14,7 +14,7 @@ lewm_exps=(
   LeWMJAX_impala_lance_tworoom_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95
 )
 tags=(cube pusht reacher tworoom)
-gpus=(0 1 2 3)
+gpus=(4 5 6 7)
 checkpoint_root="$CLIENT_ROOT/lewm-gciql-chunk-shared-runs"
 output_root="$CLIENT_ROOT/lewm-gciql-chunk-shared-evals/20260823_cem_with_shared_pi_j5_h5_rh1_ep50_seed42"
 tmp_root="$CLIENT_ROOT/tmp"
