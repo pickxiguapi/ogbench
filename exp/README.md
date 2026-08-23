@@ -14,19 +14,17 @@ Canonical order:
 2. After the LeWM checkpoint exists, train `pi`, `qv`, and `all` from that frozen checkpoint.
 3. Evaluate `policy`, `lewm`, `guided`, and `native_q` with the matching suite Bash.
 
-The simplest full reproductions are:
+Train LeWM and GCIQL-Chunk with their separate executor Bash files. Evaluation
+matrices retain convenience wrappers:
 
 ```bash
-bash exp/train/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh
 bash exp/eval/lewm_4tasks/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh
 
-bash exp/train/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh
 bash exp/eval/ogbench_env_8tasks/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh
 ```
 
-Training wrappers expose `RUN_INDEPENDENT`, `RUN_LEWM`, and `RUN_SHARED` phase
-switches. Evaluation wrappers expose `RUN_POLICY`, `RUN_LEWM`, `RUN_GUIDED`,
-and `RUN_NATIVE_Q`. The underlying executor parameters use separate
+Evaluation wrappers expose `RUN_POLICY`, `RUN_LEWM`, `RUN_GUIDED`, and
+`RUN_NATIVE_Q`. The underlying executor parameters use separate
 `POLICY_*` and `LEWM_*` names, so customized settings propagate consistently
 from training through checkpoint lookup and evaluation.
 
@@ -36,7 +34,8 @@ LeWM-4Tasks example:
 REPRESENTATION_MODE=independent bash exp/train/20260823_train_yb_gciql_chunk_4tasks.sh
 bash exp/train/20260823_train_yb_lewm_4tasks.sh
 for mode in pi qv all; do
-  REPRESENTATION_MODE="$mode" bash exp/train/20260823_train_yb_gciql_chunk_4tasks.sh
+  REPRESENTATION_MODE="$mode" LEWM_EPOCH=10 LEWM_BATCH_SIZE=128 LEWM_SEED=3072 \
+    bash exp/train/20260823_train_yb_gciql_chunk_4tasks.sh
 done
 MODE=guided REPRESENTATION_MODE=pi \
   bash exp/eval/lewm_4tasks/20260823_eval_yb_lewm_4tasks.sh
@@ -45,6 +44,10 @@ MODE=guided REPRESENTATION_MODE=pi \
 Use the two `node2` Bash files analogously for OGBench-Env-8Tasks. The policy
 and evaluation Bash files derive checkpoint directories from the same exposed
 step, seed, batch-size, augmentation, and representation-mode variables.
+Independent policy training neither accepts nor resolves a LeWM checkpoint.
+For `pi`, `qv`, and `all`, the policy Bash requires explicit `LEWM_*` checkpoint
+identity variables and only loads the resulting frozen checkpoint; LeWM itself
+is trained exclusively by `train_lewm_jax.py` through its own Bash.
 Policy experiment names use the compact shared format
 `gc{4|8}_${task}_${mode}_n${steps}_b${batch}_a${p_aug}_sd${seed}` (with
 `independent` shortened to `ind`). Both training and evaluation reject names

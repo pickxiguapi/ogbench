@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 英博云：四卡并行训练 LeWM-4Tasks GCIQL-Chunk；REPRESENTATION_MODE 可设 independent/pi/qv/all，默认正式消融关闭增强。
+# 英博云：四卡并行训练 LeWM-4Tasks GCIQL-Chunk；本脚本不会训练 LeWM。
 CLIENT_ID=yb
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
@@ -10,18 +10,40 @@ P_AUG=${P_AUG:-0.0}
 POLICY_STEPS=${POLICY_STEPS:-100000}
 POLICY_BATCH_SIZE=${POLICY_BATCH_SIZE:-256}
 POLICY_SEED=${POLICY_SEED:-0}
-LEWM_SEED=${LEWM_SEED:-3072}
-LEWM_EPOCH=${LEWM_EPOCH:-10}
-LEWM_BATCH_SIZE=${LEWM_BATCH_SIZE:-128}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 cd "$OGBENCH_ROOT/impls"
 
-case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
-case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
+case "$REPRESENTATION_MODE" in
+  independent)
+    MODE_TAG=ind
+    ;;
+  pi|qv|all)
+    MODE_TAG=$REPRESENTATION_MODE
+    : "${LEWM_EPOCH:?Set LEWM_EPOCH for shared representation mode $REPRESENTATION_MODE}"
+    : "${LEWM_BATCH_SIZE:?Set LEWM_BATCH_SIZE for shared representation mode $REPRESENTATION_MODE}"
+    : "${LEWM_SEED:?Set LEWM_SEED for shared representation mode $REPRESENTATION_MODE}"
+    ;;
+  *)
+    echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2
+    exit 2
+    ;;
+esac
 datasets=(cube_single_expert pusht_expert_train reacher tworoom)
 tags=(cube pusht reacher tworoom)
 gpus=(0 1 2 3)
 pids=()
+lewm_checkpoints=()
+
+if [[ "$REPRESENTATION_MODE" != independent ]]; then
+  for tag in "${tags[@]}"; do
+    lewm_checkpoint="$CLIENT_ROOT/lewm-final/lewm-4tasks/lewm_4tasks_${tag}_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}/weights_epoch_${LEWM_EPOCH}.msgpack"
+    if [[ ! -f "$lewm_checkpoint" ]]; then
+      echo "Frozen LeWM checkpoint not found: $lewm_checkpoint" >&2
+      exit 2
+    fi
+    lewm_checkpoints+=("$lewm_checkpoint")
+  done
+fi
 
 for i in "${!datasets[@]}"; do
   exp_name="gc4_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
@@ -32,8 +54,7 @@ for i in "${!datasets[@]}"; do
   run_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-4tasks/$exp_name"
   lewm_args=()
   if [[ "$REPRESENTATION_MODE" != independent ]]; then
-    lewm_dir="$CLIENT_ROOT/lewm-final/lewm-4tasks/lewm_4tasks_${tags[$i]}_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}"
-    lewm_args=(--lewm_checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
+    lewm_args=(--lewm_checkpoint="${lewm_checkpoints[$i]}")
   fi
   mkdir -p "$run_dir"
   CUDA_VISIBLE_DEVICES=${gpus[$i]} XLA_PYTHON_CLIENT_PREALLOCATE=false \

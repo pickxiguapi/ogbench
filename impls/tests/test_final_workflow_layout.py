@@ -74,27 +74,34 @@ def test_policy_experiment_names_are_compact_and_guarded():
     assert max(map(len, names)) < 64
 
 
-def test_reproduction_wrappers_cover_the_main_matrices():
+def test_only_evaluation_uses_reproduction_wrappers():
     train_wrappers = sorted((EXP / 'train').glob('*reproduce*main_matrix.sh'))
     eval_wrappers = sorted((EXP / 'eval').rglob('*reproduce*main_matrix.sh'))
-    assert len(train_wrappers) == 2
+    assert train_wrappers == []
     assert len(eval_wrappers) == 2
-    for path in train_wrappers:
-        text = path.read_text()
-        assert text.index('REPRESENTATION_MODE=independent') < text.index(
-            'if [[ "$RUN_LEWM" == 1 ]]'
-        )
-        assert text.index('if [[ "$RUN_LEWM" == 1 ]]') < text.index(
-            'for mode in pi qv all'
-        )
-        assert 'for mode in pi qv all' in text
-        assert 'REPRESENTATION_MODE="$mode"' in text
     for path in eval_wrappers:
         text = path.read_text()
         assert 'MODE=lewm REPRESENTATION_MODE=independent' in text
         assert 'for representation in independent pi qv all' in text
         for mode in ('policy', 'guided', 'native_q'):
             assert f'MODE={mode} REPRESENTATION_MODE="$representation"' in text
+
+
+def test_policy_bashes_only_require_lewm_settings_for_shared_modes():
+    policy_bashes = sorted(EXP.rglob('*gciql_chunk*.sh'))
+    for path in policy_bashes:
+        text = path.read_text()
+        independent = text.index('independent)')
+        shared = text.index('pi|qv|all)')
+        checkpoint = text.index('lewm_args=(--lewm_checkpoint=')
+        assert independent < shared < checkpoint
+        assert ': "${LEWM_SEED:?' in text
+        assert ': "${LEWM_BATCH_SIZE:?' in text
+        assert 'Frozen LeWM checkpoint not found:' in text
+        assert text.index('Frozen LeWM checkpoint not found:') < text.index(
+            'for i in "${!'
+        )
+        assert 'train_lewm_jax.py' not in text
 
 
 def test_executors_source_client_env_from_the_current_checkout():
