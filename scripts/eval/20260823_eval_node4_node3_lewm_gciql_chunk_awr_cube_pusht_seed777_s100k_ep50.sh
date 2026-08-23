@@ -9,8 +9,8 @@ cd "$OGBENCH_ROOT/impls"
 tasks=(cube pusht)
 gpus=(0 1)
 checkpoints=(
-  "$CLIENT_ROOT/node3-checkpoints/GCAWR_lewm_cube_s777_100k"
-  "$CLIENT_ROOT/node3-checkpoints/GCAWR_lewm_pusht_s777_100k"
+  "$CLIENT_ROOT/ogbench-lewm-policy-runs/node3-checkpoints/GCAWR_lewm_cube_s777_100k"
+  "$CLIENT_ROOT/ogbench-lewm-policy-runs/node3-checkpoints/GCAWR_lewm_pusht_s777_100k"
 )
 output_root="$CLIENT_ROOT/ogbench-lewm-policy-runs/evals/2026-08-23_node3_GCAWR_seed777_s100k_ep50_seed42_go25_b50"
 
