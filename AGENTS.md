@@ -1,96 +1,52 @@
 # OGBench Local Rules
 
-本文件作用于 `ogbench/` 整棵目录；与上层 `AGENTS.md` 同时生效。若有冲突，以这里更具体的规则为准。
+本文件作用于 `ogbench/`；与上层 `AGENTS.md` 同时生效。
 
-## 实验 Bash：极简、清晰、可追溯
+## 最终方法边界
 
-- 训练、评测、复现、消融等实验只能通过仓库 `scripts/` 中的 Bash 启动。默认可直接运行 Bash；只有用户明确要求记录到看板时才使用 `experiment-dashboard/scripts/recorded_run.sh`。
-- 训练与启动脚本放在 `scripts/train/`，评测脚本放在 `scripts/eval/`。
-- 新实验 Bash 必须使用 `YYYYMMDD_<type>_<description>.sh` 命名，例如 `scripts/eval/20260811_eval_lewm_reacher_gciql_s100k.sh`。日期是脚本首次实际运行日期；禁止只写 `0811` 这类缺少年份的日期。
-- 每个 Bash 都必须保持极简，让人能快速看懂真实命令。禁止冗余的路径检查、重复变量、过度封装、多层函数以及仅为“看起来健壮”而增加的样板代码；命令本身能给出明确错误时，不再重复预检。
-- 每个 Bash 开头必须用中文注释写清楚：运行服务器、实验目的、任务范围、算法、训练量和关键特殊设置。注释应短而具体，不能只写“训练脚本”之类无信息描述。
-- 服务器专用 Bash 的文件名必须显式包含服务器标签，例如 `yb`、`s23`、`s11`、`server7002`；禁止仅靠硬编码路径猜运行位置。推荐格式为 `YYYYMMDD_<type>_<server>_<domain>_<algorithm>_<task-or-scope>_<budget>.sh`。
-- 同一服务器、同一算法、同一套关键超参，若脚本之间只差 task、环境名、数据集和 GPU，则必须合并为一个极简脚本；例如四个 LeWM GCIQL 任务合并为 `YYYYMMDD_train_s23_lewm_gciql_task_s100k.sh`。固定任务集需要一次依次跑完时使用下述并行数组加单层循环；确实需要由外层 launcher 独立分配单任务时，才使用 task 参数和简短 `case`。
-- 不同服务器、不同算法、不同训练量、不同关键超参、不同 checkpoint/seed 或不同实验目的不得为了少写文件而强行合并。此时一个 Bash 仍对应一个确定的实验配置；配置变化时新建带日期脚本，同日可追加 `_v2`、`_seed1` 等明确后缀。
-- 参数化仅用于合并上述“同配置多任务”重复脚本。固定任务集的等长并行数组属于允许的任务映射；禁止用 task/checkpoint/seed 参数矩阵、复杂循环、动态数组拼装或多层函数把不同实验塞进一个 Bash。
-- 关键实验配置必须直接写在脚本中，包括服务器路径、算法、训练量、seed、关键超参和输出根目录。
-- Python 命令及其 flags 要在脚本中完整展开，方便只看这一个文件就复现实验。不要引入“几十个可选 Bash 参数”的抽象层。
-- 新增或修改后至少运行 `bash -n scripts/train/<script>.sh` 或 `bash -n scripts/eval/<script>.sh`。仍留在活跃目录、但仅为兼容历史调用的旧脚本必须使用 `YYYYMMDD_legacy_*.sh` 命名；移入 backup 的脚本保留原名。不得执行或复制 legacy/backup 脚本来发起新实验。
-- 每次新增、重命名、替换或归档 `scripts/train/` 下的训练 Bash，必须在同一次改动中更新本文件的“活跃训练 Bash 实验登记表”。每条登记必须说明脚本名、运行服务器、任务/环境、算法、训练量和关键特殊设置；禁止只添加 Bash 而不解释实验目的。
+- LeWM世界模型训练入口只有 `impls/train_lewm_jax.py`。
+- GCIQL-Chunk 训练入口只有 `impls/train_gciql_chunk.py`。
+- GCIQL-Chunk 表征模式固定为 `independent`、`pi`、`qv`、`all`。
+- `pi`、`qv`、`all` 必须加载已经训练好的 LeWM-JAX，并冻结 encoder、projector、predictor 与 batch statistics；只训练策略侧仍可训练的 encoder 和 downstream heads。
+- 正式共享消融默认 `p_aug=0.0`。如启用增强，必须先增强同一批像素，再同时送入 pixel encoder 和 frozen LeWM encoder，禁止只增强其中一个分支，注意，如果使用`pi`、`qv`、`all`增强，前提肯定是LeWM本身也被增强训练。
+- 执行阶段，也有三种方式：1️⃣ 纯Planning，就是调用LeWM来决策 2️⃣ 纯Policy，就是直接使用Chunk Level的action来决策，跟LeWM没关系 3️⃣ Guidance：GCIQL-Chunk proposal 初始化第一个 action block，LeWM min-over-horizon CEM 完成后续优化。
 
-### 固定多任务训练脚本格式
+## 正式评测入口
 
-- 固定任务集的批量训练脚本以 `scripts/train/20260821_train_yb_lewm_jax_impala_four_tasks_e10.sh` 为格式范本：中文单行注释先概括服务器、任务顺序、算法、训练量、batch size、seed 和关键设置，然后依次写 `CLIENT_ID`、`DATE=$(date +%Y-%m-%d)`、source `scripts/client_env.sh`、进入实现目录。
-- 任务差异用等长的 `envs`、`datasets`、`tags`、`gpus` 等小写并行数组集中表达，并用 `for i in "${!datasets[@]}"; do ... done` 单层循环按数组顺序依次训练。数组只放真正随任务变化的字段；算法、训练量和超参数仍直接写在 Python 命令中。
-- 每次循环先构造 `exp_name` 和 `run_dir`，再创建输出目录。`exp_name` 统一包含 `${DATE}`、`${CLIENT_ID}`、算法、数据格式、任务标签、batch size、训练量和 seed；`run_dir` 按算法归入该服务器公共输出根目录下的固定子目录。
-- GPU 通过命令前缀 `CUDA_VISIBLE_DEVICES=${gpus[$i]}` 明确分配；JAX、W&B 等运行环境变量紧邻真实 Python 命令。Python flags 按数据与输出、算法配置、训练配置、记录与评测配置分行，保持范本的紧凑展开风格。
+- `impls/eval_lewm_4tasks.py`：LeWM-4Tasks 的 policy、LeWM、guided、native-Q 四种评测模式。
+- `impls/eval_ogbench_env_8tasks.py`：OGBench-Env-8Tasks 的 policy、LeWM、guided、native-Q 四种评测模式。
+- `impls/gciql_chunk_policy.py`：两套评测共用的 checkpoint 加载和 policy/native-Q adapter，不是命令入口。
+- `impls/lewm_jax/planner.py` 是两套评测共用的 planner 实现，不是正式命令入口。
+- shared policy 的 Q 只能通过公开 `score_actions()` 接口调用。`qv`/`all` 的 shared-Q 策略与 planner 必须引用同一个规范化 LeWM checkpoint 路径；
 
-## 活跃训练 Bash 实验登记表
+## 实验 Bash
 
-`scripts/train/` 只保留下表中的正式入口。除显式标注 Server 23 的 shared-encoder 实验外，其余脚本运行在英博云并统一使用 `/root/data/yyf/ogbench-new`；历史单任务脚本、launcher、queue、retry、legacy 和其他服务器专用入口位于 `scripts/backup/train/`，不得用于新实验。
+- 所有新训练与评测只能通过 `exp/` 下的 Bash 发起；不得直接运行 Python 命令。
+- `exp/train/` 保存正式训练 Bash；`exp/eval/lewm_4tasks/` 与 `exp/eval/ogbench_env_8tasks/` 分别保存两套评测协议。
+- Bash 顶部必须用中文说明服务器、任务范围、算法、训练量和特殊设置。
+- 可调参数集中放在 Bash 开头；真实 Python 命令及关键 flags 必须完整展开。
+- 修改 Bash 后至少运行 `bash -n`。
+- 历史实验只能放在仓库一级 `backup/`，不得从 backup 发起新实验。
+- 在bash里面不要设置冗余的判断
 
-公共任务集合：
+## 当前正式 Bash
 
-- **LeWM 四任务**：`visual-lewm-cube-single-expert-v0`、`visual-lewm-pusht-expert-train-v0`、`visual-lewm-reacher-v0`、`visual-lewm-tworoom-v0`，分别使用 `cube_single_expert.lance`、`pusht_expert_train.lance`、`reacher.lance`、`tworoom.lance`。
-- **Visual Play 四任务（世界模型）**：`visual-cube-single-play-v0`、`visual-cube-double-play-v0`、`visual-cube-triple-play-v0`、`visual-scene-play-v0`。
-- **Visual Play/Noisy 八任务**：Cube Single/Double/Triple 与 Scene 各自的 `play-v0` 和 `noisy-v0`。
-- **Visual HIQL 五任务**：Cube Single/Double/Triple/Quadruple 与 Scene 的 `play-v0`。
+| Bash | 用途 |
+|---|---|
+| `exp/train/20260823_train_yb_lewm_4tasks.sh` | 英博云训练 LeWM-4Tasks canonical LeWM-JAX |
+| `exp/train/20260823_train_yb_gciql_chunk_4tasks.sh` | 英博云训练 LeWM-4Tasks 四种 GCIQL-Chunk 表征模式 |
+| `exp/train/20260823_train_node2_lewm_ogbench_env_8tasks.sh` | node2 训练 OGBench-Env-8Tasks canonical LeWM-JAX |
+| `exp/train/20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh` | node2 训练 OGBench-Env-8Tasks 四种 GCIQL-Chunk 表征模式 |
+| `exp/eval/lewm_4tasks/20260823_eval_yb_lewm_4tasks.sh` | LeWM-4Tasks 主评测 |
+| `exp/eval/ogbench_env_8tasks/20260823_eval_node2_ogbench_env_8tasks.sh` | OGBench-Env-8Tasks 主评测 |
+| `exp/train/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 顺序复现 LeWM-4Tasks 四种训练设计 |
+| `exp/train/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 顺序复现 OGBench-Env-8Tasks 四种训练设计 |
+| `exp/eval/lewm_4tasks/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 复现 LeWM-4Tasks 主评测矩阵 |
+| `exp/eval/ogbench_env_8tasks/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 复现 OGBench-Env-8Tasks 主评测矩阵 |
 
-| 训练 Bash | 环境与实验 | 算法及关键配置 |
-|---|---|---|
-| `20260821_train_yb_lewm_gciql_four_tasks_s100k.sh` | LeWM 四任务 goal-conditioned policy baseline | GCIQL、DDPG+BC actor、s100k、bs256、seed0、alpha1、expectile0.9、IMPALA Small、p_aug0.5 |
-| `20260821_train_yb_lewm_gciql_chunk_ddpgbc_four_tasks_s100k.sh` | LeWM 四任务 action-chunk policy | GCIQL-Chunk DDPG+BC、k5、s100k、bs256、seed0、alpha1、expectile0.9 |
-| `20260821_train_yb_lewm_gciql_chunk_awr_four_tasks_s100k.sh` | LeWM 四任务 AWR action-chunk policy | GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3、expectile0.9 |
-| `20260822_train_yb_lewm_gciql_chunk_pi_shared_four_tasks_s100k.sh` | LeWM 四任务 frozen-representation policy 消融（优先）；实验名 `LeWM_with_GCIQL_Chunk_AWR_shared_pi_only` | 英博云 GPU 4–7 四任务并行；GCIQL-Chunk AWR；仅 π 使用从 Server 23 同步的 seed3072 冻结 LeWM post-projector latent，Q/V 各自保留 IMPALA Small；k5、s100k、bs256、policy seed0、alpha3，像素分支 p_aug0.5 |
-| `20260822_train_yb_lewm_gciql_chunk_qvpi_shared_four_tasks_s100k.sh` | LeWM 四任务 frozen-representation 全共享消融（优先）；实验名 `LeWM_with_GCIQL_Chunk_AWR_shared_all` | GCIQL-Chunk AWR；Q/V/π 使用同一冻结 LeWM post-projector latent、下游 heads 独立；k5、s100k、bs256、seed0、alpha3；GPU 4–7 |
-| `20260822_train_s23_lewm_gciql_chunk_qvpi_shared_four_tasks_s100k.sh` | Server 23 LeWM 四任务 frozen-representation 全共享消融；实验名 `LeWM_with_GCIQL_Chunk_AWR_shared_all` | GCIQL-Chunk AWR；Q/V/π 使用各任务 seed3072 LeWM epoch-10 的同一冻结 post-projector latent、下游 heads 独立；k5、s100k、bs256、seed0、alpha3；GPU 2–5 并行 |
-| `20260822_train_yb_lewm_gciql_chunk_qv_shared_four_tasks_s100k.sh` | LeWM 四任务 frozen-representation critic/value 消融（次选） | GCIQL-Chunk AWR；仅 Q/V 使用同一冻结 LeWM post-projector latent，π 保留 IMPALA Small；k5、s100k、bs256、seed0、alpha3，像素分支 p_aug0.5；GPU 0–3 |
-| `20260821_train_s23_lewm_gciql_chunk_shared_encoder_four_tasks_s100k.sh` | LeWM 四任务 shared-encoder evaluator | Server 23；冻结各任务 LeWM IMPALA+projector 与现有 GCIQL-Chunk-AWR actor，只训练共享 192-D latent 上的 V/twin-Q heads；k5、s100k、bs256、seed0、expectile0.9 |
-| `20260821_train_yb_lewm_hiql_stable_four_tasks_s100k.sh` | LeWM 四任务稳定化层次策略 | HIQL、s100k、bs256、seed0、subgoal10、high-alpha1、low-alpha3、lr1e-4、p_aug0.2 |
-| `20260821_train_yb_lewm_hiql_chunk_gciql_low_awr_four_tasks_s100k.sh` | LeWM 四任务层次化 action-chunk 策略 | HIQL-Chunk-GCIQL-Low-AWR、k5、subgoal10、s100k、bs256、seed0、low-expectile0.9 |
-| `20260821_train_yb_lewm_hiql_chunk_share_v_four_tasks_s100k.sh` | LeWM 四任务 shared-reachability-value 策略 | HIQL-Chunk-Share-V、高低层共享 value、k5、subgoal10、s100k、bs256、seed0 |
-| `20260821_train_yb_lewm_jax_impala_four_tasks_e10.sh` | LeWM 四任务主世界模型 | LeWM-JAX IMPALA Small、e10、bs128、seed3072、frameskip5、history3、SigReg0.09 |
-| `20260821_train_yb_lewm_jax_impala_four_tasks_seed0_seed42_e10.sh` | LeWM 四任务 × seed0/seed42，共八个世界模型 | LeWM-JAX IMPALA Small、e10、bs128、frameskip5、history3、SigReg0.09，用于随机种子稳定性 |
-| `20260821_train_yb_visual_gciql_chunk_ddpgbc_play_four_tasks_s500k.sh` | Cube Single、Cube Double、Puzzle 3x3、Scene Play 四任务策略 | GCIQL-Chunk DDPG+BC、k5、s500k、bs256、seed0、alpha1 |
-| `20260821_train_yb_visual_gciql_chunk_awr_play_noisy_eight_tasks_s500k.sh` | Visual Play/Noisy 八任务 policy prior | GCIQL-Chunk AWR、k5、s500k、bs512、seed0、alpha3、expectile0.9 |
-| `20260821_train_yb_visual_hiql_official_play_five_tasks_s500k.sh` | Visual HIQL 五任务官方基线 | HIQL、s500k、bs256、seed0、subgoal10、high/low-alpha3、expectile0.7 |
-| `20260821_train_yb_visual_hiql_chunk_two_v_play_five_tasks_s500k.sh` | Visual HIQL 五任务 action-chunk 版本 | HIQL-Chunk Two-V、k5、subgoal10、s500k、bs256、seed0 |
-| `20260821_train_yb_visual_hiql_chunk_gciql_low_awr_play_noisy_eight_tasks_s500k.sh` | Visual Play/Noisy 八任务层次化 action-chunk 策略 | HIQL-Chunk-GCIQL-Low-AWR、k5、subgoal10、s500k、bs512、seed0、low-expectile0.9 |
-| `20260821_train_yb_lewm_jax_visual_play_four_tasks_fs5_bs512_s500k.sh` | Visual Play 四任务 action-block 世界模型 | LeWM-JAX IMPALA Small、s500k、bs512、seed3072、frameskip/action-block5、history3、SigReg0.09；服务于 CEM horizon5、RH1 |
-| `20260822_train_node2_lewm_jax_visual_play_noisy_eight_tasks_s200k.sh` | A800 node2 Visual Play/Noisy 八任务世界模型统一训练量修正 | 8 卡一环境一卡并行；LeWM-JAX IMPALA Small、s200k、bs128、seed3072、frameskip/action-block5、history3、SigReg0.09；每 50k 保存 checkpoint |
-| `20260822_train_node4_lewm_reacher_gciql_chunk_awr_four_seeds_s100k.sh` | A800 node4 Reacher 随机种子稳定性复核 | GPU 2/3/6/7 并行 seed0/42/123/456；GCIQL-Chunk AWR、k5、s100k、bs256、alpha3、expectile0.9、IMPALA Small、p_aug0.5 |
-| `20260822_train_node4_lewm_pusht_gciql_chunk_awr_three_more_seeds_s100k.sh` | A800 node4 PushT 随机种子稳定性追加复核 | GPU 0/1/5 并行 seed0/42/123；GCIQL-Chunk AWR、k5、s100k、bs256、alpha3、expectile0.9、IMPALA Small、p_aug0.5 |
-| `20260822_train_node2_lewm_gciql_chunk_pi_shared_four_tasks_s100k.sh` | A800 node2 LeWM 四任务 π-only 表征共享 | GPU 0–3 并行；π 使用冻结 seed3072 LeWM，Q/V 使用独立 IMPALA Small；GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3 |
-| `20260822_train_node2_lewm_gciql_chunk_qvpi_shared_four_tasks_s100k.sh` | A800 node2 LeWM 四任务 Q/V/π 全共享表征 | GPU 4–7 并行；Q/V/π 使用同一冻结 seed3072 LeWM、heads 独立；GCIQL-Chunk AWR、k5、s100k、bs256、seed0、alpha3 |
-| `20260822_launch_node2_lewm_gciql_chunk_pi_only_and_shared_all_after_eval.sh` | A800 node2 两套共享表征实验接续入口 | 等待当前 state-dependent std 评测结束后，同时启动 π-only 与 shared-all 两个四任务 Bash，共 8 卡 |
+## 服务器与 GitHub
 
-维护要求：表中脚本名必须与 `scripts/train/` 的实际 `.sh` 文件一一对应。修改任务集合、算法、seed、训练量、batch size、chunk/subgoal、正则项或世界模型时间尺度时，必须同步修改 Bash 顶部注释和本表对应行。
-
-## Bash 清理与归档
-
-- `scripts/train/`、`scripts/eval/` 和 `scripts/setup/` 只保留当前仍有明确用途的入口；重复、过时、异机误放或已被统一脚本取代的 Bash 移入 `scripts/backup/train/`、`scripts/backup/eval/` 或 `scripts/backup/setup/`，不要直接删除。
-- backup 中保留原文件名和完整内容，取消可执行权限，并用 `README.md` 记录原服务器、实验用途、归档原因和替代入口；backup 脚本仅供历史追溯，不得用于启动新实验。
-- 清理前必须逐个核对脚本内容、调用关系、实验看板记录及服务器上的活动进程；正在运行、排队或仍被 launcher/eval 引用的脚本不得移动。
-- Bash 整理先在本地基于 GitHub `main` 完成并单独提交，再推送 GitHub，最后让实验服务器从该 `main` 快进同步；禁止只在服务器上直接改出一个独立版本。
-
-## 服务器公共路径
-
-- 各服务器反复使用的稳定硬编码路径统一记录在 `scripts/client_env.sh`；实验 Bash 应先 source 该文件，再使用其中的路径变量，禁止在多个活跃脚本中重复散落同一客户端路径。
-- `CLIENT_ID` 只允许使用已登记的固定短 ID：英博云为 `yb`、A800 node1/2/4 为 `node1`/`node2`/`node4`、Server 23 为 `23`、Server 7002 为 `7002`、Server 11 为 `11`；禁止使用 IP、长别名或其他拼写。
-- `client_env.sh` 除用于按 `CLIENT_ID` 选择服务器的极简 `case` 外，只能包含客户端身份和纯路径赋值；不得加入必填检查、默认值、合法性校验、错误分支或其他兜底逻辑，也不得包含 GPU、task、环境名、算法、超参、`EXP_NAME`、日志名、路径检查、`mkdir`、`cd` 或任何训练/评测命令。
-- 只记录当前有效的公共路径。旧 checkout、一次性 release-audit 和废弃输出目录留在 backup 历史脚本中，不得作为当前客户端默认值。
-- 新增服务器时使用独立且清晰的服务器小节，并保持同一语义的变量名一致；服务器专属差异集中在 `client_env.sh`，实验配置仍留在各实验 Bash 中。
-- 服务器分支只登记现有活跃 Bash 中能够明确确认的公共路径；某个字段没有明确路径时直接省略，禁止猜测、补空值或添加兜底。
-
-## `scripts/` 命名边界
-
-- 所有新建的训练/评测/复现/消融 Bash 都必须带八位日期前缀。
-- `README.md`、纯工具代码（例如数据转换 `.py`）不属于实验 Bash，可以不带日期；如果某个工具 Bash 会直接启动实验，则仍按实验 Bash 规则命名。
-- 不再新增 `eval.sh`、`launch.sh`、`run_all.sh`、`train_<task>.sh` 这类无日期、可复用但无法对应具体实验的名字。
-
-## Github
-
-- 正式开发与发布分支固定为 `main`，服务器、本地和 GitHub 均以 `https://github.com/pickxiguapi/ogbench` 的 `main` 为准。
-- `master` 仅用于镜像和对照上游 `https://github.com/seohongpark/ogbench` 的 `master`；禁止向 `master` 提交本地功能、实验脚本或修复。
-- 日常同步先更新 `origin/master`，再把确认需要的上游变更合入 `main`；不得在 `main` 与 `master` 双线开发。
-- 发布或同步服务器时必须明确使用 `main`，禁止依赖远端默认分支的隐式选择。
+- 公共服务器路径仍统一记录在 `scripts/client_env.sh`；实验 Bash 先设置 `CLIENT_ID` 再 source。
+- 远程 GitHub `https://github.com/pickxiguapi/ogbench` 的 `main` 是唯一代码基准。
+- 服务器无法 pull 时，先在本地对齐远程 `main`，再将本地代码 rsync 到服务器。
+- `master` 只用于跟踪上游 `https://github.com/seohongpark/ogbench`，不得提交本地方法代码。

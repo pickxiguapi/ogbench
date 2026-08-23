@@ -7,11 +7,13 @@ import json
 import time
 from pathlib import Path
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import ogbench
 from tqdm import trange
 
-from eval_lewm_jax_cem import JAXLeWMCEMPolicy, json_safe
+from eval_lewm_4tasks import JAXLeWMCEMPolicy, json_safe
 
 
 class NPZActionScaler:
@@ -124,7 +126,9 @@ def parse_args():
         choices=('terminal', 'min_over_horizon'),
         default='terminal',
     )
-    parser.add_argument('--proposal-method', choices=('gciql_chunk',))
+    parser.add_argument(
+        '--proposal-method', choices=('gciql_chunk', 'gciql_chunk_lewm')
+    )
     parser.add_argument('--proposal-checkpoint-dir')
     parser.add_argument('--proposal-checkpoint-step', type=int, default=500000)
     parser.add_argument('--proposal-temperature', type=float, default=0.0)
@@ -152,15 +156,54 @@ def parse_args():
 def load_visual_proposal_agent(env, checkpoint_dir, checkpoint_step):
     """Restore a visual GCIQL-Chunk agent without materializing its full dataset."""
     from agents import agents
-    from eval_ogbench_agent_lewm_envs import agent_config
+    from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent
+    from eval_gciql_chunk_4tasks import LeWMEncodedAgent, agent_config
+    from lewm_jax import load_frozen_lewm
     from utils.flax_utils import restore_agent
 
-    config = agent_config('gciql_chunk', checkpoint_dir)
+    saved = json.loads((Path(checkpoint_dir) / 'flags.json').read_text())
+    saved_agent = saved.get('agent', {})
+    method = (
+        'gciql_chunk_lewm'
+        if saved_agent.get('agent_name') == 'gciql_chunk_lewm'
+        else 'gciql_chunk'
+    )
+    config = agent_config(method, checkpoint_dir)
     observation = np.zeros(
         (1, *env.observation_space.shape), dtype=env.observation_space.dtype
     )
     action_width = int(np.prod(env.action_space.shape)) * int(config.chunk_size)
     actions = np.zeros((1, action_width), dtype=np.float32)
+    if method == 'gciql_chunk_lewm':
+        lewm_checkpoint = saved.get('lewm_checkpoint')
+        if lewm_checkpoint is None:
+            lewm_checkpoint = saved['representation']['lewm_checkpoint']
+        model, variables, metadata = load_frozen_lewm(lewm_checkpoint)
+        agent = LeWMGCIQLChunkAgent.create(
+            0,
+            observation,
+            np.zeros(
+                (1, int(metadata['config']['embed_dim'])), dtype=np.float32
+            ),
+            actions,
+            config,
+        )
+        agent = restore_agent(agent, checkpoint_dir, checkpoint_step)
+        encode_pixels = jax.jit(
+            lambda pixels: model.apply(
+                variables,
+                pixels,
+                train=False,
+                method=model.encode_pixels,
+            ).astype(jnp.float32)
+        )
+        return LeWMEncodedAgent(
+            agent,
+            encode_pixels,
+            share_pi_encoder=config.share_pi_encoder,
+            share_q_encoder=config.share_q_encoder,
+            lewm_checkpoint=metadata['path'],
+        )
     agent = agents[config.agent_name].create(0, observation, actions, config)
     return restore_agent(agent, checkpoint_dir, checkpoint_step)
 

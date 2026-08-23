@@ -3,7 +3,8 @@ import jax.numpy as jnp
 import numpy as np
 import unittest
 
-from eval_lewm_jax_cem import JAXLeWMCEMPolicy
+from eval_lewm_4tasks import JAXLeWMCEMPolicy
+from lewm_jax.planner import validate_shared_q_lewm_checkpoint
 
 
 class FakeChunkAgent:
@@ -24,6 +25,9 @@ class FakeMultiChunkAgent:
         blocks = np.tile(np.arange(10, dtype=np.float32), (count, 1))
         blocks[:, 0] += np.arange(count, dtype=np.float32) * 10
         return jnp.asarray(blocks)
+
+    def score_actions(self, observations, goals, actions):
+        return actions[:, 0]
 
 
 class FakeScaler:
@@ -49,12 +53,32 @@ def proposal_policy():
     policy.proposal_selection = 'mode'
     policy.proposal_elite_size = 1
     policy.proposal_residual_weight = 1.0
-    policy.shared_q_evaluator = None
     policy.warm_starts = [np.full((2, 10), -3.0, dtype=np.float32)]
     return policy
 
 
 class ProposalInitializationTest(unittest.TestCase):
+    def test_checkpoint_path_check_applies_only_to_shared_q(self):
+        pi_only = type(
+            'PiOnly',
+            (),
+            {'share_q_encoder': False, 'lewm_checkpoint': '/models/policy.msgpack'},
+        )()
+        validate_shared_q_lewm_checkpoint('/models/planner.msgpack', pi_only)
+
+        shared_q = type(
+            'SharedQ',
+            (),
+            {'share_q_encoder': True, 'lewm_checkpoint': '/models/policy.msgpack'},
+        )()
+        with self.assertRaisesRegex(ValueError, 'same normalized LeWM'):
+            validate_shared_q_lewm_checkpoint('/models/planner.msgpack', shared_q)
+
+    def test_shared_q_requires_recorded_checkpoint_path(self):
+        shared_q = type('SharedQ', (), {'share_q_encoder': True})()
+        with self.assertRaisesRegex(ValueError, 'must record'):
+            validate_shared_q_lewm_checkpoint('/models/planner.msgpack', shared_q)
+
     def test_native_q_filter_requires_proposal(self):
         with self.assertRaisesRegex(ValueError, 'requires a proposal agent'):
             JAXLeWMCEMPolicy.__init__(
@@ -189,6 +213,22 @@ class ProposalInitializationTest(unittest.TestCase):
         expected = np.arange(10, dtype=np.float32)
         expected[0] = 3.75
         np.testing.assert_allclose(selected, expected)
+
+    def test_native_q_selection_uses_public_score_interface(self):
+        policy = proposal_policy()
+        policy.proposal_agent = FakeMultiChunkAgent()
+        policy.proposal_num_samples = 3
+        policy.proposal_selection = 'native_q'
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+        mode, selected = policy._q_selection_blocks(
+            pixels, pixels, jax.random.PRNGKey(0)
+        )
+
+        np.testing.assert_array_equal(mode, np.arange(10, dtype=np.float32))
+        expected = np.arange(10, dtype=np.float32)
+        expected[0] = 20.0
+        np.testing.assert_array_equal(selected, expected)
 
     def test_proposal_shape_is_checked(self):
         policy = proposal_policy()

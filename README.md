@@ -329,15 +329,20 @@ evaluation uses the agent's explicit `action_horizon` capability to execute that
 
 ### Local LeWM entry points
 
-- `train_lewm_jax.py` trains the local JAX LeWM model with IMPALA-small.
-- `eval_lewm_jax_cem.py` evaluates a JAX LeWM checkpoint with CEM planning in the built-in LeWM environment suite.
-- `eval_ogbench_agent_lewm_envs.py` evaluates an OGBench policy checkpoint in the same built-in environment suite.
+- `train_lewm_jax.py` trains LeWM-JAX with IMPALA-small.
+- `train_gciql_chunk.py` trains `independent`, `pi`, `qv`, and `all` GCIQL-Chunk representation modes.
+- `eval_lewm_4tasks.py` evaluates policy-only, LeWM-only, guided, and native-Q variants on LeWM-4Tasks.
+- `eval_ogbench_env_8tasks.py` evaluates the same method variants on OGBench-Env-8Tasks.
+- `gciql_chunk_policy.py` is the internal checkpoint and policy/native-Q adapter shared by both evaluators.
 
-The two evaluators are intentionally independent executables. Their entry points and experiment scripts live in
-this repository. Cube Single, PushT, TwoRoom, and Reacher are bundled under `ogbench.lewm_envs` and registered as
+The two suites intentionally keep separate evaluators because their reset, goal, dataset, and action-scaling protocols differ.
+Their active Bash entry points live under `exp/`; retired experiments live under `backup/`. Cube Single, PushT,
+TwoRoom, and Reacher are bundled under `ogbench.lewm_envs` and registered as
 `ogbench-lewm/...` Gymnasium environments. Evaluation uses one OGBench checkout and one Python environment; there
 is no runtime package, repository-path, or subprocess dependency on Stable World Model. Existing HDF5/Lance data
 may remain on any storage volume and is selected explicitly with `--data-root`.
+
+See [METHOD.md](METHOD.md) for the final training and execution definition.
 
 The fork-specific compatibility and checkpoint validation matrix is recorded in
 [RELEASE_AUDIT.md](RELEASE_AUDIT.md).

@@ -124,14 +124,20 @@ def load_agent(method, lance_path, checkpoint_dir, checkpoint_step):
     example = dataset.sample(1, evaluation=True)
     if method == 'gciql_chunk_lewm':
         from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent
-        from train_lewm_gciql_chunk import load_frozen_lewm
+        from lewm_jax import load_frozen_lewm
 
         saved = json.loads((Path(checkpoint_dir) / 'flags.json').read_text())
-        model, variables, lewm_config = load_frozen_lewm(saved['lewm_checkpoint'])
+        lewm_checkpoint = saved.get('lewm_checkpoint')
+        if lewm_checkpoint is None:
+            lewm_checkpoint = saved['representation']['lewm_checkpoint']
+        model, variables, lewm_metadata = load_frozen_lewm(lewm_checkpoint)
         agent = LeWMGCIQLChunkAgent.create(
             0,
             jnp.asarray(example['observations']),
-            jnp.zeros((1, int(lewm_config['embed_dim'])), dtype=jnp.float32),
+            jnp.zeros(
+                (1, int(lewm_metadata['config']['embed_dim'])),
+                dtype=jnp.float32,
+            ),
             jnp.asarray(example['actions'], dtype=jnp.float32),
             config,
         )
@@ -144,7 +150,13 @@ def load_agent(method, lance_path, checkpoint_dir, checkpoint_step):
                 method=model.encode_pixels,
             ).astype(jnp.float32)
         )
-        return LeWMEncodedAgent(agent, encode_pixels, config.share_pi_encoder)
+        return LeWMEncodedAgent(
+            agent,
+            encode_pixels,
+            share_pi_encoder=config.share_pi_encoder,
+            share_q_encoder=config.share_q_encoder,
+            lewm_checkpoint=lewm_metadata['path'],
+        )
     agent = agents[config.agent_name].create(0, example['observations'], example['actions'], config)
     return restore_agent(agent, checkpoint_dir, checkpoint_step)
 
@@ -152,10 +164,19 @@ def load_agent(method, lance_path, checkpoint_dir, checkpoint_step):
 class LeWMEncodedAgent:
     """Adapt a selectively shared agent to the public pixel-policy interface."""
 
-    def __init__(self, agent, encode_pixels, share_pi_encoder):
+    def __init__(
+        self,
+        agent,
+        encode_pixels,
+        share_pi_encoder,
+        share_q_encoder=False,
+        lewm_checkpoint=None,
+    ):
         self.agent = agent
         self.encode_pixels = encode_pixels
         self.share_pi_encoder = bool(share_pi_encoder)
+        self.share_q_encoder = bool(share_q_encoder)
+        self.lewm_checkpoint = lewm_checkpoint
         self.action_horizon = int(agent.action_horizon)
 
     def sample_actions(self, observations, goals, seed, temperature):
@@ -168,6 +189,13 @@ class LeWMEncodedAgent:
             seed=seed,
             temperature=temperature,
         )
+
+    def score_actions(self, observations, goals, actions):
+        """Score pixel candidates with the policy's native Q representation."""
+        if self.share_q_encoder:
+            observations = self.encode_pixels(jnp.asarray(observations))
+            goals = self.encode_pixels(jnp.asarray(goals))
+        return self.agent.score_actions(observations, goals, actions)
 
 
 class OGBenchAgentPolicy:

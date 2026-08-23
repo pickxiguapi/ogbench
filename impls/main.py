@@ -119,13 +119,13 @@ def main(_):
     if dataset_only_env and FLAGS.eval_only:
         raise ValueError(
             '--eval_only is unavailable for a Lance training dataset. Use '
-            'eval_ogbench_agent_lewm_envs.py with the matching built-in LeWM environment.'
+            'eval_lewm_4tasks.py --mode=policy with the matching environment.'
         )
     if dataset_only_env and (FLAGS.eval_episodes > 0 or FLAGS.video_episodes > 0):
         print(
             'Lance datasets provide training data but no online environment; '
-            'main.py will skip online evaluation. Use eval_ogbench_agent_lewm_envs.py '
-            'to evaluate the saved checkpoint.'
+            'main.py will skip online evaluation. Use eval_lewm_4tasks.py '
+            '--mode=policy to evaluate the saved checkpoint.'
         )
 
     # Train or evaluate agent.

@@ -181,6 +181,12 @@ class GCIQLAgent(flax.struct.PyTreeNode):
             actions = jnp.clip(actions, -1, 1)
         return actions
 
+    @jax.jit
+    def score_actions(self, observations, goals, actions):
+        """Return the conservative twin-Q score for candidate actions."""
+        q1, q2 = self.network.select('critic')(observations, goals, actions)
+        return jnp.minimum(q1, q2)
+
     @classmethod
     def create(
         cls,

@@ -1,4 +1,6 @@
 __pycache__/
+.pytest_cache/
+.venv/
 dist/
 *.py[cod]
 *$py.class
@@ -9,3 +11,4 @@ dist/
 .ruff_cache/
 /logs/
 /wandb/
+/reports/

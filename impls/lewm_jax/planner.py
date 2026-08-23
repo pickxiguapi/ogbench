@@ -79,7 +79,7 @@ def parse_args():
     )
     parser.add_argument(
         '--proposal-selection',
-        choices=('mode', 'lewm', 'lewm_cem', 'native_q', 'shared_q'),
+        choices=('mode', 'lewm', 'lewm_cem', 'native_q'),
         default='mode',
     )
     parser.add_argument('--proposal-elite-size', type=int, default=1)
@@ -103,8 +103,6 @@ def parse_args():
             'before selecting LeWM elites at every CEM iteration.'
         ),
     )
-    parser.add_argument('--shared-q-checkpoint-dir')
-    parser.add_argument('--shared-q-checkpoint-step', type=int, default=100_000)
     parser.add_argument(
         '--paired-plan-keys',
         action='store_true',
@@ -131,6 +129,20 @@ def checkpoint_epoch(path):
     if match is None:
         raise ValueError(f'Cannot infer epoch from checkpoint path: {path}')
     return int(match.group(1))
+
+
+def validate_shared_q_lewm_checkpoint(planner_checkpoint, proposal_agent):
+    """Require shared-Q guidance to use the planner's frozen LeWM."""
+    if not bool(getattr(proposal_agent, 'share_q_encoder', False)):
+        return
+    policy_checkpoint = getattr(proposal_agent, 'lewm_checkpoint', None)
+    if policy_checkpoint is None:
+        raise ValueError('A shared-Q policy must record its LeWM checkpoint path.')
+    if Path(policy_checkpoint).resolve() != Path(planner_checkpoint).resolve():
+        raise ValueError(
+            'A shared-Q GCIQL-Chunk policy and planner must use the same '
+            'normalized LeWM checkpoint path.'
+        )
 
 
 class JAXLeWMCEMPolicy:
@@ -163,7 +175,6 @@ class JAXLeWMCEMPolicy:
         proposal_residual_weight=1.0,
         dual_center_q=False,
         native_q_keep=0,
-        shared_q_evaluator=None,
         paired_plan_keys=False,
         diagnose_min_horizon=False,
         execution_steps=None,
@@ -243,12 +254,10 @@ class JAXLeWMCEMPolicy:
             raise ValueError('Policy-population CEM requires at least two elites.')
         if not 0.0 <= proposal_residual_weight <= 1.0:
             raise ValueError('Proposal residual weight must be in [0, 1].')
-        if proposal_selection == 'shared_q' and shared_q_evaluator is None:
-            raise ValueError('Shared-Q proposal selection requires a shared evaluator.')
         if dual_center_q:
             if planner != 'cem':
                 raise ValueError('Dual-center Q search requires planner=cem.')
-            if proposal_selection not in ('native_q', 'shared_q'):
+            if proposal_selection != 'native_q':
                 raise ValueError('Dual-center Q search requires Q proposal selection.')
             if proposal_agent is None:
                 raise ValueError('Dual-center Q search requires a proposal agent.')
@@ -304,10 +313,8 @@ class JAXLeWMCEMPolicy:
             'image_size': int(config['image_size']),
             'embed_dim': int(config['embed_dim']),
         }
-        if shared_q_evaluator is not None and int(
-            shared_q_evaluator.config['latent_dim']
-        ) != int(config['embed_dim']):
-            raise ValueError('Shared evaluator and LeWM latent dimensions differ.')
+        self.lewm_checkpoint = str(Path(checkpoint).resolve())
+        validate_shared_q_lewm_checkpoint(checkpoint, proposal_agent)
         self.scaler = scaler
         self.seed = int(seed)
         self.rng = jax.random.PRNGKey(seed)
@@ -380,7 +387,6 @@ class JAXLeWMCEMPolicy:
         self.proposal_residual_weight = float(proposal_residual_weight)
         self.dual_center_q = bool(dual_center_q)
         self.native_q_keep = int(native_q_keep)
-        self.shared_q_evaluator = shared_q_evaluator
         self.paired_plan_keys = bool(paired_plan_keys)
         self.diagnose_min_horizon = bool(diagnose_min_horizon)
         self.return_best_candidate = bool(return_best_candidate)
@@ -484,7 +490,6 @@ class JAXLeWMCEMPolicy:
         proposal_agent = self.proposal_agent
         proposal_action_space = self.proposal_action_space
         native_q_keep = self.native_q_keep
-        shared_q_evaluator = self.shared_q_evaluator
         proposal_population_size = self.proposal_population_size
         action_dim = int(self.scaler.action_dim)
         action_block = self.action_block
@@ -580,28 +585,10 @@ class JAXLeWMCEMPolicy:
                     -context_distances, num_samples
                 )
             if native_q_keep:
-                if shared_q_evaluator is None:
-                    q_observations = jnp.repeat(
-                        pixels[-1][None], num_samples, axis=0
-                    )
-                    q_goals = jnp.repeat(goals[-1][None], num_samples, axis=0)
-                else:
-                    observation_latent = model.apply(
-                        variables,
-                        pixels[-1][None],
-                        train=False,
-                        method=model.encode_pixels,
-                    ).astype(jnp.float32)
-                    goal_latent = model.apply(
-                        variables,
-                        goals[-1][None],
-                        train=False,
-                        method=model.encode_pixels,
-                    ).astype(jnp.float32)
-                    q_observations = jnp.repeat(
-                        observation_latent, num_samples, axis=0
-                    )
-                    q_goals = jnp.repeat(goal_latent, num_samples, axis=0)
+                q_observations = jnp.repeat(
+                    pixels[-1][None], num_samples, axis=0
+                )
+                q_goals = jnp.repeat(goals[-1][None], num_samples, axis=0)
 
             def optimizer_step(iteration, carry):
                 key, mean, std, best_candidate = carry
@@ -735,17 +722,9 @@ class JAXLeWMCEMPolicy:
                 best_candidate = candidates[jnp.argmin(costs)]
                 if native_q_keep:
                     q_action_blocks = planner_to_proposal_actions(candidates[:, 0])
-                    if shared_q_evaluator is None:
-                        q1, q2 = proposal_agent.network.select('critic')(
-                            q_observations,
-                            q_goals,
-                            q_action_blocks,
-                        )
-                        q_values = jnp.minimum(q1, q2)
-                    else:
-                        q_values = shared_q_evaluator.score_actions(
-                            q_observations, q_goals, q_action_blocks
-                        )
+                    q_values = proposal_agent.score_actions(
+                        q_observations, q_goals, q_action_blocks
+                    )
                     _, q_indices = jax.lax.top_k(q_values, native_q_keep)
                     gated_costs = jnp.full_like(costs, jnp.inf)
                     costs = gated_costs.at[q_indices].set(costs[q_indices])
@@ -774,12 +753,11 @@ class JAXLeWMCEMPolicy:
                         q_action_blocks = planner_to_proposal_actions(
                             relevant_candidates[:, 0]
                         )
-                        q1, q2 = proposal_agent.network.select('critic')(
+                        q_values = proposal_agent.score_actions(
                             q_observations,
                             q_goals,
                             q_action_blocks,
                         )
-                        q_values = jnp.minimum(q1, q2)
                         normalized_q = (
                             q_values - jnp.mean(q_values)
                         ) / jnp.maximum(jnp.std(q_values), 1e-6)
@@ -1028,30 +1006,14 @@ class JAXLeWMCEMPolicy:
                     elite_mean - planner_blocks[0]
                 )
         elif self.proposal_selection == 'native_q':
-            q1, q2 = self.proposal_agent.network.select('critic')(
+            q_values = self.proposal_agent.score_actions(
                 observations, goal_batch, jnp.asarray(proposal_blocks)
             )
-            q_values = jnp.minimum(q1, q2)
             selected_block = planner_blocks[int(jnp.argmax(q_values))]
         else:
-            observation_latent = self.model.apply(
-                self.variables,
-                jnp.asarray(pixels[-1:]),
-                train=False,
-                method=self.model.encode_pixels,
-            ).astype(jnp.float32)
-            goal_latent = self.model.apply(
-                self.variables,
-                jnp.asarray(goals[-1:]),
-                train=False,
-                method=self.model.encode_pixels,
-            ).astype(jnp.float32)
-            q_values = self.shared_q_evaluator.score_actions(
-                jnp.repeat(observation_latent, self.proposal_num_samples, axis=0),
-                jnp.repeat(goal_latent, self.proposal_num_samples, axis=0),
-                jnp.asarray(proposal_blocks),
+            raise ValueError(
+                f'Unsupported proposal selection: {self.proposal_selection!r}.'
             )
-            selected_block = planner_blocks[int(jnp.argmax(q_values))]
         return (
             planner_blocks[0],
             selected_block,
@@ -1276,32 +1238,6 @@ def json_safe(value):
     return value
 
 
-def load_shared_q_evaluator(checkpoint_dir, checkpoint_step, action_width):
-    """Restore latent Q/V heads trained by train_lewm_with_gciql_chunk.py."""
-    from agents.gciql_chunk_lewm_shared import (
-        LeWMSharedGCIQLChunkEvaluator,
-        get_config,
-    )
-    from utils.flax_utils import restore_agent
-
-    flags_path = Path(checkpoint_dir) / 'flags.json'
-    if not flags_path.is_file():
-        raise FileNotFoundError(f'Shared evaluator flags not found: {flags_path}')
-    saved = json.loads(flags_path.read_text())
-    config = get_config()
-    for key, value in saved.get('agent', {}).items():
-        if key in config:
-            config[key] = value
-    latent_dim = int(config.latent_dim)
-    evaluator = LeWMSharedGCIQLChunkEvaluator.create(
-        0,
-        jnp.zeros((1, latent_dim), dtype=jnp.float32),
-        jnp.zeros((1, action_width), dtype=jnp.float32),
-        config,
-    )
-    return restore_agent(evaluator, checkpoint_dir, checkpoint_step)
-
-
 def main():
     args = parse_args()
     if (args.proposal_method is None) != (args.proposal_checkpoint_dir is None):
@@ -1316,22 +1252,12 @@ def main():
         scaler = StandardActionScaler(dataset.get_column('action'))
         proposal_agent = None
         if args.proposal_method is not None:
-            from eval_ogbench_agent_lewm_envs import load_agent
+            from gciql_chunk_policy import load_lance_policy
 
-            proposal_agent = load_agent(
-                args.proposal_method,
+            proposal_agent = load_lance_policy(
                 lance_path,
                 args.proposal_checkpoint_dir,
                 args.proposal_checkpoint_step,
-            )
-        shared_q_evaluator = None
-        if args.shared_q_checkpoint_dir is not None:
-            if args.native_q_keep <= 0:
-                raise ValueError('Shared-Q checkpoint requires --native-q-keep > 0.')
-            shared_q_evaluator = load_shared_q_evaluator(
-                args.shared_q_checkpoint_dir,
-                args.shared_q_checkpoint_step,
-                scaler.action_dim * args.action_block,
             )
         policy = JAXLeWMCEMPolicy(
             args.checkpoint,
@@ -1358,7 +1284,6 @@ def main():
             proposal_residual_weight=args.proposal_residual_weight,
             dual_center_q=args.cem_dual_center_q,
             native_q_keep=args.native_q_keep,
-            shared_q_evaluator=shared_q_evaluator,
             paired_plan_keys=args.paired_plan_keys,
             diagnose_min_horizon=args.diagnose_min_horizon,
         )
@@ -1487,17 +1412,7 @@ def main():
                 'native_q_scope': (
                     'disabled' if args.native_q_keep == 0 else 'each_cem_iteration_first_block'
                 ),
-                'q_source': (
-                    'native_gciql'
-                    if args.shared_q_checkpoint_dir is None
-                    else 'shared_frozen_lewm_encoder'
-                ),
-                'shared_q_checkpoint_dir': args.shared_q_checkpoint_dir,
-                'shared_q_checkpoint_step': (
-                    None
-                    if args.shared_q_checkpoint_dir is None
-                    else args.shared_q_checkpoint_step
-                ),
+                'q_source': 'proposal_policy_native_q',
             }
         ),
         'eval_episodes': episodes,

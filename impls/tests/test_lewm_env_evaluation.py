@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import h5py
 import numpy as np
 
-from eval_ogbench_agent_lewm_envs import LeWMEncodedAgent, OGBenchAgentPolicy
+from gciql_chunk_policy import GCIQLChunkPolicy, LeWMEncodedAgent
 from ogbench.lewm_envs.evaluation import HDF5EvaluationDataset, StandardActionScaler, evaluate_dataset_goals
 from utils.evaluation import evaluate
 
@@ -91,9 +91,9 @@ class _ChunkAgent:
         return np.array([[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]], dtype=np.float32)
 
 
-def test_ogbench_agent_policy_uses_explicit_action_horizon():
+def test_gciql_chunk_policy_uses_explicit_action_horizon():
     scaler = StandardActionScaler(np.array([[-1.0, -2.0], [1.0, 2.0]], dtype=np.float32))
-    policy = OGBenchAgentPolicy(_ChunkAgent(), scaler, seed=0)
+    policy = GCIQLChunkPolicy(_ChunkAgent(), scaler, seed=0)
     policy.reset(SimpleNamespace(shape=(2,)), num_envs=2)
     pixels = np.zeros((2, 1, 8, 8, 3), dtype=np.uint8)
     goals = np.ones_like(pixels)
@@ -112,6 +112,11 @@ class _LatentChunkAgent:
         np.testing.assert_allclose(goals, [[12.0], [12.0]])
         return np.zeros((2, 4), dtype=np.float32)
 
+    def score_actions(self, observations, goals, actions):
+        np.testing.assert_allclose(observations, [[3.0], [3.0]])
+        np.testing.assert_allclose(goals, [[12.0], [12.0]])
+        return np.sum(actions, axis=-1)
+
 
 def test_lewm_encoded_agent_encodes_actor_pixels_and_goals():
     def encode_pixels(pixels):
@@ -123,6 +128,60 @@ def test_lewm_encoded_agent_encodes_actor_pixels_and_goals():
     actions = agent.sample_actions(observations, goals, seed=None, temperature=0.0)
     assert agent.action_horizon == 2
     assert actions.shape == (2, 4)
+
+
+def test_lewm_encoded_agent_encodes_native_q_pixels_and_goals():
+    def encode_pixels(pixels):
+        return np.asarray(pixels).mean(axis=(1, 2, 3), keepdims=False)[:, None]
+
+    agent = LeWMEncodedAgent(
+        _LatentChunkAgent(),
+        encode_pixels,
+        share_pi_encoder=False,
+        share_q_encoder=True,
+        lewm_checkpoint='/models/same-checkpoint.msgpack',
+    )
+    observations = np.full((2, 2, 2, 3), 3.0, dtype=np.float32)
+    goals = np.full((2, 2, 2, 3), 12.0, dtype=np.float32)
+    actions = np.arange(8, dtype=np.float32).reshape(2, 4)
+    scores = agent.score_actions(observations, goals, actions)
+    np.testing.assert_allclose(scores, [6.0, 22.0])
+    assert agent.lewm_checkpoint == '/models/same-checkpoint.msgpack'
+
+
+class _PiSharedNativeQAgent:
+    action_horizon = 2
+
+    def sample_actions(self, observations, goals, seed, temperature):
+        assert observations.shape == (2, 1)
+        assert goals.shape == (2, 1)
+        return np.zeros((2, 4), dtype=np.float32)
+
+    def score_actions(self, observations, goals, actions):
+        assert observations.shape == (2, 2, 2, 3)
+        assert goals.shape == (2, 2, 2, 3)
+        return np.sum(actions, axis=-1)
+
+
+def test_pi_shared_actor_remains_compatible_with_native_pixel_q():
+    def encode_pixels(pixels):
+        return np.asarray(pixels).mean(axis=(1, 2, 3), keepdims=False)[:, None]
+
+    agent = LeWMEncodedAgent(
+        _PiSharedNativeQAgent(),
+        encode_pixels,
+        share_pi_encoder=True,
+        share_q_encoder=False,
+        lewm_checkpoint='/models/pi-lewm.msgpack',
+    )
+    observations = np.full((2, 2, 2, 3), 3.0, dtype=np.float32)
+    goals = np.full((2, 2, 2, 3), 12.0, dtype=np.float32)
+    actions = np.arange(8, dtype=np.float32).reshape(2, 4)
+
+    agent.sample_actions(observations, goals, seed=None, temperature=0.0)
+    scores = agent.score_actions(observations, goals, actions)
+
+    np.testing.assert_allclose(scores, [6.0, 22.0])
 
 
 class _AtomicAgentWithUnrelatedChunkConfig:

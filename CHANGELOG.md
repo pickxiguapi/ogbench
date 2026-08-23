@@ -1,5 +1,16 @@
 # Change log
 
+## Unreleased (2026-08-23)
+
+- Consolidate method training into `train_lewm_jax.py` and `train_gciql_chunk.py`.
+- Add four explicit GCIQL-Chunk representation modes: `independent`, `pi`, `qv`, and `all`.
+- Apply optional image augmentation before both pixel and frozen-LeWM encoding so representation comparisons use the same observations.
+- Route native-Q guidance through the public policy `score_actions()` interface, including frozen LeWM Q representations.
+- Validate shared-Q planner compatibility with the normalized LeWM checkpoint path only; no checkpoint hashing.
+- Split final evaluation by protocol into `eval_lewm_4tasks.py` and `eval_ogbench_env_8tasks.py`.
+- Move retired implementations and experiment Bash files to the repository-level `backup/` directory; active Bash files now live in `exp/`.
+- Add suite-level reproduction wrappers for the complete four-representation training matrix and policy/LeWM/guided/native-Q evaluation matrix.
+
 ## ogbench 1.2.1+pickxiguapi.1 (2026-08-14)
 
 This is the first separately versioned release of the `pickxiguapi/ogbench`
