@@ -70,7 +70,9 @@ def main():
         representation_mode = None
         if needs_policy:
             _, _, policy_flags = load_agent_config(args.policy_checkpoint_dir)
-            representation_mode = policy_flags['representation']['mode']
+            representation_mode = policy_flags.get('representation', {}).get(
+                'mode', 'independent'
+            )
             proposal_agent = load_lance_policy(
                 lance_path,
                 args.policy_checkpoint_dir,
