@@ -40,6 +40,98 @@ Seed 3072 四个 checkpoint 有以下镜像；已对英博云、Server 23、A800
 
 注意：Seed 3072 的主表 SR 与 Server 23 的原始 `eval_cem300x30_seed42/` JSON 精确对应。Seed 0/42 的 PushT、Reacher、TwoRoom 可与英博云相邻评测 JSON 对应，但两个 Cube checkpoint 当前相邻的 `eval_cem300x30_seed42_20260822/cube.json` 分别记录 40 和 42，而非主表的 60 和 68；使用 Cube 主表数字前必须先核对评测轮次，不能把 training seed 与其他评测结果混用。
 
+补充：除了3072的Cube分数是对的，别的都不太对，因为数据集broken了
+
+## GCIQL-Chunk-AWR OGBench-Env-8Tasks 三训练 Seed Checkpoint
+
+这组主结果是 OGBench 原生视觉环境的 8 Tasks，不是 LeWM-4Tasks。训练设置为 GCIQL-Chunk-AWR、IMPALA-Small、chunk size 5、batch size 512、alpha 3、expectile 0.9、`p_aug=0.5`、总训练量 500K。三个 training seed 为 0、42、999；每个任务都保留 300K、400K、500K checkpoint，共 `8 × 3 × 3 = 72` 个文件。实验表中每个 seed 的 `Mean` 是 300K/400K/500K 三次评测的均值，不存在独立的 Mean checkpoint。
+
+下面路径中的 `params_{300000,400000,500000}.pkl` 表示同一目录下已逐个核验存在的三个文件。
+
+### Training seed 0：英博云 `yingbo1`
+
+- Cube Single Play：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_cs_play_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_cs_play_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Cube Double Play：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_cd_play_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_cd_play_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Cube Triple Play：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_ct_play_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_ct_play_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Scene Play：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_scene_play_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_scene_play_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Cube Single Noisy：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_cs_noisy_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_cs_noisy_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Cube Double Noisy：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_cd_noisy_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_cd_noisy_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Cube Triple Noisy：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_ct_noisy_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_ct_noisy_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+- Scene Noisy：`/root/data/yyf/ogbench-gciql-chunk-awr-runs/2026-08-19_yb_GCAWR_scene_noisy_k5_bs512_s500k_s0_a3_e09_aug05/OGBench/2026-08-19_yb_GCAWR_scene_noisy_k5_bs512_s500k_s0_a3_e09_aug05/sd000_20260819_080318/params_{300000,400000,500000}.pkl`
+
+### Training seed 42：A800 `node2`
+
+- Cube Single Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_cs_play_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/2026-08-21_node2_GCAWR_cs_play_k5_bs512_s500k_s42_a3_e09_aug05/sd042_20260821_135042/params_{300000,400000,500000}.pkl`
+- Cube Double Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_cd_play_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/2026-08-21_node2_GCAWR_cd_play_k5_bs512_s500k_s42_a3_e09_aug05/sd042_20260821_182708/params_{300000,400000,500000}.pkl`
+- Cube Triple Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_ct_play_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/2026-08-21_node2_GCAWR_ct_play_k5_bs512_s500k_s42_a3_e09_aug05/sd042_20260821_182708/params_{300000,400000,500000}.pkl`
+- Scene Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_scene_play_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/GCAWR_scene_play_s42/sd042_20260821_183034/params_{300000,400000,500000}.pkl`
+- Cube Single Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_cs_noisy_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/2026-08-21_node2_GCAWR_cs_noisy_k5_bs512_s500k_s42_a3_e09_aug05/sd042_20260821_182708/params_{300000,400000,500000}.pkl`
+- Cube Double Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_cd_noisy_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/2026-08-21_node2_GCAWR_cd_noisy_k5_bs512_s500k_s42_a3_e09_aug05/sd042_20260821_182708/params_{300000,400000,500000}.pkl`
+- Cube Triple Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_ct_noisy_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/2026-08-21_node2_GCAWR_ct_noisy_k5_bs512_s500k_s42_a3_e09_aug05/sd042_20260821_182708/params_{300000,400000,500000}.pkl`
+- Scene Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node2_GCAWR_scene_noisy_k5_bs512_s500k_s42_a3_e09_aug05/OGBench/GCAWR_scene_noisy_s42/sd042_20260821_183034/params_{300000,400000,500000}.pkl`
+
+### Training seed 999：A800 `node3`
+
+- Cube Single Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_cs_play_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/2026-08-21_node3_GCAWR_cs_play_k5_bs512_s500k_s999_a3_e09_aug05/sd999_20260821_135041/params_{300000,400000,500000}.pkl`
+- Cube Double Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_cd_play_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_cd_play_s999/sd999_20260822_023505/params_{300000,400000,500000}.pkl`
+- Cube Triple Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_ct_play_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_ct_play_s999/sd999_20260822_023505/params_{300000,400000,500000}.pkl`
+- Scene Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_scene_play_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_scene_play_s999/sd999_20260822_023505/params_{300000,400000,500000}.pkl`
+- Cube Single Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_cs_noisy_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_cs_noisy_s999/sd999_20260822_023505/params_{300000,400000,500000}.pkl`
+- Cube Double Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_cd_noisy_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_cd_noisy_s999/sd999_20260821_183125/params_{300000,400000,500000}.pkl`
+- Cube Triple Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_ct_noisy_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_ct_noisy_s999/sd999_20260821_183757/params_{300000,400000,500000}.pkl`
+- Scene Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-21_node3_GCAWR_scene_noisy_k5_bs512_s500k_s999_a3_e09_aug05/OGBench/GCAWR_scene_noisy_s999/sd999_20260821_183226/params_{300000,400000,500000}.pkl`
+
+### `sdepstd` 消融：training seed 0，A800 `node2`
+
+这套使用 state-dependent standard deviation（`sdepstd`），共有 8 Tasks × 300K/400K/500K = 24 个 checkpoint。它必须标注为 `sdepstd`，不属于上述 seed 0/42/999 三 seed 主表，也不得代替英博云的标准 seed 0。
+
+- Cube Single Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_cs_play_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Cube Double Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_cd_play_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Cube Triple Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_ct_play_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Scene Play：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_scene_play_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Cube Single Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_cs_noisy_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Cube Double Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_cd_noisy_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Cube Triple Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_ct_noisy_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130149/params_{300000,400000,500000}.pkl`
+- Scene Noisy：`/data-training/yyf/ogbench-visual-policy-runs/2026-08-22_node2_GCAWR_scene_noisy_k5_bs512_s500k_s0_a3_e09_aug05_sdepstd/OGBench/node2_GCAWR_s0_sdstd/sd000_20260822_130148/params_{300000,400000,500000}.pkl`
+
+### 服务器归属与排除项
+
+- 英博云 `yingbo1`：training seed 0，24/24 个文件齐全。
+- A800 `node2`：training seed 42，24/24 个文件齐全。
+- A800 `node3`：training seed 999，24/24 个文件齐全。
+- A800 `node1`、A800 `node4`、Server 11、Server 23、Server 7002 没有这三套原始 checkpoint。A800 各 node 的 `/data-training` 不应视为共享的同一份目录。
+- `node2` 另有上表已记录的 training seed 0 `sdepstd` 消融 checkpoint；它与三 seed 主结果配置不同，不得混入主表或当作 seed 0 镜像。
+
+## GCIQL-Chunk-AWR LeWM-4Tasks independent seed 131/132 关键结果
+
+这组实验是 LeWM-4Tasks 上的纯 independent GCIQL-Chunk-AWR，不加载 LeWM 表征。训练设置为 IMPALA-Small、100K steps、batch size 256、chunk size 5、AWR alpha 3、expectile 0.9、`p_aug=0.5`。英博云 `yingbo1` 上 seed 131 使用 GPU 0–3，seed 132 使用 GPU 4–7，八个任务 checkpoint 均完整保存到 100K：
+
+`/root/data/yyf/lewm-final/gciql-chunk-4tasks/gc4_{cube,pusht,reacher,tworoom}_ind_n100000_b256_a0.5_sd{131,132}/params_100000.pkl`
+
+正式评测使用 LeWM training seed 3072、epoch 10；每项 50 episodes、evaluation seed 42。CEM 设置为 horizon 5、receding horizon 1、300 samples、5 iterations、top-k 30、`min_over_horizon`。结果根目录：
+
+`/root/data/yyf/lewm-final/evals/lewm-4tasks/20260824_gciql_chunk_independent_seeds131_132/`
+
+| 方法 | Policy training seed | PushT | OGB Cube | Reacher | TwoRoom | 四任务平均 |
+|---|---:|---:|---:|---:|---:|---:|
+| CEM-only | 不适用 | 84 | 76 | 100 | 94 | 88.5 |
+| Policy-only | 131 | 74 | 96 | 76 | 100 | 86.5 |
+| Policy-only | 132 | 74 | 94 | 86 | 100 | 88.5 |
+| CEM + policy | 131 | 88 | 88 | 100 | 100 | 94.0 |
+| CEM + policy | 132 | 88 | 94 | 100 | 98 | 95.0 |
+| Policy-only 两 seed 均值 | — | 74 | 95 | 81 | 100 | 87.5 |
+| CEM + policy 两 seed 均值 | — | 88 | 91 | 100 | 99 | 94.5 |
+
+关键结论：当前协议下 CEM + policy 明显优于单独 CEM 和单独 policy；相对各自 policy-only，四任务平均分别提高 7.5 和 6.5 分。Guidance 只用确定性 policy mode 初始化第一个 action block，后续仍由 LeWM-CEM 优化。
+
+不要把这张表误解为“不同 seed 完全没有波动”：
+
+- CEM-only 不加载 policy checkpoint，因此 policy seed 131/132 对它没有定义；表中的 CEM-only 只需评测一次。
+- Policy-only 的 Reacher 在两个 training seed 间相差 10 分，CEM + policy 的 Cube 相差 6 分；只是 Reacher、TwoRoom 等任务接近 100% 的天花板，四任务平均的差异被压缩到 2 分和 1 分。
+- 两次评测固定使用同一个 evaluation seed 42。`sample_starts()` 因而选择完全相同的 50 个 dataset episode/start，环境从相同 dataset state 和逐行 seed 恢复；policy-only 使用 `temperature=0.0`，guided proposal 也使用确定性 mode。
+- Planner 使用 `paired_plan_keys=True`，CEM 随机 key 由 evaluation seed、environment index 和 plan count 确定。因此不同 checkpoint 共享相同起点和 CEM 随机数，这是刻意降低比较噪声的 paired evaluation；同 checkpoint、同 evaluation seed 的重复运行应当精确或近似复现。
+- 50 episodes 的 success rate 粒度是 2 个百分点，且目前只有两个 policy training seed。这足以说明 CEM + policy 在这两个 seed 上稳定领先，但不足以声称总体方差为零；正式报告 training-seed mean ± standard deviation 至少还应纳入配置相同的第三个 policy training seed。若要估计 evaluation 随机性，应另外改变 evaluation seed，不能把同一 evaluation seed 的复跑当作独立样本。
+
 ## 正式评测入口
 
 - `impls/eval_lewm_4tasks.py`：LeWM-4Tasks 的 policy、LeWM、guided、native-Q 四种评测模式。
