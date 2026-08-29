@@ -18,8 +18,8 @@ CEM_STEPS=${CEM_STEPS:-5}
 CEM_TOPK=${CEM_TOPK:-30}
 CEM_COST_MODE=${CEM_COST_MODE:-min_over_horizon}
 OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-actor-ablation/evals/2026-08-29_ddpgbc_multiseed_policy_guided}
-EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-/data-training/yyf/tmp/ddpgbc-multiseed-policy-guided}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-actor-ablation}
+EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-$POLICY_ROOT/tmp/ddpgbc-multiseed-policy-guided}
 LEWM_ROOT=${LEWM_ROOT:-/data-training/yyf/models/lewm-jax-seed3072}
 read -r -a policy_seeds <<< "${POLICY_SEEDS:-0 42 777}"
 read -r -a eval_seeds <<< "${EVAL_SEEDS:-0 1 42}"
