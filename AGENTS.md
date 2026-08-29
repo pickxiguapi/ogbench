@@ -132,6 +132,17 @@ Seed 3072 四个 checkpoint 有以下镜像；已对英博云、Server 23、A800
 - Planner 使用 `paired_plan_keys=True`，CEM 随机 key 由 evaluation seed、environment index 和 plan count 确定。因此不同 checkpoint 共享相同起点和 CEM 随机数，这是刻意降低比较噪声的 paired evaluation；同 checkpoint、同 evaluation seed 的重复运行应当精确或近似复现。
 - 50 episodes 的 success rate 粒度是 2 个百分点，且目前只有两个 policy training seed。这足以说明 CEM + policy 在这两个 seed 上稳定领先，但不足以声称总体方差为零；正式报告 training-seed mean ± standard deviation 至少还应纳入配置相同的第三个 policy training seed。若要估计 evaluation 随机性，应另外改变 evaluation seed，不能把同一 evaluation seed 的复跑当作独立样本。
 
+## GCIQL-Chunk DDPG+BC LeWM-4Tasks 多 Seed 结果
+
+Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes。Policy 为 independent DDPG+BC、chunk5、alpha1、100k；Guided 使用 seed3072 LeWM 与 CEM300x5、H5/RH1、min-over-horizon。
+
+| 模式 | Cube | PushT | Reacher | TwoRoom | 四任务平均 | Training-seed std |
+|---|---:|---:|---:|---:|---:|---:|
+| Policy-only | 94.44 | 75.56 | 91.56 | 100.00 | 90.39 | 1.08 |
+| Guided | 88.44 | 83.78 | 100.00 | 97.33 | 92.39 | 0.35 |
+
+三个 policy seeds 的宏平均为 Policy-only `89.33/90.33/91.50`，Guided `92.50/92.67/92.00`。DDPG+BC 没有出现 AWR 某些 seeds 在 Reacher/PushT 上的灾难性失败。Guidance 对 PushT/Reacher 稳定有利，对 Cube/TwoRoom 稳定不利；完整结果见 `reports/2026-08-29-ddpgbc-multiseed-policy-guided.md`。
+
 ## 正式评测入口
 
 - `impls/eval_lewm_4tasks.py`：LeWM-4Tasks 的 policy、LeWM、guided、native-Q 四种评测模式。
