@@ -6,6 +6,7 @@
 
 - LeWM世界模型训练入口只有 `impls/train_lewm_jax.py`。
 - GCIQL-Chunk 训练入口只有 `impls/train_gciql_chunk.py`。
+- Frozen LeWM latent subgoal GCBC 训练入口只有 `impls/train_latent_subgoal_gcbc.py`。
 - GCIQL-Chunk 表征模式固定为 `independent`、`pi`、`qv`、`all`。
 - `pi`、`qv`、`all` 必须加载已经训练好的 LeWM-JAX，并冻结 encoder、projector、predictor 与 batch statistics；只训练策略侧仍可训练的 encoder 和 downstream heads。
 - 正式共享消融默认 `p_aug=0.0`。如启用增强，必须先增强同一批像素，再同时送入 pixel encoder 和 frozen LeWM encoder，禁止只增强其中一个分支，注意，如果使用`pi`、`qv`、`all`增强，前提肯定是LeWM本身也被增强训练。
@@ -206,6 +207,10 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/preprocess/lewm_latents/20260830_precompute_node2_cube_lewm_s3072_z192.sh` | node2 生成 Cube seed3072 frozen LeWM z192 数据集 |
 | `exp/preprocess/lewm_latents/20260830_precompute_node3_reacher_lewm_s3072_z192.sh` | node3 生成 Reacher seed3072 frozen LeWM z192 数据集 |
 | `exp/preprocess/lewm_latents/20260830_precompute_node4_tworoom_lewm_s3072_z192.sh` | node4 生成 TwoRoom seed3072 frozen LeWM z192 数据集 |
+| `exp/train/latent_subgoal/20260830_run_yb_pusht_latent_gcbc_k10_s0.sh` | 英博云生成 PushT cache 并训练 K10 latent subgoal GCBC seed0 |
+| `exp/train/latent_subgoal/20260830_run_node2_cube_latent_gcbc_k10_s0.sh` | node2 生成 Cube cache 并训练 K10 latent subgoal GCBC seed0 |
+| `exp/train/latent_subgoal/20260830_run_node3_reacher_latent_gcbc_k10_s0.sh` | node3 生成 Reacher cache 并训练 K10 latent subgoal GCBC seed0 |
+| `exp/train/latent_subgoal/20260830_run_node4_tworoom_latent_gcbc_k10_s0.sh` | node4 生成 TwoRoom cache 并训练 K10 latent subgoal GCBC seed0 |
 
 ## Frozen LeWM latent 数据集
 
@@ -216,6 +221,15 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 英博云输出根目录为 `/root/data/yyf/lewm-latent-datasets/`；A800 node2、node3、node4 输出根目录为 `/data-training/yyf/datasets/lewm-latents/`。
 - 正式文件名分别为 `pusht_expert_train__lewm_s666_e10_z192.h5`、`cube_single_expert__lewm_s3072_e10_z192.h5`、`reacher__lewm_s3072_e10_z192.h5`、`tworoom__lewm_s3072_e10_z192.h5`。
 - 转换中间文件以 `.incomplete` 结尾并通过 `encoded_rows` 断点续跑；只有所有 z 通过 finite 检查并写入统计量后才原子改名为正式 `.h5`。
+
+## Latent Subgoal GCBC（K=10）
+
+- 定稿设计见 `reports/2026-08-30-latent-subgoal-gcbc-k10-design.md`。
+- 四任务分别训练独立 generator；输入为 `[z_t, z_g]`，三层 512 hidden MLP 直接输出完整 192 维 `z_subgoal`，禁止改成 residual output。
+- goal sampling 固定为 HIQL 同轨迹未来均匀采样：`p_trajgoal=1.0`、`p_randomgoal=0.0`、`geom_sample=false`；监督 target 为 `z[min(t+10, g)]`。
+- 唯一训练 loss 为 raw LeWM latent MSE；cosine similarity 只记录为验证指标。
+- seed0 正式设置固定为 100k steps、batch size 1024、AdamW、peak lr 3e-4、warmup 2k、cosine decay 到 3e-5、episode 95/5 split。
+- 正式训练必须通过 `exp/train/latent_subgoal/` 下对应服务器的流水线 Bash；流水线先完成或复用 latent cache，再开始训练。
 
 ## 服务器与 GitHub
 

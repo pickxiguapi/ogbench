@@ -1,0 +1,463 @@
+"""Train a pure supervised subgoal generator on frozen LeWM latent caches."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import time
+from pathlib import Path
+
+import flax
+import flax.linen as nn
+import jax
+import jax.numpy as jnp
+import numpy as np
+import optax
+from flax.training import train_state
+
+from utils.latent_subgoal_dataset import (
+    build_valid_transitions,
+    load_latent_cache,
+    sample_future_pairs,
+    split_episodes,
+)
+
+
+class LatentSubgoalMLP(nn.Module):
+    embed_dim: int
+    hidden_dims: tuple[int, ...] = (512, 512, 512)
+
+    @nn.compact
+    def __call__(self, current_latents, goal_latents):
+        x = jnp.concatenate((current_latents, goal_latents), axis=-1)
+        for hidden_dim in self.hidden_dims:
+            x = nn.Dense(hidden_dim)(x)
+            x = nn.LayerNorm()(x)
+            x = nn.silu(x)
+        return nn.Dense(self.embed_dim)(x)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--latent-dataset', required=True)
+    parser.add_argument('--save-dir', required=True)
+    parser.add_argument('--exp-name', required=True)
+    parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--split-seed', type=int, default=0)
+    parser.add_argument('--train-fraction', type=float, default=0.95)
+    parser.add_argument('--subgoal-steps', type=int, default=10)
+    parser.add_argument('--train-steps', type=int, default=100_000)
+    parser.add_argument('--batch-size', type=int, default=1024)
+    parser.add_argument('--hidden-dims', type=int, nargs='+', default=(512, 512, 512))
+    parser.add_argument('--learning-rate', type=float, default=3e-4)
+    parser.add_argument('--final-learning-rate', type=float, default=3e-5)
+    parser.add_argument('--warmup-steps', type=int, default=2000)
+    parser.add_argument('--weight-decay', type=float, default=1e-4)
+    parser.add_argument('--gradient-clip', type=float, default=1.0)
+    parser.add_argument('--validation-pairs', type=int, default=50_000)
+    parser.add_argument('--eval-batch-size', type=int, default=5000)
+    parser.add_argument('--log-interval', type=int, default=1000)
+    parser.add_argument('--eval-interval', type=int, default=5000)
+    parser.add_argument('--checkpoint-interval', type=int, default=25_000)
+    parser.add_argument('--resume', action='store_true')
+    return parser.parse_args()
+
+
+def validate_args(args):
+    positive = (
+        'subgoal_steps',
+        'train_steps',
+        'batch_size',
+        'warmup_steps',
+        'validation_pairs',
+        'eval_batch_size',
+        'log_interval',
+        'eval_interval',
+        'checkpoint_interval',
+    )
+    for name in positive:
+        if getattr(args, name) <= 0:
+            raise ValueError(f'{name} must be positive.')
+    if args.warmup_steps >= args.train_steps:
+        raise ValueError('warmup_steps must be smaller than train_steps.')
+    if not 0.0 < args.train_fraction < 1.0:
+        raise ValueError('train_fraction must be in (0, 1).')
+    if args.learning_rate <= 0 or args.final_learning_rate < 0:
+        raise ValueError('Learning rates must be non-negative and the peak must be positive.')
+    if args.weight_decay < 0 or args.gradient_clip <= 0:
+        raise ValueError('weight_decay must be non-negative and gradient_clip must be positive.')
+    if not args.hidden_dims or any(value <= 0 for value in args.hidden_dims):
+        raise ValueError('hidden_dims must contain positive integers.')
+
+
+def json_safe(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
+
+
+def write_json_atomic(path, value):
+    path = Path(path)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    with temporary.open('w') as file:
+        json.dump(json_safe(value), file, indent=2, sort_keys=True)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temporary, path)
+
+
+def append_jsonl(path, value):
+    with Path(path).open('a') as file:
+        file.write(json.dumps(json_safe(value), sort_keys=True) + '\n')
+        file.flush()
+
+
+def checkpoint_path(output_dir, step):
+    return Path(output_dir) / f'checkpoint_{int(step):06d}.msgpack'
+
+
+def save_checkpoint(state, rng, output_dir):
+    step = int(jax.device_get(state.step))
+    path = checkpoint_path(output_dir, step)
+    payload = {
+        'step': step,
+        'train_state': flax.serialization.to_state_dict(jax.device_get(state)),
+        'rng': np.asarray(jax.device_get(rng)),
+    }
+    serialized = flax.serialization.msgpack_serialize(payload)
+    temporary = path.with_suffix(path.suffix + '.tmp')
+    with temporary.open('wb') as file:
+        file.write(serialized)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temporary, path)
+    return path
+
+
+def find_latest_checkpoint(output_dir):
+    candidates = []
+    for path in Path(output_dir).glob('checkpoint_*.msgpack'):
+        match = re.fullmatch(r'checkpoint_(\d+)\.msgpack', path.name)
+        if match:
+            candidates.append((int(match.group(1)), path))
+    return max(candidates, default=(None, None))
+
+
+def restore_checkpoint(state, path):
+    payload = flax.serialization.msgpack_restore(Path(path).read_bytes())
+    restored = flax.serialization.from_state_dict(state, payload['train_state'])
+    rng = jnp.asarray(payload['rng'], dtype=jnp.uint32)
+    if int(restored.step) != int(payload['step']):
+        raise ValueError(f'Checkpoint step mismatch in {path}.')
+    return restored, rng
+
+
+def make_train_step(model, learning_rate_schedule, batch_size, subgoal_steps):
+    @jax.jit
+    def train_step(state, rng, z, valid_t, final_t):
+        rng, index_key, goal_key = jax.random.split(rng, 3)
+        positions = jax.random.randint(
+            index_key, (batch_size,), minval=0, maxval=len(valid_t)
+        )
+        current_idxs = valid_t[positions]
+        final_idxs = final_t[positions]
+        distances = jax.random.uniform(goal_key, (batch_size,))
+        goal_idxs = jnp.rint(
+            (current_idxs + 1) * distances + final_idxs * (1.0 - distances)
+        ).astype(jnp.int32)
+        goal_idxs = jnp.clip(goal_idxs, current_idxs + 1, final_idxs)
+        target_idxs = jnp.minimum(current_idxs + subgoal_steps, goal_idxs)
+        current_latents = z[current_idxs]
+        goal_latents = z[goal_idxs]
+        target_latents = z[target_idxs]
+
+        def loss_fn(params):
+            predictions = model.apply(
+                {'params': params}, current_latents, goal_latents
+            )
+            errors = predictions - target_latents
+            loss = jnp.mean(jnp.square(errors))
+            cosine = jnp.mean(
+                jnp.sum(predictions * target_latents, axis=-1)
+                / (
+                    jnp.linalg.norm(predictions, axis=-1)
+                    * jnp.linalg.norm(target_latents, axis=-1)
+                    + 1e-8
+                )
+            )
+            metrics = {
+                'mse': loss,
+                'cosine_similarity': cosine,
+                'prediction_norm': jnp.mean(jnp.linalg.norm(predictions, axis=-1)),
+                'target_norm': jnp.mean(jnp.linalg.norm(target_latents, axis=-1)),
+            }
+            return loss, metrics
+
+        (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
+        state = state.apply_gradients(grads=grads)
+        metrics['learning_rate'] = learning_rate_schedule(state.step - 1)
+        metrics['gradient_norm'] = optax.global_norm(grads)
+        return state, rng, metrics
+
+    return train_step
+
+
+def make_predict_indices(model):
+    @jax.jit
+    def predict_indices(params, z, current_idxs, goal_idxs):
+        return model.apply(
+            {'params': params}, z[current_idxs], z[goal_idxs]
+        )
+
+    return predict_indices
+
+
+def mean_or_nan(values, mask):
+    return float(values[mask].mean()) if np.any(mask) else float('nan')
+
+
+def evaluate_validation(
+    params,
+    *,
+    z_device,
+    z_host,
+    current_idxs,
+    goal_idxs,
+    target_idxs,
+    predict_indices,
+    batch_size,
+):
+    predictions = np.empty((len(current_idxs), z_host.shape[1]), dtype=np.float32)
+    for start in range(0, len(current_idxs), batch_size):
+        stop = min(start + batch_size, len(current_idxs))
+        predictions[start:stop] = np.asarray(
+            jax.device_get(
+                predict_indices(
+                    params,
+                    z_device,
+                    jnp.asarray(current_idxs[start:stop]),
+                    jnp.asarray(goal_idxs[start:stop]),
+                )
+            )
+        )
+    targets = z_host[target_idxs]
+    per_example_mse = np.mean(np.square(predictions - targets), axis=-1)
+    deltas = goal_idxs - current_idxs
+    cosine = np.sum(predictions * targets, axis=-1) / (
+        np.linalg.norm(predictions, axis=-1)
+        * np.linalg.norm(targets, axis=-1)
+        + 1e-8
+    )
+    return {
+        'mse': float(per_example_mse.mean()),
+        'mse_near': mean_or_nan(per_example_mse, deltas <= 10),
+        'mse_medium': mean_or_nan(per_example_mse, (deltas > 10) & (deltas <= 25)),
+        'mse_far': mean_or_nan(per_example_mse, deltas > 25),
+        'l2': float(np.linalg.norm(predictions - targets, axis=-1).mean()),
+        'cosine_similarity': float(cosine.mean()),
+        'prediction_norm': float(np.linalg.norm(predictions, axis=-1).mean()),
+        'target_norm': float(np.linalg.norm(targets, axis=-1).mean()),
+        'near_fraction': float(np.mean(deltas <= 10)),
+        'medium_fraction': float(np.mean((deltas > 10) & (deltas <= 25))),
+        'far_fraction': float(np.mean(deltas > 25)),
+    }
+
+
+def main():
+    args = parse_args()
+    validate_args(args)
+    output_dir = Path(args.save_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = output_dir / 'metrics.jsonl'
+
+    print(f'Loading complete latent cache: {args.latent_dataset}', flush=True)
+    cache = load_latent_cache(args.latent_dataset)
+    embed_dim = int(cache.z.shape[1])
+    train_episodes, val_episodes = split_episodes(
+        len(cache.episode_offsets), args.train_fraction, args.split_seed
+    )
+    train_t, train_final = build_valid_transitions(
+        cache.episode_offsets, cache.episode_lengths, train_episodes
+    )
+    val_t, val_final = build_valid_transitions(
+        cache.episode_offsets, cache.episode_lengths, val_episodes
+    )
+    fixed_val = sample_future_pairs(
+        val_t,
+        val_final,
+        args.validation_pairs,
+        args.subgoal_steps,
+        seed=args.split_seed + 1,
+    )
+
+    config = {
+        **vars(args),
+        'latent_dataset': str(Path(args.latent_dataset).expanduser().resolve()),
+        'save_dir': str(output_dir),
+        'hidden_dims': list(args.hidden_dims),
+        'embed_dim': embed_dim,
+        'num_rows': len(cache.z),
+        'num_episodes': len(cache.episode_offsets),
+        'num_train_episodes': len(train_episodes),
+        'num_val_episodes': len(val_episodes),
+        'num_train_transitions': len(train_t),
+        'num_val_transitions': len(val_t),
+        'lewm_checkpoint_sha256': cache.metadata.get('checkpoint_sha256'),
+        'architecture': 'direct_latent_mlp_512x3',
+        'goal_sampling': 'hiql_uniform_future_same_trajectory',
+        'loss': 'raw_latent_mse',
+    }
+    config_path = output_dir / 'config.json'
+    if config_path.exists():
+        existing_config = json.loads(config_path.read_text())
+        if existing_config != json_safe(config):
+            raise ValueError(f'Existing run config does not match requested config: {config_path}')
+    else:
+        write_json_atomic(config_path, config)
+
+    print(
+        f'Dataset rows={len(cache.z)} episodes={len(cache.episode_offsets)} '
+        f'train_episodes={len(train_episodes)} val_episodes={len(val_episodes)} '
+        f'train_transitions={len(train_t)} val_transitions={len(val_t)}',
+        flush=True,
+    )
+    print(f'JAX backend={jax.default_backend()} devices={jax.devices()}', flush=True)
+
+    z_device = jax.device_put(cache.z)
+    train_t_device = jax.device_put(train_t)
+    train_final_device = jax.device_put(train_final)
+    model = LatentSubgoalMLP(embed_dim=embed_dim, hidden_dims=tuple(args.hidden_dims))
+    init_rng, train_rng = jax.random.split(jax.random.PRNGKey(args.seed))
+    variables = model.init(
+        init_rng,
+        jnp.zeros((1, embed_dim), dtype=jnp.float32),
+        jnp.zeros((1, embed_dim), dtype=jnp.float32),
+    )
+    learning_rate_schedule = optax.warmup_cosine_decay_schedule(
+        init_value=0.0,
+        peak_value=args.learning_rate,
+        warmup_steps=args.warmup_steps,
+        decay_steps=args.train_steps,
+        end_value=args.final_learning_rate,
+    )
+    decay_mask = jax.tree_util.tree_map(lambda value: value.ndim > 1, variables['params'])
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(args.gradient_clip),
+        optax.adamw(
+            learning_rate_schedule,
+            weight_decay=args.weight_decay,
+            mask=decay_mask,
+        ),
+    )
+    state = train_state.TrainState.create(
+        apply_fn=model.apply,
+        params=variables['params'],
+        tx=optimizer,
+    )
+    parameter_count = sum(value.size for value in jax.tree_util.tree_leaves(state.params))
+    print(f'Model parameters={parameter_count:,}', flush=True)
+
+    if args.resume:
+        latest_step, latest_path = find_latest_checkpoint(output_dir)
+        if latest_path is not None:
+            state, train_rng = restore_checkpoint(state, latest_path)
+            print(f'Resumed checkpoint step={latest_step}: {latest_path}', flush=True)
+
+    train_step = make_train_step(
+        model,
+        learning_rate_schedule,
+        args.batch_size,
+        args.subgoal_steps,
+    )
+    predict_indices = make_predict_indices(model)
+    current_step = int(jax.device_get(state.step))
+    if current_step > args.train_steps:
+        raise ValueError(
+            f'Checkpoint step {current_step} exceeds requested train_steps {args.train_steps}.'
+        )
+
+    started = time.monotonic()
+    val_metrics = evaluate_validation(
+        state.params,
+        z_device=z_device,
+        z_host=cache.z,
+        current_idxs=fixed_val[0],
+        goal_idxs=fixed_val[1],
+        target_idxs=fixed_val[2],
+        predict_indices=predict_indices,
+        batch_size=args.eval_batch_size,
+    )
+    initial_row = {'type': 'validation', 'step': current_step, **val_metrics}
+    append_jsonl(metrics_path, initial_row)
+    print(f'Validation step={current_step}: {json.dumps(val_metrics, sort_keys=True)}', flush=True)
+
+    latest_metrics = None
+    while current_step < args.train_steps:
+        state, train_rng, latest_metrics = train_step(
+            state,
+            train_rng,
+            z_device,
+            train_t_device,
+            train_final_device,
+        )
+        current_step += 1
+        if current_step % args.log_interval == 0:
+            train_metrics = {
+                key: float(value)
+                for key, value in jax.device_get(latest_metrics).items()
+            }
+            row = {
+                'type': 'train',
+                'step': current_step,
+                'elapsed_seconds': time.monotonic() - started,
+                **train_metrics,
+            }
+            append_jsonl(metrics_path, row)
+            print(f'Train step={current_step}: {json.dumps(train_metrics, sort_keys=True)}', flush=True)
+
+        if current_step % args.eval_interval == 0 or current_step == args.train_steps:
+            val_metrics = evaluate_validation(
+                state.params,
+                z_device=z_device,
+                z_host=cache.z,
+                current_idxs=fixed_val[0],
+                goal_idxs=fixed_val[1],
+                target_idxs=fixed_val[2],
+                predict_indices=predict_indices,
+                batch_size=args.eval_batch_size,
+            )
+            row = {
+                'type': 'validation',
+                'step': current_step,
+                'elapsed_seconds': time.monotonic() - started,
+                **val_metrics,
+            }
+            append_jsonl(metrics_path, row)
+            print(f'Validation step={current_step}: {json.dumps(val_metrics, sort_keys=True)}', flush=True)
+
+        if current_step % args.checkpoint_interval == 0 or current_step == args.train_steps:
+            path = save_checkpoint(state, train_rng, output_dir)
+            print(f'Saved checkpoint: {path}', flush=True)
+
+    complete = {
+        'status': 'complete',
+        'step': current_step,
+        'train_steps': args.train_steps,
+        'elapsed_seconds': time.monotonic() - started,
+        'final_validation': val_metrics,
+        'final_checkpoint': str(checkpoint_path(output_dir, current_step)),
+    }
+    write_json_atomic(output_dir / 'complete.json', complete)
+    print(f'Training complete: {json.dumps(complete, sort_keys=True)}', flush=True)
+
+
+if __name__ == '__main__':
+    main()

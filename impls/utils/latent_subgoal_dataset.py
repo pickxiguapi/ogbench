@@ -1,0 +1,103 @@
+"""Trajectory-aware utilities for frozen-LeWM latent subgoal training."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class LatentCache:
+    z: np.ndarray
+    episode_offsets: np.ndarray
+    episode_lengths: np.ndarray
+    metadata: dict
+
+
+def load_latent_cache(path):
+    """Load and validate one completed latent cache into host memory."""
+    import h5py
+
+    path = Path(path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f'Latent cache not found: {path}')
+    with h5py.File(path, 'r') as file:
+        if file.attrs.get('format') != 'lewm_latent_dataset':
+            raise ValueError(f'Not a LeWM latent dataset: {path}')
+        if file.attrs.get('status') != 'complete':
+            raise ValueError(f'Latent cache is not complete: {path}')
+        z = np.asarray(file['z'], dtype=np.float32)
+        offsets = np.asarray(file['ep_offset'], dtype=np.int64)
+        lengths = np.asarray(file['ep_len'], dtype=np.int64)
+        metadata = {key: value for key, value in file.attrs.items()}
+    validate_trajectory_layout(len(z), offsets, lengths)
+    embed_dim = int(metadata['embed_dim'])
+    if z.ndim != 2 or z.shape[1] != embed_dim:
+        raise ValueError(f'Invalid z shape {z.shape}; expected (*, {embed_dim}).')
+    if not np.isfinite(z).all():
+        raise FloatingPointError(f'Latent cache contains non-finite values: {path}')
+    return LatentCache(z=z, episode_offsets=offsets, episode_lengths=lengths, metadata=metadata)
+
+
+def validate_trajectory_layout(num_rows, offsets, lengths):
+    offsets = np.asarray(offsets, dtype=np.int64)
+    lengths = np.asarray(lengths, dtype=np.int64)
+    if offsets.ndim != 1 or lengths.ndim != 1 or offsets.shape != lengths.shape:
+        raise ValueError('ep_offset and ep_len must be same-shape one-dimensional arrays.')
+    if not len(offsets) or offsets[0] != 0 or np.any(lengths <= 0):
+        raise ValueError('Trajectory layout must be non-empty, start at zero, and have positive lengths.')
+    expected_offsets = np.concatenate(([0], np.cumsum(lengths[:-1])))
+    if not np.array_equal(offsets, expected_offsets):
+        raise ValueError('ep_offset is not contiguous with ep_len.')
+    if int(lengths.sum()) != int(num_rows):
+        raise ValueError(f'ep_len sums to {lengths.sum()}, but z has {num_rows} rows.')
+
+
+def split_episodes(num_episodes, train_fraction=0.95, seed=0):
+    if num_episodes < 2:
+        raise ValueError('At least two episodes are required for a train/validation split.')
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError('train_fraction must be in (0, 1).')
+    permutation = np.random.default_rng(seed).permutation(num_episodes)
+    train_count = int(np.floor(train_fraction * num_episodes))
+    train_count = min(max(train_count, 1), num_episodes - 1)
+    return permutation[:train_count], permutation[train_count:]
+
+
+def build_valid_transitions(offsets, lengths, episode_indices):
+    """Return every non-final t and its episode-final row for selected episodes."""
+    offsets = np.asarray(offsets, dtype=np.int64)
+    lengths = np.asarray(lengths, dtype=np.int64)
+    current_rows = []
+    final_rows = []
+    for episode in np.asarray(episode_indices, dtype=np.int64):
+        offset = int(offsets[episode])
+        length = int(lengths[episode])
+        if length < 2:
+            continue
+        current_rows.append(np.arange(offset, offset + length - 1, dtype=np.int32))
+        final_rows.append(np.full(length - 1, offset + length - 1, dtype=np.int32))
+    if not current_rows:
+        raise ValueError('Selected episodes contain no valid transitions.')
+    return np.concatenate(current_rows), np.concatenate(final_rows)
+
+
+def sample_future_pairs(valid_t, final_t, num_pairs, subgoal_steps, seed):
+    """Create fixed HIQL-style future-goal pairs for validation."""
+    valid_t = np.asarray(valid_t, dtype=np.int32)
+    final_t = np.asarray(final_t, dtype=np.int32)
+    if valid_t.shape != final_t.shape or valid_t.ndim != 1:
+        raise ValueError('valid_t and final_t must be same-shape one-dimensional arrays.')
+    if num_pairs <= 0 or subgoal_steps <= 0:
+        raise ValueError('num_pairs and subgoal_steps must be positive.')
+    rng = np.random.default_rng(seed)
+    positions = rng.integers(len(valid_t), size=num_pairs)
+    t = valid_t[positions]
+    episode_end = final_t[positions]
+    distances = rng.random(num_pairs)
+    g = np.rint((t + 1) * distances + episode_end * (1.0 - distances)).astype(np.int32)
+    g = np.clip(g, t + 1, episode_end)
+    target = np.minimum(t + int(subgoal_steps), g).astype(np.int32)
+    return t, g, target
