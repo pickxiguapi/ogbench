@@ -178,7 +178,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 ## 实验 Bash
 
 - 所有新训练与评测只能通过 `exp/` 下的 Bash 发起；不得直接运行 Python 命令。
-- `exp/train/` 保存正式训练 Bash；`exp/eval/lewm_4tasks/` 与 `exp/eval/ogbench_env_8tasks/` 分别保存两套评测协议。
+- `exp/train/` 保存正式训练 Bash；`exp/eval/lewm_4tasks/` 与 `exp/eval/ogbench_env_8tasks/` 分别保存两套评测协议；`exp/preprocess/lewm_latents/` 保存 frozen LeWM latent 数据集转换 Bash。
 - Bash 顶部必须用中文说明服务器、任务范围、算法、训练量和特殊设置。
 - 可调参数集中放在 Bash 开头；真实 Python 命令及关键 flags 必须完整展开。
 - 修改 Bash 后至少运行 `bash -n`。
@@ -202,6 +202,20 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 顺序复现 OGBench-Env-8Tasks 四种训练设计 |
 | `exp/eval/lewm_4tasks/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 复现 LeWM-4Tasks 主评测矩阵 |
 | `exp/eval/ogbench_env_8tasks/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 复现 OGBench-Env-8Tasks 主评测矩阵 |
+| `exp/preprocess/lewm_latents/20260830_precompute_yb_pusht_lewm_s666_z192.sh` | 英博云生成 PushT seed666 frozen LeWM z192 数据集 |
+| `exp/preprocess/lewm_latents/20260830_precompute_node2_cube_lewm_s3072_z192.sh` | node2 生成 Cube seed3072 frozen LeWM z192 数据集 |
+| `exp/preprocess/lewm_latents/20260830_precompute_node3_reacher_lewm_s3072_z192.sh` | node3 生成 Reacher seed3072 frozen LeWM z192 数据集 |
+| `exp/preprocess/lewm_latents/20260830_precompute_node4_tworoom_lewm_s3072_z192.sh` | node4 生成 TwoRoom seed3072 frozen LeWM z192 数据集 |
+
+## Frozen LeWM latent 数据集
+
+- 正式转换入口只有 `impls/precompute_lewm_latents.py`，正式运行必须使用 `exp/preprocess/lewm_latents/` 下对应服务器和任务的 Bash。
+- 每个源数据 row 保存一个 `z = LeWM.encode_pixels(pixels, train=False)`，形状固定为 `[N, 192]`、正式 dtype 固定为 `float32`；不得保存 predictor rollout 结果冒充 encoder target latent。
+- 输入图像必须来自训练 LeWM 时使用的 JPEG-backed Lance `pixels`，不能改用原始 HDF5 pixels。输出 HDF5 不复制 pixels，但保留源 HDF5 的非像素字段，并从 Lance 补齐 `episode_idx`、`step_idx`、`ep_offset`、`ep_len`、`source_row`。
+- latent cache 与 checkpoint SHA-256 强绑定；PushT 使用 seed666，Cube、Reacher、TwoRoom 使用 seed3072。不同任务即使同为 192 维也不是共享坐标系。
+- 英博云输出根目录为 `/root/data/yyf/lewm-latent-datasets/`；A800 node2、node3、node4 输出根目录为 `/data-training/yyf/datasets/lewm-latents/`。
+- 正式文件名分别为 `pusht_expert_train__lewm_s666_e10_z192.h5`、`cube_single_expert__lewm_s3072_e10_z192.h5`、`reacher__lewm_s3072_e10_z192.h5`、`tworoom__lewm_s3072_e10_z192.h5`。
+- 转换中间文件以 `.incomplete` 结尾并通过 `encoded_rows` 断点续跑；只有所有 z 通过 finite 检查并写入统计量后才原子改名为正式 `.h5`。
 
 ## 服务器与 GitHub
 
