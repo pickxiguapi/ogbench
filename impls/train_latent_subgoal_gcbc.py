@@ -170,10 +170,10 @@ def make_train_step(model, learning_rate_schedule, batch_size, subgoal_steps):
         current_idxs = valid_t[positions]
         final_idxs = final_t[positions]
         distances = jax.random.uniform(goal_key, (batch_size,))
-        goal_idxs = jnp.rint(
-            (current_idxs + 1) * distances + final_idxs * (1.0 - distances)
+        future_counts = final_idxs - current_idxs
+        goal_idxs = current_idxs + 1 + jnp.floor(
+            distances * future_counts
         ).astype(jnp.int32)
-        goal_idxs = jnp.clip(goal_idxs, current_idxs + 1, final_idxs)
         target_idxs = jnp.minimum(current_idxs + subgoal_steps, goal_idxs)
         current_latents = z[current_idxs]
         goal_latents = z[goal_idxs]

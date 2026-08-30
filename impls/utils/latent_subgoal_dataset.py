@@ -97,7 +97,7 @@ def sample_future_pairs(valid_t, final_t, num_pairs, subgoal_steps, seed):
     t = valid_t[positions]
     episode_end = final_t[positions]
     distances = rng.random(num_pairs)
-    g = np.rint((t + 1) * distances + episode_end * (1.0 - distances)).astype(np.int32)
-    g = np.clip(g, t + 1, episode_end)
+    future_counts = episode_end - t
+    g = t + 1 + np.floor(distances * future_counts).astype(np.int32)
     target = np.minimum(t + int(subgoal_steps), g).astype(np.int32)
     return t, g, target

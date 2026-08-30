@@ -31,3 +31,13 @@ def test_hiql_future_sampling_and_k10_targets():
     assert np.any(g - t < 10)
     assert np.any(g - t > 10)
     np.testing.assert_array_equal(target[g - t <= 10], g[g - t <= 10])
+
+
+def test_future_goal_sampling_is_uniform_including_endpoints():
+    valid_t = np.asarray([0], dtype=np.int32)
+    final_t = np.asarray([4], dtype=np.int32)
+    _, goals, _ = sample_future_pairs(
+        valid_t, final_t, 100_000, subgoal_steps=10, seed=11
+    )
+    counts = np.bincount(goals, minlength=5)[1:]
+    assert np.max(np.abs(counts - counts.mean())) < 0.02 * counts.mean()
