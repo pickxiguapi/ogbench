@@ -38,6 +38,30 @@ Seed 3072 四个 checkpoint 有以下镜像；已对英博云、Server 23、A800
 | A800 node1 | `/data-training/yyf/lewm-jax-seed3072/` |
 | A800 node2、node3、node4 | `/data-training/yyf/models/lewm-jax-seed3072/` |
 
+### LeWM-4Tasks 默认混合 Checkpoint 映射
+
+后续 LeWM-4Tasks、共享表征和 latent subgoal generator 实验统一使用以下混合 checkpoint：**PushT 使用 training seed 666，Cube、Reacher、TwoRoom 使用 training seed 3072**。除非实验名称和 Bash 顶部明确声明 checkpoint 消融，不得自行替换为其他 seed。
+
+```bash
+# PushT
+pusht_lewm="$LEWM_SEED666_ROOT/2026-08-19_23_LeWMJAX_impala_lance_pusht_expert_bs128_e10_seed666/weights_epoch_10.msgpack"
+
+# 其他三任务
+cube_lewm="$LEWM_SEED3072_ROOT/LeWMJAX_impala_lance_cube_single_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack"
+
+reacher_lewm="$LEWM_SEED3072_ROOT/LeWMJAX_impala_lance_reacher_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack"
+
+tworoom_lewm="$LEWM_SEED3072_ROOT/LeWMJAX_impala_lance_tworoom_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack"
+```
+
+各服务器应使用本机镜像根目录，不得通过重命名或覆盖文件把 seed 666 伪装成 seed 3072：
+
+| 服务器 | `LEWM_SEED666_ROOT` | `LEWM_SEED3072_ROOT` |
+|---|---|---|
+| Server 23 | `/data/dzb/stablewm-data/lewm-jax` | `/data/dzb/stablewm-data/lewm-jax-runs` |
+| 英博云 `yingbo1` | `/root/data/yyf/lewm-jax-seed666-s23` | `/root/data/yyf/lewm-jax-seed3072-s23` |
+| A800 node2、node3、node4 | `/data-training/yyf/models/lewm-jax-seed666` | `/data-training/yyf/models/lewm-jax-seed3072` |
+
 注意：Seed 3072 的主表 SR 与 Server 23 的原始 `eval_cem300x30_seed42/` JSON 精确对应。Seed 0/42 的 PushT、Reacher、TwoRoom 可与英博云相邻评测 JSON 对应，但两个 Cube checkpoint 当前相邻的 `eval_cem300x30_seed42_20260822/cube.json` 分别记录 40 和 42，而非主表的 60 和 68；使用 Cube 主表数字前必须先核对评测轮次，不能把 training seed 与其他评测结果混用。
 
 补充：除了3072的Cube分数是对的，别的都不太对，因为数据集broken了
