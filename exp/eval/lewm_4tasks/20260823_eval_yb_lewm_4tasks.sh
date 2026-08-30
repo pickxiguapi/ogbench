@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
+# 四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/subgoal_lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
 CLIENT_ID=${CLIENT_ID:-yb}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -26,13 +26,15 @@ CEM_TOPK=${CEM_TOPK:-30}
 CEM_COST_MODE=${CEM_COST_MODE:-min_over_horizon}
 PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
+LATENT_SUBGOAL_STEPS=${LATENT_SUBGOAL_STEPS:-100000}
+LATENT_SUBGOAL_REFRESH_STEPS=${LATENT_SUBGOAL_REFRESH_STEPS:-10}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-$CLIENT_ROOT/tmp/lewm-4tasks-eval}
 EGL_LIB_DIR=${EGL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}
 cd "$OGBENCH_ROOT/impls"
 
-case "$MODE" in policy|lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, guided, or native_q" >&2; exit 2 ;; esac
+case "$MODE" in policy|lewm|subgoal_lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, subgoal_lewm, guided, or native_q" >&2; exit 2 ;; esac
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
 case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 tasks=(cube pusht reacher tworoom)
@@ -49,11 +51,19 @@ lewm_dirs=(
   "${LEWM_REACHER_DIR:-$default_lewm_root/lewm_4tasks_reacher_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}}"
   "${LEWM_TWOROOM_DIR:-$default_lewm_root/lewm_4tasks_tworoom_e${LEWM_EPOCH}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}}"
 )
+default_subgoal_root="$CLIENT_ROOT/lewm-final/latent-subgoal-gcbc-k10"
+latent_subgoal_dirs=(
+  "${LATENT_SUBGOAL_CUBE_DIR:-$default_subgoal_root/latent_gcbc_cube_lewm3072_k10_mse_n100000_b1024_s0}"
+  "${LATENT_SUBGOAL_PUSHT_DIR:-$default_subgoal_root/latent_gcbc_pusht_lewm666_k10_mse_n100000_b1024_s0}"
+  "${LATENT_SUBGOAL_REACHER_DIR:-$default_subgoal_root/latent_gcbc_reacher_lewm3072_k10_mse_n100000_b1024_s0}"
+  "${LATENT_SUBGOAL_TWOROOM_DIR:-$default_subgoal_root/latent_gcbc_tworoom_lewm3072_k10_mse_n100000_b1024_s0}"
+)
 output_root=${OUTPUT_ROOT:-$CLIENT_ROOT/lewm-final/evals/lewm-4tasks/${MODE}_${REPRESENTATION_MODE}_${EVAL_TAG}_seed${EVAL_SEED}}
 pids=()
 
 for i in "${!tasks[@]}"; do
   lewm_dir=${lewm_dirs[$i]}
+  latent_subgoal_dir=${latent_subgoal_dirs[$i]}
   policy_name="gc4_${tags[$i]}_${MODE_TAG}_n${POLICY_STEPS}_b${POLICY_BATCH_SIZE}_a${P_AUG}_sd${POLICY_SEED}"
   if (( ${#policy_name} >= 64 )); then
     echo "Policy experiment name must be shorter than 64 characters: $policy_name" >&2
@@ -63,6 +73,14 @@ for i in "${!tasks[@]}"; do
   args=()
   [[ "$MODE" != policy ]] && args+=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
   [[ "$MODE" != lewm ]] && args+=(--policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS")
+  if [[ "$MODE" == subgoal_lewm ]]; then
+    args=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
+    printf -v latent_subgoal_checkpoint "checkpoint_%06d.msgpack" "$LATENT_SUBGOAL_STEPS"
+    args+=(
+      --latent-subgoal-checkpoint="$latent_subgoal_dir/$latent_subgoal_checkpoint"
+      --latent-subgoal-refresh-steps="$LATENT_SUBGOAL_REFRESH_STEPS"
+    )
+  fi
   output_dir="$output_root/${tags[$i]}"
   task_tmp="$EVAL_TMP_ROOT/${tags[$i]}"
   mkdir -p "$output_dir" "$task_tmp"

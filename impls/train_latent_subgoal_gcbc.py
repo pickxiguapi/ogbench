@@ -10,33 +10,18 @@ import time
 from pathlib import Path
 
 import flax
-import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.training import train_state
-
+from latent_subgoal import LatentSubgoalMLP
 from utils.latent_subgoal_dataset import (
     build_valid_transitions,
     load_latent_cache,
     sample_future_pairs,
     split_episodes,
 )
-
-
-class LatentSubgoalMLP(nn.Module):
-    embed_dim: int
-    hidden_dims: tuple[int, ...] = (512, 512, 512)
-
-    @nn.compact
-    def __call__(self, current_latents, goal_latents):
-        x = jnp.concatenate((current_latents, goal_latents), axis=-1)
-        for hidden_dim in self.hidden_dims:
-            x = nn.Dense(hidden_dim)(x)
-            x = nn.LayerNorm()(x)
-            x = nn.silu(x)
-        return nn.Dense(self.embed_dim)(x)
 
 
 def parse_args():

@@ -155,3 +155,27 @@ t=10   上层生成下一个 z_subgoal
 5. No-goal generator：只输入 \(z_t\)。
 
 Oracle 与 predicted 的差距用于区分 generator 误差和低层控制误差。
+
+## 首轮 predicted-subgoal CEM 闭环协议
+
+第一轮只检验 predicted subgoal 能否改善纯 CEM，不加入 policy、Q、value 或 action proposal。CEM 搜索分布、warm start 和 LeWM rollout 完全保持原方法，只把 latent cost 的目标从最终目标 \(z_g\) 换成当前固定的 \(\hat z_{\mathrm{sub}}\)。
+
+| 参数 | 数值 |
+|---|---:|
+| episodes | 50 |
+| evaluation seed | 42 |
+| goal offset | 25 atomic steps |
+| evaluation budget | 50 atomic steps |
+| CEM population | 300 |
+| CEM iterations | 30 |
+| top-k | 30 |
+| planning horizon | 5 action blocks = 25 atomic steps |
+| receding horizon | 1 action block = 5 atomic steps |
+| cost | min over horizon latent L2 |
+| subgoal refresh | 10 atomic steps |
+
+每个 predicted subgoal 必须固定服务两个连续的 5-step replan；在第 10 个 atomic step 执行完以后，才从新的真实 observation 生成下一个 subgoal。LeWM checkpoint 与 generator 训练配置中记录的 SHA-256 必须精确匹配。
+
+正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_yb_lewm_latent_subgoal_moh.sh`。
+
+严格配对的 global-goal CEM 基线为 `exp/eval/lewm_4tasks/20260830_eval_yb_lewm_mixed_ckpts_moh.sh`，当前 seed42/50-episode 结果是 PushT 88、Cube 74、Reacher 100、TwoRoom 98。两种方法必须共享 dataset starts 和 paired planner keys，并额外报告逐 episode success flip。

@@ -170,7 +170,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 
 ## 正式评测入口
 
-- `impls/eval_lewm_4tasks.py`：LeWM-4Tasks 的 policy、LeWM、guided、native-Q 四种评测模式。
+- `impls/eval_lewm_4tasks.py`：LeWM-4Tasks 的 policy、LeWM、subgoal-LeWM、guided、native-Q 五种评测模式。
 - `impls/eval_ogbench_env_8tasks.py`：OGBench-Env-8Tasks 的 policy、LeWM、guided、native-Q 四种评测模式。
 - `impls/gciql_chunk_policy.py`：两套评测共用的 checkpoint 加载和 policy/native-Q adapter，不是命令入口。
 - `impls/lewm_jax/planner.py` 是两套评测共用的 planner 实现，不是正式命令入口。
@@ -198,6 +198,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/eval/lewm_4tasks/20260823_eval_yb_lewm_4tasks.sh` | LeWM-4Tasks 主评测 |
 | `exp/eval/lewm_4tasks/20260823_eval_s23_lewm_seed666.sh` | Server23 四卡评测 seed 666 的 LeWM-4Tasks checkpoint |
 | `exp/eval/lewm_4tasks/20260829_eval_node4_ddpgbc_multiseed_policy_guided.sh` | node4 评测 DDPG+BC policy seeds 0/42/777 × eval seeds 0/1/42 的 Policy-only 与 Guided |
+| `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_latent_subgoal_moh.sh` | 英博云用 K10 predicted latent subgoal 评测纯 CEM MoH，并与 mixed-checkpoint global-goal CEM 严格配对 |
 | `exp/eval/ogbench_env_8tasks/20260823_eval_node2_ogbench_env_8tasks.sh` | OGBench-Env-8Tasks 主评测 |
 | `exp/train/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 顺序复现 LeWM-4Tasks 四种训练设计 |
 | `exp/train/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 顺序复现 OGBench-Env-8Tasks 四种训练设计 |

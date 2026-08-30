@@ -1,8 +1,8 @@
+import unittest
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-import unittest
-
 from eval_lewm_4tasks import JAXLeWMCEMPolicy
 from lewm_jax.planner import validate_shared_q_lewm_checkpoint
 
@@ -58,6 +58,50 @@ def proposal_policy():
 
 
 class ProposalInitializationTest(unittest.TestCase):
+    def test_latent_subgoal_is_held_for_exact_refresh_interval(self):
+        policy = object.__new__(JAXLeWMCEMPolicy)
+        policy.checkpoint_metadata = {'embed_dim': 3}
+        policy._predict_latent_subgoal = lambda current, goal: current + goal
+        policy.latent_subgoal_refresh_steps = 10
+        policy.latent_subgoals = [None]
+        policy.latent_subgoal_ages = np.zeros(1, dtype=np.int64)
+        policy.latent_subgoal_generation_counts = np.zeros(1, dtype=np.int64)
+        policy.encode_pixels = lambda pixels: np.asarray(
+            [[float(np.asarray(pixels).mean())] * 3], dtype=np.float32
+        )
+
+        first = policy._planning_target_embedding(
+            0,
+            np.ones((1, 2, 2, 1), dtype=np.float32),
+            np.full((1, 2, 2, 1), 2.0, dtype=np.float32),
+        )
+        policy.latent_subgoal_ages[0] = 5
+        held = policy._planning_target_embedding(
+            0,
+            np.full((1, 2, 2, 1), 8.0, dtype=np.float32),
+            np.full((1, 2, 2, 1), 2.0, dtype=np.float32),
+        )
+        policy.latent_subgoal_ages[0] = 10
+        refreshed = policy._planning_target_embedding(
+            0,
+            np.full((1, 2, 2, 1), 8.0, dtype=np.float32),
+            np.full((1, 2, 2, 1), 2.0, dtype=np.float32),
+        )
+
+        np.testing.assert_array_equal(first, [3.0, 3.0, 3.0])
+        np.testing.assert_array_equal(held, first)
+        np.testing.assert_array_equal(refreshed, [10.0, 10.0, 10.0])
+        np.testing.assert_array_equal(policy.latent_subgoal_generation_counts, [2])
+
+    def test_vanilla_planner_uses_dummy_target_without_encoding(self):
+        policy = object.__new__(JAXLeWMCEMPolicy)
+        policy.checkpoint_metadata = {'embed_dim': 4}
+        policy._predict_latent_subgoal = None
+
+        target = policy._planning_target_embedding(0, None, None)
+
+        np.testing.assert_array_equal(target, np.zeros(4, dtype=np.float32))
+
     def test_checkpoint_path_check_applies_only_to_shared_q(self):
         pi_only = type(
             'PiOnly',

@@ -64,7 +64,10 @@ def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
     for path in EVAL_BASHES:
         text = path.read_text()
         assert 'MODE=${MODE:-guided}' in text
-        assert 'policy|lewm|guided|native_q' in text
+        if 'lewm_4tasks' in str(path):
+            assert 'policy|lewm|subgoal_lewm|guided|native_q' in text
+        else:
+            assert 'policy|lewm|guided|native_q' in text
         assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}' in text
 
 

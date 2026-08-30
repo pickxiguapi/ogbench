@@ -7,10 +7,9 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
-
 from gciql_chunk_policy import GCIQLChunkPolicy, load_agent_config, load_lance_policy
 from lewm_jax.planner import JAXLeWMCEMPolicy, json_safe
+
 from ogbench.lewm_envs.evaluation import (
     HDF5EvaluationDataset,
     StandardActionScaler,
@@ -22,7 +21,11 @@ from ogbench.lewm_envs.evaluation import (
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task', choices=('cube', 'pusht', 'reacher', 'tworoom'), required=True)
-    parser.add_argument('--mode', choices=('policy', 'lewm', 'guided', 'native_q'), required=True)
+    parser.add_argument(
+        '--mode',
+        choices=('policy', 'lewm', 'subgoal_lewm', 'guided', 'native_q'),
+        required=True,
+    )
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--lewm-checkpoint')
     parser.add_argument('--policy-checkpoint-dir')
@@ -38,6 +41,8 @@ def parse_args():
     parser.add_argument('--cem-steps', type=int, default=5)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
+    parser.add_argument('--latent-subgoal-checkpoint')
+    parser.add_argument('--latent-subgoal-refresh-steps', type=int, default=10)
     parser.add_argument(
         '--cem-cost-mode',
         choices=('terminal', 'min_over_horizon'),
@@ -53,11 +58,16 @@ def parse_args():
 def main():
     args = parse_args()
     needs_lewm = args.mode != 'policy'
-    needs_policy = args.mode != 'lewm'
+    needs_policy = args.mode in ('policy', 'guided', 'native_q')
+    needs_subgoal = args.mode == 'subgoal_lewm'
     if needs_lewm != (args.lewm_checkpoint is not None):
         raise ValueError('This mode has an invalid --lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
         raise ValueError('This mode has an invalid --policy-checkpoint-dir combination.')
+    if needs_subgoal != (args.latent_subgoal_checkpoint is not None):
+        raise ValueError(
+            'This mode has an invalid --latent-subgoal-checkpoint combination.'
+        )
 
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
@@ -103,6 +113,8 @@ def main():
                 ),
                 proposal_selection=selection,
                 paired_plan_keys=True,
+                latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
+                latent_subgoal_refresh_steps=args.latent_subgoal_refresh_steps,
             )
         started = time.time()
         metrics = evaluate_dataset_goals(
@@ -126,6 +138,19 @@ def main():
         'lewm_checkpoint': args.lewm_checkpoint,
         'policy_checkpoint_dir': args.policy_checkpoint_dir,
         'policy_checkpoint_step': args.policy_checkpoint_step if needs_policy else None,
+        'latent_subgoal': (
+            None
+            if not needs_subgoal
+            else {
+                'checkpoint': policy.latent_subgoal_checkpoint,
+                'checkpoint_step': policy.latent_subgoal_checkpoint_step,
+                'refresh_steps': policy.latent_subgoal_refresh_steps,
+                'training_subgoal_steps': int(
+                    policy.latent_subgoal_config['subgoal_steps']
+                ),
+                'generation_counts': policy.latent_subgoal_generation_counts,
+            }
+        ),
         'seed': args.seed,
         'num_eval': args.num_eval,
         'goal_offset_steps': args.goal_offset_steps,

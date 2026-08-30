@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import time
@@ -13,6 +14,7 @@ import flax
 import jax
 import jax.numpy as jnp
 import numpy as np
+from latent_subgoal import load_latent_subgoal_checkpoint
 
 from lewm_jax import ARCHITECTURE, LeWM
 from ogbench.lewm_envs.evaluation import (
@@ -145,6 +147,14 @@ def validate_shared_q_lewm_checkpoint(planner_checkpoint, proposal_agent):
         )
 
 
+def sha256_file(path, chunk_size=8 * 1024 * 1024):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as file:
+        for chunk in iter(lambda: file.read(chunk_size), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 class JAXLeWMCEMPolicy:
     """Direct JAX CEM/MPPI planner with normalized action-block warm starts."""
 
@@ -185,6 +195,8 @@ class JAXLeWMCEMPolicy:
         context_history_size=1,
         return_best_candidate=False,
         empirical_context_rank_penalty=0.0,
+        latent_subgoal_checkpoint=None,
+        latent_subgoal_refresh_steps=10,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -208,6 +220,28 @@ class JAXLeWMCEMPolicy:
             raise ValueError('Returning the best candidate requires planner=cem.')
         if empirical_context_rank_penalty < 0:
             raise ValueError('Empirical context rank penalty cannot be negative.')
+        if latent_subgoal_checkpoint is not None:
+            if planner != 'cem':
+                raise ValueError('Latent subgoal planning currently requires pure CEM.')
+            if cost_mode != 'min_over_horizon':
+                raise ValueError(
+                    'A K-step latent subgoal requires min-over-horizon CEM cost.'
+                )
+            if proposal_agent is not None or dual_center_q or native_q_keep:
+                raise ValueError(
+                    'Latent subgoal planning is a pure-CEM evaluation and cannot '
+                    'use policy or Q guidance.'
+                )
+            if empirical_action_blocks is not None:
+                raise ValueError(
+                    'Latent subgoal planning cannot use empirical action initialization.'
+                )
+            if diagnose_min_horizon:
+                raise ValueError(
+                    'Latent subgoal planning does not yet expose goal-image diagnostics.'
+                )
+            if latent_subgoal_refresh_steps <= 0:
+                raise ValueError('Latent subgoal refresh steps must be positive.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -315,6 +349,43 @@ class JAXLeWMCEMPolicy:
         }
         self.lewm_checkpoint = str(Path(checkpoint).resolve())
         validate_shared_q_lewm_checkpoint(checkpoint, proposal_agent)
+        self.latent_subgoal_checkpoint = None
+        self.latent_subgoal_config = None
+        self.latent_subgoal_checkpoint_step = None
+        self.latent_subgoal_refresh_steps = int(latent_subgoal_refresh_steps)
+        self._predict_latent_subgoal = None
+        if latent_subgoal_checkpoint is not None:
+            (
+                subgoal_model,
+                subgoal_params,
+                subgoal_config,
+                subgoal_checkpoint_step,
+            ) = load_latent_subgoal_checkpoint(latent_subgoal_checkpoint)
+            if int(subgoal_config['embed_dim']) != int(config['embed_dim']):
+                raise ValueError(
+                    'Latent subgoal and LeWM embedding dimensions do not match.'
+                )
+            if int(subgoal_config['subgoal_steps']) != self.latent_subgoal_refresh_steps:
+                raise ValueError(
+                    'Generator training horizon must equal its evaluation refresh interval.'
+                )
+            expected_sha = subgoal_config.get('lewm_checkpoint_sha256')
+            actual_sha = sha256_file(checkpoint)
+            if expected_sha != actual_sha:
+                raise ValueError(
+                    'Latent subgoal generator was not trained with this LeWM checkpoint: '
+                    f'expected SHA-256 {expected_sha}, got {actual_sha}.'
+                )
+            self.latent_subgoal_checkpoint = str(
+                Path(latent_subgoal_checkpoint).expanduser().resolve()
+            )
+            self.latent_subgoal_config = subgoal_config
+            self.latent_subgoal_checkpoint_step = subgoal_checkpoint_step
+            self._predict_latent_subgoal = jax.jit(
+                lambda current, goal: subgoal_model.apply(
+                    {'params': subgoal_params}, current, goal
+                )
+            )
         self.scaler = scaler
         self.seed = int(seed)
         self.rng = jax.random.PRNGKey(seed)
@@ -400,6 +471,13 @@ class JAXLeWMCEMPolicy:
             if execution_steps is None
             else int(execution_steps)
         )
+        if (
+            self._predict_latent_subgoal is not None
+            and self.latent_subgoal_refresh_steps % self.execution_steps != 0
+        ):
+            raise ValueError(
+                'Latent subgoal refresh steps must be divisible by CEM execution steps.'
+            )
         if (
             self.context_history_size > 1
             and self.execution_steps != self.action_block
@@ -534,6 +612,7 @@ class JAXLeWMCEMPolicy:
         )
         return_best_candidate = self.return_best_candidate
         empirical_context_rank_penalty = self.empirical_context_rank_penalty
+        use_latent_subgoal = self._predict_latent_subgoal is not None
 
         def planner_to_proposal_actions(blocks):
             if proposal_action_space == 'planner':
@@ -550,7 +629,13 @@ class JAXLeWMCEMPolicy:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
 
         def plan_one(
-            key, pixels, goals, past_action_blocks, initial_mean, proposal_blocks
+            key,
+            pixels,
+            goals,
+            target_embedding,
+            past_action_blocks,
+            initial_mean,
+            proposal_blocks,
         ):
             std = jnp.full_like(initial_mean, var_scale)
             nearest_empirical_indices = None
@@ -673,7 +758,27 @@ class JAXLeWMCEMPolicy:
                 scored_candidates = jnp.concatenate(
                     [past_candidates, candidates], axis=1
                 )
-                if latent_probe_weight is None:
+                if use_latent_subgoal:
+                    _, predictions = model.apply(
+                        variables,
+                        pixels[None, None],
+                        goals[None, None],
+                        scored_candidates[None],
+                        method=model._rollout_predictions,
+                    )
+                    latent_distances = jnp.sum(
+                        (
+                            predictions
+                            - target_embedding[None, None, None]
+                        )
+                        ** 2,
+                        axis=-1,
+                    )
+                    if self.cost_mode == 'terminal':
+                        costs = latent_distances[:, :, -1][0]
+                    else:
+                        costs = jnp.min(latent_distances, axis=-1)[0]
+                elif latent_probe_weight is None:
                     costs = model.apply(
                         variables,
                         pixels[None, None],
@@ -908,6 +1013,37 @@ class JAXLeWMCEMPolicy:
             (num_envs, self.horizon), dtype=np.float64
         )
         self.min_horizon_replans_by_env = np.zeros(num_envs, dtype=np.int64)
+        self.latent_subgoals = [None] * num_envs
+        self.latent_subgoal_ages = np.zeros(num_envs, dtype=np.int64)
+        self.latent_subgoal_generation_counts = np.zeros(
+            num_envs, dtype=np.int64
+        )
+
+    def _planning_target_embedding(self, env_index, pixels, goals):
+        embed_dim = int(self.checkpoint_metadata['embed_dim'])
+        if self._predict_latent_subgoal is None:
+            return np.zeros(embed_dim, dtype=np.float32)
+        if (
+            self.latent_subgoals[env_index] is None
+            or self.latent_subgoal_ages[env_index]
+            >= self.latent_subgoal_refresh_steps
+        ):
+            current_embedding = self.encode_pixels(np.asarray(pixels[-1:]))
+            goal_embedding = self.encode_pixels(np.asarray(goals[-1:]))
+            subgoal = np.asarray(
+                self._predict_latent_subgoal(
+                    jnp.asarray(current_embedding),
+                    jnp.asarray(goal_embedding),
+                )
+            )[0].astype(np.float32)
+            if subgoal.shape != (embed_dim,) or not np.isfinite(subgoal).all():
+                raise FloatingPointError(
+                    f'Invalid predicted latent subgoal shape/value: {subgoal.shape}.'
+                )
+            self.latent_subgoals[env_index] = subgoal
+            self.latent_subgoal_ages[env_index] = 0
+            self.latent_subgoal_generation_counts[env_index] += 1
+        return self.latent_subgoals[env_index]
 
     def _next_plan_keys(self, env_index):
         """Return proposal/CEM keys, optionally matched across method variants."""
@@ -1121,6 +1257,9 @@ class JAXLeWMCEMPolicy:
                 env_index, pixels[env_index]
             )
             proposal_key, plan_key = self._next_plan_keys(env_index)
+            target_embedding = self._planning_target_embedding(
+                env_index, context_pixels, goals[env_index]
+            )
             proposal_blocks = None
             if self.dual_center_q:
                 mode_block, q_block = self._q_selection_blocks(
@@ -1142,6 +1281,7 @@ class JAXLeWMCEMPolicy:
                     jax.random.fold_in(plan_key, 2),
                     jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(target_embedding),
                     jnp.asarray(past_action_blocks),
                     jnp.asarray(mode_initial),
                     empty_blocks,
@@ -1150,6 +1290,7 @@ class JAXLeWMCEMPolicy:
                     jax.random.fold_in(plan_key, 3),
                     jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(target_embedding),
                     jnp.asarray(past_action_blocks),
                     jnp.asarray(q_initial),
                     empty_blocks,
@@ -1187,6 +1328,7 @@ class JAXLeWMCEMPolicy:
                     plan_key,
                     jnp.asarray(context_pixels),
                     jnp.asarray(goals[env_index]),
+                    jnp.asarray(target_embedding),
                     jnp.asarray(past_action_blocks),
                     jnp.asarray(initial_mean),
                     jnp.asarray(proposal_blocks),
@@ -1225,6 +1367,8 @@ class JAXLeWMCEMPolicy:
         actions = np.full((len(alive), self.atomic_action_dim), np.nan, dtype=np.float32)
         for env_index in np.flatnonzero(alive):
             actions[env_index] = self.buffers[env_index].popleft()
+            if self._predict_latent_subgoal is not None:
+                self.latent_subgoal_ages[env_index] += 1
         return actions
 
 
