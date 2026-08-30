@@ -179,3 +179,21 @@ Oracle 与 predicted 的差距用于区分 generator 误差和低层控制误差
 正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_yb_lewm_latent_subgoal_moh.sh`。
 
 严格配对的 global-goal CEM 基线为 `exp/eval/lewm_4tasks/20260830_eval_yb_lewm_mixed_ckpts_moh.sh`，当前 seed42/50-episode 结果是 PushT 88、Cube 74、Reacher 100、TwoRoom 98。两种方法必须共享 dataset starts 和 paired planner keys，并额外报告逐 episode success flip。
+
+## 2026-08-31 首轮闭环结果
+
+正式 predicted-subgoal CEM 评测已在英博云完成。结果目录：
+
+`/root/data/yyf/lewm-final/evals/lewm-4tasks/20260831_latent_subgoal_k10_moh_cem300x30_h5_rh1_ep50_seed42/`
+
+| 任务 | Global-goal CEM | Predicted-subgoal CEM | 变化 | Subgoal-only success | Baseline-only success |
+|---|---:|---:|---:|---:|---:|
+| PushT | 88 | 90 | +2 | 5 | 4 |
+| Cube | 74 | 64 | -10 | 1 | 6 |
+| Reacher | 100 | 82 | -18 | 0 | 9 |
+| TwoRoom | 98 | 84 | -14 | 0 | 7 |
+| 宏平均 | 90 | 80 | -10 | 6 | 26 |
+
+四任务总成功数从 `180/200` 降为 `160/200`。两组结果的 dataset seeds 已逐项验证完全一致，CEM 使用 paired plan keys；因此差值不是由换了 evaluation starts 造成的。
+
+首轮结论：纯 CEM 能执行 predicted latent subgoal，且 PushT 有小幅收益，但“完全用 predicted subgoal 替换 global goal cost”不能作为通用方法。失败 episode 的 generator 都执行到 5 次更新，即用满 50-step budget；主要问题是闭环 current latent 离开 expert trajectory 后的分布偏移、确定性 MSE 输出可能处于多条路径之间，以及反复追逐局部 latent 时丢失 global-goal 约束。后续若继续该路线，应优先测试同时保留 global goal 的双项 cost，而不是增加 generator 训练步数。
