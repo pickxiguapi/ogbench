@@ -197,3 +197,5 @@ Oracle 与 predicted 的差距用于区分 generator 误差和低层控制误差
 四任务总成功数从 `180/200` 降为 `160/200`。两组结果的 dataset seeds 已逐项验证完全一致，CEM 使用 paired plan keys；因此差值不是由换了 evaluation starts 造成的。
 
 首轮结论：纯 CEM 能执行 predicted latent subgoal，且 PushT 有小幅收益，但“完全用 predicted subgoal 替换 global goal cost”不能作为通用方法。失败 episode 的 generator 都执行到 5 次更新，即用满 50-step budget；主要问题是闭环 current latent 离开 expert trajectory 后的分布偏移、确定性 MSE 输出可能处于多条路径之间，以及反复追逐局部 latent 时丢失 global-goal 约束。后续若继续该路线，应优先测试同时保留 global goal 的双项 cost，而不是增加 generator 训练步数。
+
+为区分 generator 误差与 CEM 的 subgoal 可利用性，增加 oracle 对照：evaluation 已知 sampled dataset episode 和 start，因此在 goal offset25、K10 时依次使用同一 demonstration 的 `start+10`、`start+20`、`start+25` 图像，经同一个 frozen LeWM 编码成 GT latent waypoint。环境成功条件仍然只使用 `start+25` 的最终目标，不能把到达中间 waypoint 计为成功。正式入口为 `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_oracle_subgoal_moh.sh`。

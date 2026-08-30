@@ -2,10 +2,15 @@ from types import SimpleNamespace
 
 import h5py
 import numpy as np
-
 from gciql_chunk_policy import GCIQLChunkPolicy, LeWMEncodedAgent
-from ogbench.lewm_envs.evaluation import HDF5EvaluationDataset, StandardActionScaler, evaluate_dataset_goals
 from utils.evaluation import evaluate
+
+from ogbench.lewm_envs.evaluation import (
+    HDF5EvaluationDataset,
+    StandardActionScaler,
+    evaluate_dataset_goals,
+    oracle_subgoal_offsets,
+)
 
 
 class _Dataset:
@@ -42,6 +47,12 @@ def test_standard_action_scaler_matches_population_statistics():
     np.testing.assert_allclose(scaler.scale, [1.0, 2.0])
     value = np.array([[2.5, 9.0]])
     np.testing.assert_allclose(scaler.inverse_transform(scaler.transform(value)), value)
+
+
+def test_oracle_subgoal_offsets_end_at_final_goal_without_overshoot():
+    assert oracle_subgoal_offsets(goal_offset=25, subgoal_steps=10) == (10, 20, 25)
+    assert oracle_subgoal_offsets(goal_offset=10, subgoal_steps=10) == (10,)
+    assert oracle_subgoal_offsets(goal_offset=5, subgoal_steps=10) == (5,)
 
 
 def test_hdf5_dataset_uses_episode_offsets_without_materializing_row_map(tmp_path):

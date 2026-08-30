@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/subgoal_lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
+# 四卡并行评测 LeWM-4Tasks；MODE 可设 policy/lewm/subgoal_lewm/oracle_subgoal_lewm/guided/native_q，REPRESENTATION_MODE 可设 independent/pi/qv/all。
 CLIENT_ID=${CLIENT_ID:-yb}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -28,13 +28,14 @@ PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 LATENT_SUBGOAL_STEPS=${LATENT_SUBGOAL_STEPS:-100000}
 LATENT_SUBGOAL_REFRESH_STEPS=${LATENT_SUBGOAL_REFRESH_STEPS:-10}
+ORACLE_SUBGOAL_STEPS=${ORACLE_SUBGOAL_STEPS:-10}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 EVAL_TMP_ROOT=${EVAL_TMP_ROOT:-$CLIENT_ROOT/tmp/lewm-4tasks-eval}
 EGL_LIB_DIR=${EGL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}
 cd "$OGBENCH_ROOT/impls"
 
-case "$MODE" in policy|lewm|subgoal_lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, subgoal_lewm, guided, or native_q" >&2; exit 2 ;; esac
+case "$MODE" in policy|lewm|subgoal_lewm|oracle_subgoal_lewm|guided|native_q) ;; *) echo "MODE must be policy, lewm, subgoal_lewm, oracle_subgoal_lewm, guided, or native_q" >&2; exit 2 ;; esac
 case "$REPRESENTATION_MODE" in independent|pi|qv|all) ;; *) echo "REPRESENTATION_MODE must be independent, pi, qv, or all" >&2; exit 2 ;; esac
 case "$REPRESENTATION_MODE" in independent) MODE_TAG=ind ;; *) MODE_TAG=$REPRESENTATION_MODE ;; esac
 tasks=(cube pusht reacher tworoom)
@@ -71,16 +72,35 @@ for i in "${!tasks[@]}"; do
   fi
   policy_dir="$CLIENT_ROOT/lewm-final/gciql-chunk-4tasks/$policy_name"
   args=()
-  [[ "$MODE" != policy ]] && args+=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
-  [[ "$MODE" != lewm ]] && args+=(--policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS")
-  if [[ "$MODE" == subgoal_lewm ]]; then
-    args=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
-    printf -v latent_subgoal_checkpoint "checkpoint_%06d.msgpack" "$LATENT_SUBGOAL_STEPS"
-    args+=(
-      --latent-subgoal-checkpoint="$latent_subgoal_dir/$latent_subgoal_checkpoint"
-      --latent-subgoal-refresh-steps="$LATENT_SUBGOAL_REFRESH_STEPS"
-    )
-  fi
+  case "$MODE" in
+    policy)
+      args+=(--policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS")
+      ;;
+    lewm)
+      args+=(--lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack")
+      ;;
+    subgoal_lewm)
+      printf -v latent_subgoal_checkpoint "checkpoint_%06d.msgpack" "$LATENT_SUBGOAL_STEPS"
+      args+=(
+        --lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack"
+        --latent-subgoal-checkpoint="$latent_subgoal_dir/$latent_subgoal_checkpoint"
+        --latent-subgoal-refresh-steps="$LATENT_SUBGOAL_REFRESH_STEPS"
+      )
+      ;;
+    oracle_subgoal_lewm)
+      args+=(
+        --lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack"
+        --oracle-subgoal-steps="$ORACLE_SUBGOAL_STEPS"
+      )
+      ;;
+    guided|native_q)
+      args+=(
+        --lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack"
+        --policy-checkpoint-dir="$policy_dir"
+        --policy-checkpoint-step="$POLICY_STEPS"
+      )
+      ;;
+  esac
   output_dir="$output_root/${tags[$i]}"
   task_tmp="$EVAL_TMP_ROOT/${tags[$i]}"
   mkdir -p "$output_dir" "$task_tmp"

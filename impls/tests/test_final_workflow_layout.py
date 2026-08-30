@@ -2,7 +2,6 @@ import ast
 import os
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 IMPLS = ROOT / 'impls'
 EXP = ROOT / 'exp'
@@ -65,7 +64,10 @@ def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
         text = path.read_text()
         assert 'MODE=${MODE:-guided}' in text
         if 'lewm_4tasks' in str(path):
-            assert 'policy|lewm|subgoal_lewm|guided|native_q' in text
+            assert (
+                'policy|lewm|subgoal_lewm|oracle_subgoal_lewm|guided|native_q'
+                in text
+            )
         else:
             assert 'policy|lewm|guided|native_q' in text
         assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}' in text

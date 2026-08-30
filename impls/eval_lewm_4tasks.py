@@ -23,7 +23,14 @@ def parse_args():
     parser.add_argument('--task', choices=('cube', 'pusht', 'reacher', 'tworoom'), required=True)
     parser.add_argument(
         '--mode',
-        choices=('policy', 'lewm', 'subgoal_lewm', 'guided', 'native_q'),
+        choices=(
+            'policy',
+            'lewm',
+            'subgoal_lewm',
+            'oracle_subgoal_lewm',
+            'guided',
+            'native_q',
+        ),
         required=True,
     )
     parser.add_argument('--data-root', required=True)
@@ -43,6 +50,7 @@ def parse_args():
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--latent-subgoal-checkpoint')
     parser.add_argument('--latent-subgoal-refresh-steps', type=int, default=10)
+    parser.add_argument('--oracle-subgoal-steps', type=int, default=10)
     parser.add_argument(
         '--cem-cost-mode',
         choices=('terminal', 'min_over_horizon'),
@@ -60,6 +68,7 @@ def main():
     needs_lewm = args.mode != 'policy'
     needs_policy = args.mode in ('policy', 'guided', 'native_q')
     needs_subgoal = args.mode == 'subgoal_lewm'
+    needs_oracle_subgoal = args.mode == 'oracle_subgoal_lewm'
     if needs_lewm != (args.lewm_checkpoint is not None):
         raise ValueError('This mode has an invalid --lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
@@ -126,6 +135,9 @@ def main():
             eval_budget=args.eval_budget,
             policy=policy,
             video_dir=args.video_dir,
+            oracle_subgoal_steps=(
+                args.oracle_subgoal_steps if needs_oracle_subgoal else None
+            ),
         )
     finally:
         dataset.close()
@@ -149,6 +161,15 @@ def main():
                     policy.latent_subgoal_config['subgoal_steps']
                 ),
                 'generation_counts': policy.latent_subgoal_generation_counts,
+            }
+        ),
+        'oracle_subgoal': (
+            None
+            if not needs_oracle_subgoal
+            else {
+                'subgoal_steps': args.oracle_subgoal_steps,
+                'waypoint_offsets': metrics['oracle_subgoal_offsets'],
+                'source': 'same_evaluation_dataset_trajectory',
             }
         ),
         'seed': args.seed,
