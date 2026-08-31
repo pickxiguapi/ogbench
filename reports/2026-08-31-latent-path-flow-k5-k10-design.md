@@ -179,3 +179,28 @@ MoH 相对 terminal 的 paired flips（MoH-only / terminal-only）为 Cube `1/3`
 | Predicted K10 - global | 0 | +14 | -34 | +14 | -1.5 |
 
 同一批 episode 的 paired flips（subgoal-only / global-only）为 Cube `3/3`、PushT `10/3`、Reacher `1/18`、TwoRoom `7/0`。因此不能笼统地说 predicted subgoal 在四个任务上都不准确或都伤害规划：它在 PushT 与 TwoRoom 明显有益，Cube 持平。当前主要失败点集中在 Reacher；该任务的 K10 离线指标也是四个任务中第二差（MSE `0.9133`、cosine `0.5394`），且严格同视野下换回 global goal 即由 62% 恢复到 96%，支持“Reacher 的主要瓶颈是 subgoal prediction quality”。但这仍是强证据而非单独充分的因果证明；最终应以同协议的 GT K10 oracle 上限来区分 predictor error 与局部目标本身的可规划性。
+
+### 远距离目标：H50/H75
+
+在保持 planner 参数完全一致的前提下，将 dataset goal offset / environment budget 从 `25/50` 扩展为 `50/100` 和 `75/150`。每个距离都严格配对 predicted K10 subgoal 与 direct global goal：50 episodes、seed42、CEM300x30、H2/RH1、action block5、MoH；predicted K10 每5个 environment steps 重新生成。这里表中的 H 表示 dataset goal offset，而非 CEM horizon（CEM horizon 始终为2）。
+
+| Goal offset / budget | Target | Cube | PushT | Reacher | TwoRoom | Macro |
+|---|---|---:|---:|---:|---:|---:|
+| 25 / 50 | Global goal | 76 | 76 | 96 | 86 | 83.5 |
+| 25 / 50 | Predicted K10 | 76 | 90 | 62 | 100 | 82.0 |
+| 50 / 100 | Global goal | 62 | 36 | 88 | 58 | 61.0 |
+| 50 / 100 | Predicted K10 | 62 | 72 | 82 | 100 | 79.0 |
+| 75 / 150 | Global goal | 76 | 4 | 88 | 64 | 58.0 |
+| 75 / 150 | Predicted K10 | 62 | 72 | 94 | 100 | 82.0 |
+
+Predicted K10 相对 global goal 的宏平均差值随距离从 `-1.5` 变为 `+18.0`、`+24.0`。尤其 PushT 的差值为 `+14/+36/+68`，TwoRoom 为 `+14/+42/+36`；这两个任务直接体现了局部 target 在远目标下避免 global latent cost 失去局部指导性的价值。Cube 在 H50 持平、H75 落后14分，是当前没有获得远距离收益的例外。Reacher 从 H25 的 `-34` 变为 H50 的 `-6` 和 H75 的 `+6`，说明 H25 上的失败不能外推为“Reacher 的 subgoal generator 对所有 goal distance 都不可用”。
+
+同一距离内的 paired flips（subgoal-only / global-only）如下：
+
+| Goal offset | Cube | PushT | Reacher | TwoRoom |
+|---:|---:|---:|---:|---:|
+| 25 | 3 / 3 | 10 / 3 | 1 / 18 | 7 / 0 |
+| 50 | 7 / 7 | 22 / 4 | 4 / 7 | 21 / 0 |
+| 75 | 4 / 11 | 35 / 1 | 5 / 2 | 18 / 0 |
+
+不同 goal offset 会由 evaluator 根据各自的合法窗口重新采样 manifest，因此跨距离的同一列不是 episode-level paired comparison；每个距离内部的两种 target 使用完全一致的 manifest，可以严格配对。总体结论是：当前 LatentPathFlow K10 在宏平均上随 goal distance 增大保持稳定，而直接 global-goal H2 MoH 明显退化，支持“subgoal decomposition 主要在远目标下发挥作用”。
