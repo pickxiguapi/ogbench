@@ -1,10 +1,12 @@
 import unittest
+from collections import deque
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from eval_lewm_4tasks import JAXLeWMCEMPolicy
 from lewm_jax.planner import (
+    configured_subgoal_horizon_index,
     fixed_subgoal_horizon_index,
     latent_path_waypoint_index,
     select_latent_subgoal_costs,
@@ -83,6 +85,13 @@ class ProposalInitializationTest(unittest.TestCase):
             [1.0, 3.0],
         )
 
+    def test_fixed_cost_uses_checkpoint_k10_not_refresh_interval(self):
+        subgoal_config = {'subgoal_steps': 10}
+        self.assertEqual(
+            configured_subgoal_horizon_index(subgoal_config, 5, 5),
+            1,
+        )
+
     def test_latent_subgoal_is_held_for_exact_refresh_interval(self):
         policy = object.__new__(JAXLeWMCEMPolicy)
         policy.checkpoint_metadata = {'embed_dim': 3}
@@ -117,6 +126,48 @@ class ProposalInitializationTest(unittest.TestCase):
         np.testing.assert_array_equal(held, first)
         np.testing.assert_array_equal(refreshed, [10.0, 10.0, 10.0])
         np.testing.assert_array_equal(policy.latent_subgoal_generation_counts, [2])
+
+    def test_latent_subgoal_receives_three_encoded_history_frames(self):
+        policy = object.__new__(JAXLeWMCEMPolicy)
+        policy.checkpoint_metadata = {'embed_dim': 3}
+        policy.latent_subgoal_history_size = 3
+        policy.latent_subgoal_pixel_histories = [
+            deque(
+                [
+                    np.full((2, 2, 1), 1.0, dtype=np.float32),
+                    np.full((2, 2, 1), 2.0, dtype=np.float32),
+                    np.full((2, 2, 1), 3.0, dtype=np.float32),
+                ],
+                maxlen=3,
+            )
+        ]
+        captured = {}
+
+        def predict(history, goal):
+            captured['history'] = np.asarray(history)
+            return history[:, -1]
+
+        policy._predict_latent_subgoal = predict
+        policy._latent_subgoal_requires_rng = False
+        policy.latent_subgoal_refresh_steps = 5
+        policy.latent_subgoals = [None]
+        policy.latent_subgoal_ages = np.zeros(1, dtype=np.int64)
+        policy.latent_subgoal_generation_counts = np.zeros(1, dtype=np.int64)
+        policy.encode_pixels = lambda pixels: np.repeat(
+            np.asarray(pixels).mean(axis=(1, 2, 3), keepdims=False)[:, None],
+            3,
+            axis=1,
+        ).astype(np.float32)
+
+        target = policy._planning_target_embedding(
+            0,
+            np.full((1, 2, 2, 1), 3.0, dtype=np.float32),
+            np.full((1, 2, 2, 1), 4.0, dtype=np.float32),
+        )
+
+        self.assertEqual(captured['history'].shape, (1, 3, 3))
+        np.testing.assert_array_equal(captured['history'][0, :, 0], [1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(target, [3.0, 3.0, 3.0])
 
     def test_vanilla_planner_uses_dummy_target_without_encoding(self):
         policy = object.__new__(JAXLeWMCEMPolicy)

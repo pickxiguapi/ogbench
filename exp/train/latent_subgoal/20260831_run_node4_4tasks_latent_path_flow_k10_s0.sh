@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A800 node4：默认 GPU0–3 并行训练 TwoRoom/PushT/Cube/Reacher 四个 K5/K10 LatentPathFlow；frozen z192、仅 CFM loss、200k、bs1024、seed0。
+# A800 node4：默认 GPU0–3 并行训练 TwoRoom/PushT/Cube/Reacher 四个 3 帧历史 K5/K10 LatentPathFlow；frozen z192、仅 CFM loss、200k、bs1024、seed0。
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -19,22 +19,22 @@ run_task() {
     tworoom)
       gpu_id=0
       latent_dataset="$LEWM_LATENT_ROOT/tworoom__lewm_s3072_e10_z192.h5"
-      exp_name="latent_pathflow_tworoom_lewm3072_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_tworoom_lewm3072_hist3_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     pusht)
       gpu_id=1
       latent_dataset="$LEWM_LATENT_ROOT/pusht_expert_train__lewm_s666_e10_z192.h5"
-      exp_name="latent_pathflow_pusht_lewm666_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_pusht_lewm666_hist3_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     cube)
       gpu_id=2
       latent_dataset="$LEWM_LATENT_ROOT/cube_single_expert__lewm_s3072_e10_z192.h5"
-      exp_name="latent_pathflow_cube_lewm3072_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_cube_lewm3072_hist3_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     reacher)
       gpu_id=3
       latent_dataset="$LEWM_LATENT_ROOT/reacher__lewm_s3072_e10_z192.h5"
-      exp_name="latent_pathflow_reacher_lewm3072_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_reacher_lewm3072_hist3_k5_10_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     *)
       echo "Unsupported TASKS entry: $task" >&2

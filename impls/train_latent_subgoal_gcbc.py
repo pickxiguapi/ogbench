@@ -27,6 +27,7 @@ from latent_subgoal import (
     sample_conditional_path_flow,
 )
 from utils.latent_subgoal_dataset import (
+    build_history_indices,
     build_valid_transitions,
     load_latent_cache,
     sample_future_pairs,
@@ -63,6 +64,7 @@ def parse_args():
     parser.add_argument('--depth', type=int, default=4)
     parser.add_argument('--ff-dim', type=int, default=2048)
     parser.add_argument('--time-dim', type=int, default=64)
+    parser.add_argument('--history-size', type=int, default=3)
     parser.add_argument('--learning-rate', type=float, default=3e-4)
     parser.add_argument('--final-learning-rate', type=float, default=3e-5)
     parser.add_argument('--warmup-steps', type=int, default=2000)
@@ -97,6 +99,7 @@ def validate_args(args):
         'depth',
         'ff_dim',
         'time_dim',
+        'history_size',
     )
     for name in positive:
         if getattr(args, name) <= 0:
@@ -211,15 +214,17 @@ def make_train_step(
     flow_matching=False,
     path_flow_matching=False,
     waypoint_steps=(5, 10),
+    history_size=1,
     ema_decay=0.0,
 ):
     @jax.jit
-    def train_step(state, rng, z, valid_t, final_t):
+    def train_step(state, rng, z, valid_t, valid_history, final_t):
         rng, index_key, goal_key, noise_key, time_key = jax.random.split(rng, 5)
         positions = jax.random.randint(
             index_key, (batch_size,), minval=0, maxval=len(valid_t)
         )
         current_idxs = valid_t[positions]
+        history_idxs = valid_history[positions]
         final_idxs = final_t[positions]
         distances = jax.random.uniform(goal_key, (batch_size,))
         future_counts = final_idxs - current_idxs
@@ -233,7 +238,11 @@ def make_train_step(
             )
         else:
             target_idxs = jnp.minimum(current_idxs + subgoal_steps, goal_idxs)
-        current_latents = z[current_idxs]
+        current_latents = (
+            z[history_idxs]
+            if path_flow_matching and history_size > 1
+            else z[current_idxs]
+        )
         goal_latents = z[goal_idxs]
         target_latents = z[target_idxs]
 
@@ -323,16 +332,20 @@ def make_predict_indices(
     *,
     flow_matching=False,
     path_flow_matching=False,
+    history_size=1,
     flow_sampling_steps=16,
     flow_solver='heun',
 ):
     @jax.jit
-    def predict_indices(params, z, current_idxs, goal_idxs, rng):
+    def predict_indices(params, z, current_idxs, history_idxs, goal_idxs, rng):
         if path_flow_matching:
+            current_latents = (
+                z[history_idxs] if history_size > 1 else z[current_idxs]
+            )
             return sample_conditional_path_flow(
                 model,
                 params,
-                z[current_idxs],
+                current_latents,
                 z[goal_idxs],
                 rng,
                 num_steps=flow_sampling_steps,
@@ -363,6 +376,7 @@ def evaluate_validation(
     z_device,
     z_host,
     current_idxs,
+    history_idxs,
     goal_idxs,
     target_idxs,
     predict_indices,
@@ -380,6 +394,7 @@ def evaluate_validation(
                     params,
                     z_device,
                     jnp.asarray(current_idxs[start:stop]),
+                    jnp.asarray(history_idxs[start:stop]),
                     jnp.asarray(goal_idxs[start:stop]),
                     batch_rng,
                 )
@@ -456,6 +471,12 @@ def main():
         args.subgoal_steps,
         seed=args.split_seed + 1,
     )
+    train_history = build_history_indices(
+        train_t, cache.episode_offsets, args.history_size
+    )
+    fixed_val_history = build_history_indices(
+        fixed_val[0], cache.episode_offsets, args.history_size
+    )
 
     flow_matching = args.architecture == 'transformer_flow'
     path_flow_matching = args.architecture == 'latent_path_flow'
@@ -474,7 +495,14 @@ def main():
     config_args = dict(vars(args))
     if flow_matching:
         config_args.pop('hidden_dims')
-        for name in ('waypoint_steps', 'hidden_dim', 'depth', 'ff_dim', 'time_dim'):
+        for name in (
+            'waypoint_steps',
+            'hidden_dim',
+            'depth',
+            'ff_dim',
+            'time_dim',
+            'history_size',
+        ):
             config_args.pop(name)
     elif path_flow_matching:
         for name in ('hidden_dims', 'model_dim', 'num_layers', 'mlp_dim'):
@@ -493,6 +521,7 @@ def main():
             'depth',
             'ff_dim',
             'time_dim',
+            'history_size',
         ):
             config_args.pop(name)
     if path_flow_matching:
@@ -525,6 +554,8 @@ def main():
     }
     if path_flow_matching:
         config['waypoint_steps'] = list(args.waypoint_steps)
+        if args.history_size > 1:
+            config['conditioning'] = 'history_goal_time_adaln'
     if not flow_matching and not path_flow_matching:
         config['hidden_dims'] = list(args.hidden_dims)
     config_path = output_dir / 'config.json'
@@ -545,6 +576,7 @@ def main():
 
     z_device = jax.device_put(cache.z)
     train_t_device = jax.device_put(train_t)
+    train_history_device = jax.device_put(train_history)
     train_final_device = jax.device_put(train_final)
     if path_flow_matching:
         model = LatentPathFlow(
@@ -555,6 +587,7 @@ def main():
             num_heads=args.num_heads,
             ff_dim=args.ff_dim,
             time_dim=args.time_dim,
+            history_size=args.history_size,
         )
     elif flow_matching:
         model = LatentSubgoalFlowTransformer(
@@ -571,10 +604,15 @@ def main():
     init_rng, train_rng = jax.random.split(jax.random.PRNGKey(args.seed))
     empty_latents = jnp.zeros((1, embed_dim), dtype=jnp.float32)
     if path_flow_matching:
+        empty_current_latents = (
+            jnp.zeros((1, args.history_size, embed_dim), dtype=jnp.float32)
+            if args.history_size > 1
+            else empty_latents
+        )
         variables = model.init(
             init_rng,
             jnp.zeros((1, len(args.waypoint_steps), embed_dim), dtype=jnp.float32),
-            empty_latents,
+            empty_current_latents,
             empty_latents,
             jnp.zeros((1,), dtype=jnp.float32),
         )
@@ -634,12 +672,14 @@ def main():
         flow_matching=flow_matching,
         path_flow_matching=path_flow_matching,
         waypoint_steps=tuple(args.waypoint_steps),
+        history_size=args.history_size,
         ema_decay=args.ema_decay,
     )
     predict_indices = make_predict_indices(
         model,
         flow_matching=flow_matching,
         path_flow_matching=path_flow_matching,
+        history_size=args.history_size,
         flow_sampling_steps=args.flow_sampling_steps,
         flow_solver=args.flow_solver,
     )
@@ -655,6 +695,7 @@ def main():
         z_device=z_device,
         z_host=cache.z,
         current_idxs=fixed_val[0],
+        history_idxs=fixed_val_history,
         goal_idxs=fixed_val[1],
         target_idxs=fixed_val[2],
         predict_indices=predict_indices,
@@ -672,6 +713,7 @@ def main():
             train_rng,
             z_device,
             train_t_device,
+            train_history_device,
             train_final_device,
         )
         current_step += 1
@@ -695,6 +737,7 @@ def main():
                 z_device=z_device,
                 z_host=cache.z,
                 current_idxs=fixed_val[0],
+                history_idxs=fixed_val_history,
                 goal_idxs=fixed_val[1],
                 target_idxs=fixed_val[2],
                 predict_indices=predict_indices,

@@ -173,6 +173,15 @@ def fixed_subgoal_horizon_index(subgoal_steps, action_block, horizon):
     return index
 
 
+def configured_subgoal_horizon_index(subgoal_config, action_block, horizon):
+    """Map the checkpoint's trained subgoal step to a LeWM rollout checkpoint."""
+    if subgoal_config is None or 'subgoal_steps' not in subgoal_config:
+        raise ValueError('Fixed subgoal horizon requires checkpoint subgoal_steps.')
+    return fixed_subgoal_horizon_index(
+        int(subgoal_config['subgoal_steps']), action_block, horizon
+    )
+
+
 def latent_path_waypoint_index(waypoint_steps, target_step):
     """Return the unique path-token index corresponding to a requested step."""
     waypoint_steps = tuple(int(step) for step in waypoint_steps)
@@ -402,6 +411,7 @@ class JAXLeWMCEMPolicy:
         self._latent_subgoal_requires_rng = False
         self.latent_subgoal_waypoint_index = None
         self.latent_subgoal_waypoint_step = None
+        self.latent_subgoal_history_size = 1
         if latent_subgoal_checkpoint is not None:
             (
                 subgoal_model,
@@ -443,12 +453,16 @@ class JAXLeWMCEMPolicy:
             elif subgoal_config['architecture'] == LATENT_PATH_FLOW_ARCHITECTURE:
                 sampling_steps = int(subgoal_config['flow_sampling_steps'])
                 flow_solver = str(subgoal_config['flow_solver'])
+                history_size = int(subgoal_config.get('history_size', 1))
+                if history_size <= 0:
+                    raise ValueError('Latent subgoal history size must be positive.')
                 waypoint_step = int(subgoal_config['subgoal_steps'])
                 waypoint_index = latent_path_waypoint_index(
                     subgoal_config['waypoint_steps'], waypoint_step
                 )
                 self.latent_subgoal_waypoint_index = waypoint_index
                 self.latent_subgoal_waypoint_step = waypoint_step
+                self.latent_subgoal_history_size = history_size
                 self._latent_subgoal_requires_rng = True
                 self._predict_latent_subgoal = jax.jit(
                     lambda current, goal, rng: sample_conditional_path_flow(
@@ -475,8 +489,8 @@ class JAXLeWMCEMPolicy:
         self.action_block = int(action_block)
         self.fixed_subgoal_horizon_index = None
         if cost_mode == 'fixed_subgoal_horizon':
-            self.fixed_subgoal_horizon_index = fixed_subgoal_horizon_index(
-                self.latent_subgoal_refresh_steps,
+            self.fixed_subgoal_horizon_index = configured_subgoal_horizon_index(
+                self.latent_subgoal_config,
                 self.action_block,
                 self.horizon,
             )
@@ -1111,6 +1125,9 @@ class JAXLeWMCEMPolicy:
         self.latent_subgoal_generation_counts = np.zeros(
             num_envs, dtype=np.int64
         )
+        self.latent_subgoal_pixel_histories = [
+            deque(maxlen=self.latent_subgoal_history_size) for _ in range(num_envs)
+        ]
 
     def _planning_target_embedding(self, env_index, pixels, goals):
         embed_dim = int(self.checkpoint_metadata['embed_dim'])
@@ -1121,7 +1138,16 @@ class JAXLeWMCEMPolicy:
             or self.latent_subgoal_ages[env_index]
             >= self.latent_subgoal_refresh_steps
         ):
-            current_embedding = self.encode_pixels(np.asarray(pixels[-1:]))
+            history_size = getattr(self, 'latent_subgoal_history_size', 1)
+            if history_size > 1:
+                history = list(self.latent_subgoal_pixel_histories[env_index])
+                if not history:
+                    history = [np.asarray(pixels[-1])]
+                history = [history[0]] * (history_size - len(history)) + history
+                history_embeddings = self.encode_pixels(np.stack(history))
+                current_embedding = history_embeddings[None]
+            else:
+                current_embedding = self.encode_pixels(np.asarray(pixels[-1:]))
             goal_embedding = self.encode_pixels(np.asarray(goals[-1:]))
             if getattr(self, '_latent_subgoal_requires_rng', False):
                 subgoal_key = jax.random.fold_in(
@@ -1357,6 +1383,13 @@ class JAXLeWMCEMPolicy:
 
     def get_actions(self, pixels, goals, alive):
         for env_index in np.flatnonzero(alive):
+            if (
+                self._predict_latent_subgoal is not None
+                and self.latent_subgoal_history_size > 1
+            ):
+                self.latent_subgoal_pixel_histories[env_index].append(
+                    np.asarray(pixels[env_index][-1])
+                )
             if self.buffers[env_index]:
                 continue
             context_pixels, past_action_blocks = self._planning_context(

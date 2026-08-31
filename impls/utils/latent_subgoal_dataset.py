@@ -84,6 +84,28 @@ def build_valid_transitions(offsets, lengths, episode_indices):
     return np.concatenate(current_rows), np.concatenate(final_rows)
 
 
+def build_history_indices(current_rows, episode_offsets, history_size):
+    """Return episode-safe oldest-to-newest history rows for every current row."""
+    current_rows = np.asarray(current_rows, dtype=np.int64)
+    episode_offsets = np.asarray(episode_offsets, dtype=np.int64)
+    if current_rows.ndim != 1 or episode_offsets.ndim != 1:
+        raise ValueError('Current rows and episode offsets must be one-dimensional.')
+    if not len(episode_offsets) or episode_offsets[0] != 0:
+        raise ValueError('Episode offsets must be non-empty and start at zero.')
+    if history_size <= 0:
+        raise ValueError('History size must be positive.')
+    if len(current_rows) == 0:
+        return np.empty((0, history_size), dtype=np.int32)
+    if np.any(current_rows < 0):
+        raise ValueError('Current rows cannot be negative.')
+
+    episode_ids = np.searchsorted(episode_offsets, current_rows, side='right') - 1
+    episode_starts = episode_offsets[episode_ids]
+    lags = np.arange(history_size - 1, -1, -1, dtype=np.int64)
+    history = np.maximum(current_rows[:, None] - lags[None], episode_starts[:, None])
+    return history.astype(np.int32)
+
+
 def sample_future_pairs(valid_t, final_t, num_pairs, subgoal_steps, seed):
     """Create fixed HIQL-style future-goal pairs for validation."""
     valid_t = np.asarray(valid_t, dtype=np.int32)

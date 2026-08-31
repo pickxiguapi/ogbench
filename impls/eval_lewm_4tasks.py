@@ -162,6 +162,7 @@ def main():
                 ),
                 'selected_waypoint_index': policy.latent_subgoal_waypoint_index,
                 'selected_waypoint_step': policy.latent_subgoal_waypoint_step,
+                'history_size': policy.latent_subgoal_history_size,
                 'generation_counts': policy.latent_subgoal_generation_counts,
             }
         ),

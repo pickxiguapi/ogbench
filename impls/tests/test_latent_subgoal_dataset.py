@@ -1,6 +1,7 @@
 import numpy as np
 
 from utils.latent_subgoal_dataset import (
+    build_history_indices,
     build_valid_transitions,
     sample_future_pairs,
     split_episodes,
@@ -31,6 +32,24 @@ def test_hiql_future_sampling_and_k10_targets():
     assert np.any(g - t < 10)
     assert np.any(g - t > 10)
     np.testing.assert_array_equal(target[g - t <= 10], g[g - t <= 10])
+
+
+def test_three_frame_histories_repeat_pad_without_crossing_episodes():
+    offsets = np.asarray([0, 4, 7])
+    current = np.asarray([0, 1, 2, 3, 7, 8, 10], dtype=np.int32)
+    history = build_history_indices(current, offsets, history_size=3)
+    np.testing.assert_array_equal(
+        history,
+        [
+            [0, 0, 0],
+            [0, 0, 1],
+            [0, 1, 2],
+            [1, 2, 3],
+            [7, 7, 7],
+            [7, 7, 8],
+            [8, 9, 10],
+        ],
+    )
 
 
 def test_future_goal_sampling_is_uniform_including_endpoints():

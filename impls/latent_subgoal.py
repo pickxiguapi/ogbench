@@ -71,6 +71,51 @@ class TransformerEncoderBlock(nn.Module):
         return residual + tokens
 
 
+class AdaLNTransformerEncoderBlock(nn.Module):
+    """Pre-norm Transformer block modulated by one global condition vector."""
+
+    model_dim: int
+    num_heads: int
+    mlp_dim: int
+
+    @nn.compact
+    def __call__(self, tokens, condition):
+        modulation = nn.Dense(
+            4 * self.model_dim,
+            kernel_init=nn.initializers.normal(stddev=0.02),
+            bias_init=nn.initializers.zeros_init(),
+            name='condition_modulation',
+        )(nn.silu(condition))
+        attention_scale, attention_shift, mlp_scale, mlp_shift = jnp.split(
+            modulation, 4, axis=-1
+        )
+
+        residual = tokens
+        tokens = nn.LayerNorm(
+            use_scale=False, use_bias=False, name='attention_norm'
+        )(tokens)
+        tokens = tokens * (1.0 + attention_scale[:, None]) + attention_shift[:, None]
+        tokens = nn.MultiHeadDotProductAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.model_dim,
+            out_features=self.model_dim,
+            dropout_rate=0.0,
+            deterministic=True,
+            name='self_attention',
+        )(tokens)
+        tokens = residual + tokens
+
+        residual = tokens
+        tokens = nn.LayerNorm(use_scale=False, use_bias=False, name='mlp_norm')(
+            tokens
+        )
+        tokens = tokens * (1.0 + mlp_scale[:, None]) + mlp_shift[:, None]
+        tokens = nn.Dense(self.mlp_dim, name='mlp_in')(tokens)
+        tokens = nn.gelu(tokens, approximate=False)
+        tokens = nn.Dense(self.model_dim, name='mlp_out')(tokens)
+        return residual + tokens
+
+
 class LatentSubgoalFlowTransformer(nn.Module):
     """Conditional vector field over frozen LeWM subgoal latents."""
 
@@ -117,6 +162,7 @@ class LatentPathFlow(nn.Module):
     num_heads: int = 8
     ff_dim: int = 2048
     time_dim: int = 64
+    history_size: int = 1
 
     @nn.compact
     def __call__(self, noisy_path, current_latents, goal_latents, flow_times):
@@ -127,6 +173,69 @@ class LatentPathFlow(nn.Module):
                 f'Expected {self.num_waypoints} waypoints, got {noisy_path.shape[1]}.'
             )
 
+        if self.history_size <= 0:
+            raise ValueError('LatentPathFlow history_size must be positive.')
+        if self.history_size > 1:
+            if current_latents.ndim != 3:
+                raise ValueError(
+                    'History-conditioned LatentPathFlow expects current_latents '
+                    'with shape [B, H, D].'
+                )
+            if current_latents.shape[1] != self.history_size:
+                raise ValueError(
+                    f'Expected {self.history_size} history frames, got '
+                    f'{current_latents.shape[1]}.'
+                )
+
+            path_tokens = nn.Dense(self.hidden_dim, name='path_projection')(
+                noisy_path
+            )
+            path_positions = self.param(
+                'path_position_embeddings',
+                nn.initializers.normal(stddev=0.02),
+                (self.num_waypoints, self.hidden_dim),
+            )
+            path_tokens = path_tokens + path_positions[None]
+
+            # Keep history, goal, and flow time distinct until a nonlinear fusion
+            # layer builds the global condition used by every AdaLN block.
+            history_condition = nn.Dense(
+                self.hidden_dim, name='history_condition_projection'
+            )(current_latents.reshape(current_latents.shape[0], -1))
+            goal_condition = nn.Dense(
+                self.hidden_dim, name='goal_condition_projection'
+            )(goal_latents)
+            time_features = sinusoidal_time_embedding(flow_times, self.time_dim)
+            time_condition = nn.Dense(
+                self.hidden_dim, name='time_projection_in'
+            )(time_features)
+            time_condition = nn.silu(time_condition)
+            time_condition = nn.Dense(
+                self.hidden_dim, name='time_projection_out'
+            )(time_condition)
+            condition = jnp.concatenate(
+                (history_condition, goal_condition, time_condition), axis=-1
+            )
+            condition = nn.Dense(
+                self.hidden_dim, name='condition_fusion_in'
+            )(condition)
+            condition = nn.silu(condition)
+            condition = nn.Dense(
+                self.hidden_dim, name='condition_fusion_out'
+            )(condition)
+
+            for layer_index in range(self.depth):
+                path_tokens = AdaLNTransformerEncoderBlock(
+                    model_dim=self.hidden_dim,
+                    num_heads=self.num_heads,
+                    mlp_dim=self.ff_dim,
+                    name=f'encoder_block_{layer_index}',
+                )(path_tokens, condition)
+            path_tokens = nn.LayerNorm(name='output_norm')(path_tokens)
+            return nn.Dense(self.embed_dim, name='velocity_head')(path_tokens)
+
+        # Preserve the original single-frame parameter tree so existing checkpoints
+        # remain exactly loadable when their config has no history_size field.
         tokens = nn.Dense(self.hidden_dim, name='token_projection')(noisy_path)
         positions = self.param(
             'position_embeddings',
@@ -292,6 +401,15 @@ def load_latent_subgoal_checkpoint(path):
             raise ValueError(
                 f'Unsupported latent path flow loss: {config.get("loss")!r}.'
             )
+        history_size = int(config.get('history_size', 1))
+        if (
+            history_size > 1
+            and config.get('conditioning') != 'history_goal_time_adaln'
+        ):
+            raise ValueError(
+                'History-conditioned latent path flow requires '
+                'conditioning="history_goal_time_adaln".'
+            )
         waypoint_steps = tuple(int(value) for value in config['waypoint_steps'])
         model = LatentPathFlow(
             embed_dim=embed_dim,
@@ -301,6 +419,7 @@ def load_latent_subgoal_checkpoint(path):
             num_heads=int(config['num_heads']),
             ff_dim=int(config['ff_dim']),
             time_dim=int(config['time_dim']),
+            history_size=history_size,
         )
     else:
         raise ValueError(f'Unsupported latent subgoal architecture: {architecture!r}.')
