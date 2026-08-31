@@ -114,7 +114,7 @@ X_\tau=(1-\tau)\epsilon+\tau Z^*.
 
 结果 JSON 均记录 `selected_waypoint_index=1`、`selected_waypoint_step=10` 和 `cost_mode=terminal`。LatentPathFlow 相对旧单点 Flow 提升 4.5 个宏平均百分点，但总体仍很差。原因不是误用了 K5 或 MoH，而是 H5 terminal 要求约 t+25 的 LeWM rollout 回到一个应在 t+10 到达的局部 waypoint，时间位置不匹配。下一步若要检验 K10 本身的可利用性，应固定比较第 2 个 rollout checkpoint（t+10）；若要检验两点路径，则使用 K5/K10 两项对齐 cost。
 
-### 正确的 K10-only 局部规划：H2 terminal
+### K10-only 局部规划：H2 terminal 与刷新频率修正
 
 上一节 H5 terminal 是时间错位诊断，不是“K10 替代 K25 后只规划到 K10”的正确协议。正确目标为：
 
@@ -124,17 +124,22 @@ J(a_{t:t+9})=
 -z^{\mathrm{pred}}_{t+10}\right\|_2^2.
 \]
 
-由于 action block 为 5，CEM horizon 固定为 H2；terminal 因而严格对应 t+10。Generator 条件仍使用 dataset K25 global goal，K10 token 每 10 atomic steps 刷新。其余保持 50 episodes、seed42、budget50、CEM300x30、RH1、top-k30；不使用 K5 或 MoH。
+由于 action block 为 5，CEM horizon 固定为 H2；terminal 因而严格对应当前状态之后的 t+10。Generator 条件仍使用 dataset K25 global goal。其余保持 50 episodes、seed42、budget50、CEM300x30、RH1、top-k30；不使用 K5 或 MoH。
+
+第一次 H2 运行仍错误地把 `prediction_horizon=10` 与 `refresh_interval=10` 绑定。RH1 每次只执行 5 步，因此在 t+5 replan 时仍持有旧的 z(t+10)，却用新的 H2 rollout（终点 t+15）追踪它。修正后两者解耦：generator 始终预测“当前状态之后 K10”，但每次 RH1 replan（5步）都重新生成。
 
 正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_node4_lewm_latent_path_flow_k10_h2_terminal.sh`。
 
 结果目录：
 
-`/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260831_latent_path_flow_k10_only_terminal_cem300x30_h2_rh1_ep50_seed42/`
+修正后结果目录：
+
+`/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260831_latent_path_flow_k10_only_refresh5_terminal_cem300x30_h2_rh1_ep50_seed42/`
 
 | K10-only protocol | Cube | PushT | Reacher | TwoRoom | Macro |
 |---|---:|---:|---:|---:|---:|
 | 错误时间对齐：H5 terminal=t+25 | 62 | 14 | 24 | 58 | 39.5 |
-| 正确时间对齐：H2 terminal=t+10 | 76 | 70 | 28 | 96 | 67.5 |
+| H2 terminal，但错误 refresh=10 | 76 | 70 | 28 | 96 | 67.5 |
+| H2 terminal，正确每次 replan refresh=5 | 80 | 84 | 48 | 100 | 78.0 |
 
-严格对齐后宏平均提高 28 个百分点，验证了 K10 subgoal 确实能够被 CEM 利用；但 Reacher 仍只有 28%，与它最差的 K10 离线预测指标（MSE 0.9133、cosine 0.5394）一致，当前主要瓶颈仍是该任务的 subgoal prediction quality。
+从 H5 错位协议到完全修正协议，宏平均提高 38.5 个百分点；仅修正刷新频率就提高 10.5 个百分点。结果 JSON 明确记录 `training_subgoal_steps=10`、`selected_waypoint_step=10`、`refresh_steps=5`、`horizon=2`、`cost_mode=terminal`。Reacher 仍只有 48%，与它最差的 K10 离线预测指标（MSE 0.9133、cosine 0.5394）一致，当前剩余的主要瓶颈是该任务的 subgoal prediction quality。
