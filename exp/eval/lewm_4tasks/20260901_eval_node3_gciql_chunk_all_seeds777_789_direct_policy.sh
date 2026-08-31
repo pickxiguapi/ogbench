@@ -14,7 +14,7 @@ NUM_EVAL=${NUM_EVAL:-50}
 EVAL_SEED=${EVAL_SEED:-42}
 POLICY_STEPS=100000
 POLICY_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks
-DATA_ROOT=/data-training/yyf/datasets/latent-geometry
+DATA_ROOT=/data-training/yyf/datasets/lewm
 OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260901_gciql_chunk_all_seeds777_789_direct_policy_g25_b50_ep${NUM_EVAL}_seed${EVAL_SEED}}
 TMP_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-direct-policy
 
