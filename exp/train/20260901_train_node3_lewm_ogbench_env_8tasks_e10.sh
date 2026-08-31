@@ -13,6 +13,7 @@ LEARNING_RATE=${LEARNING_RATE:-5e-5}
 SIGREG_WEIGHT=${SIGREG_WEIGHT:-0.09}
 XLA_MEMORY_FRACTION=${XLA_MEMORY_FRACTION:-0.80}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
+LEWM_RUN_ROOT=${LEWM_RUN_ROOT:-$CLIENT_ROOT/ogbench-lewm-policy-runs/lewm-ogbench8}
 cd "$OGBENCH_ROOT/impls"
 
 envs=(visual-cube-single-play-v0 visual-cube-double-play-v0 visual-cube-triple-play-v0 visual-scene-play-v0 visual-cube-single-noisy-v0 visual-cube-double-noisy-v0 visual-cube-triple-noisy-v0 visual-scene-noisy-v0)
@@ -21,7 +22,7 @@ pids=()
 
 for i in "${!envs[@]}"; do
   exp_name="lewm_ogbench8_${tags[$i]}_e${LEWM_EPOCHS}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}"
-  run_dir="$CLIENT_ROOT/lewm-final/lewm-ogbench8/$exp_name"
+  run_dir="$LEWM_RUN_ROOT/$exp_name"
   mkdir -p "$run_dir/tmp"
   TMPDIR="$run_dir/tmp" CUDA_VISIBLE_DEVICES=$i XLA_PYTHON_CLIENT_PREALLOCATE=true \
   XLA_PYTHON_CLIENT_MEM_FRACTION="$XLA_MEMORY_FRACTION" JAX_PLATFORMS=cuda \
