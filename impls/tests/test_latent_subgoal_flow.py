@@ -8,10 +8,18 @@ from latent_subgoal import (
     LatentSubgoalFlowTransformer,
     sample_conditional_flow,
     sample_conditional_path_flow,
+    sinusoidal_time_embedding,
 )
 
 
 class LatentSubgoalFlowTest(unittest.TestCase):
+    def test_flow_time_embedding_defaults_to_unscaled_unit_interval(self):
+        embedding = sinusoidal_time_embedding(jnp.asarray([1.0]), dim=4)
+        expected = jnp.asarray(
+            [[jnp.sin(1.0), jnp.sin(1e-4), jnp.cos(1.0), jnp.cos(1e-4)]]
+        )
+        np.testing.assert_allclose(embedding, expected, rtol=1e-6, atol=1e-6)
+
     def test_latent_path_flow_matches_leflow_parameter_budget_and_shape(self):
         model = LatentPathFlow(embed_dim=192, history_size=3)
         current = jnp.zeros((2, 3, 192), dtype=jnp.float32)

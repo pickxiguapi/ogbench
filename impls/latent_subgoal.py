@@ -40,7 +40,7 @@ def sinusoidal_time_embedding(times, dim):
         * jnp.arange(dim // 2, dtype=jnp.float32)
         / max(dim // 2 - 1, 1)
     )
-    angles = times * frequencies[None] * 1000.0
+    angles = times * frequencies[None]
     return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)), axis=-1)
 
 
