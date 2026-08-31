@@ -15,6 +15,12 @@ GPU_ID=${GPU_ID:-0}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 TRAIN_SEED=${TRAIN_SEED:-0}
+WARMUP_STEPS=${WARMUP_STEPS:-5000}
+VALIDATION_PAIRS=${VALIDATION_PAIRS:-10000}
+EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-1024}
+LOG_INTERVAL=${LOG_INTERVAL:-1000}
+EVAL_INTERVAL=${EVAL_INTERVAL:-10000}
+CHECKPOINT_INTERVAL=${CHECKPOINT_INTERVAL:-25000}
 run_dir="$SUBGOAL_RUNS_ROOT/$EXP_NAME"
 
 mkdir -p "$run_dir"
@@ -44,13 +50,13 @@ PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
   --ema-decay=0.9999 \
   --learning-rate=1e-4 \
   --final-learning-rate=1e-5 \
-  --warmup-steps=5000 \
+  --warmup-steps="$WARMUP_STEPS" \
   --weight-decay=1e-4 \
   --gradient-clip=1.0 \
-  --validation-pairs=10000 \
-  --eval-batch-size=1024 \
-  --log-interval=1000 \
-  --eval-interval=10000 \
-  --checkpoint-interval=25000 \
+  --validation-pairs="$VALIDATION_PAIRS" \
+  --eval-batch-size="$EVAL_BATCH_SIZE" \
+  --log-interval="$LOG_INTERVAL" \
+  --eval-interval="$EVAL_INTERVAL" \
+  --checkpoint-interval="$CHECKPOINT_INTERVAL" \
   --resume \
   2>&1 | tee -a "$run_dir/train.log"

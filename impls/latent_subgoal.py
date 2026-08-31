@@ -52,7 +52,7 @@ class TransformerEncoderBlock(nn.Module):
     def __call__(self, tokens):
         residual = tokens
         tokens = nn.LayerNorm(name='attention_norm')(tokens)
-        tokens = nn.SelfAttention(
+        tokens = nn.MultiHeadDotProductAttention(
             num_heads=self.num_heads,
             qkv_features=self.model_dim,
             out_features=self.model_dim,
