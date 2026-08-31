@@ -82,5 +82,6 @@ X_\tau=(1-\tau)\epsilon+\tau Z^*.
 - `exp/train/latent_subgoal/20260831_run_node2_cube_latent_path_flow_k10_s0.sh`
 - `exp/train/latent_subgoal/20260831_run_node3_reacher_latent_path_flow_k10_s0.sh`
 - `exp/train/latent_subgoal/20260831_run_node4_tworoom_latent_path_flow_k10_s0.sh`
+- `exp/train/latent_subgoal/20260831_run_node4_4tasks_latent_path_flow_k10_s0.sh`（node4 GPU0–3 四任务并行；`TASKS` 可选择子集）
 
 训练完成后的 CEM 使用方式另行做严格配对评测：LeWM 第一个 rollout checkpoint（t+5）匹配预测 K5，第二个 checkpoint（t+10）匹配预测 K10，并将两个 latent MSE 相加作为候选动作序列 cost。

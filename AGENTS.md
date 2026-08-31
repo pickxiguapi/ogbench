@@ -224,6 +224,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/latent_subgoal/20260831_run_node2_cube_latent_path_flow_k10_s0.sh` | node2 训练 Cube K5/K10 LeFlow-style LatentPathFlow seed0 |
 | `exp/train/latent_subgoal/20260831_run_node3_reacher_latent_path_flow_k10_s0.sh` | node3 训练 Reacher K5/K10 LeFlow-style LatentPathFlow seed0 |
 | `exp/train/latent_subgoal/20260831_run_node4_tworoom_latent_path_flow_k10_s0.sh` | node4 训练 TwoRoom K5/K10 LeFlow-style LatentPathFlow seed0 |
+| `exp/train/latent_subgoal/20260831_run_node4_4tasks_latent_path_flow_k10_s0.sh` | node4 GPU0–3 并行训练四任务 K5/K10 LeFlow-style LatentPathFlow；可用 `TASKS` 选择子集 |
 
 ## Frozen LeWM latent 数据集
 
