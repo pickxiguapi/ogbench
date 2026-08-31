@@ -3,14 +3,14 @@ set -euo pipefail
 
 # A800 node4：episode 内 staged hybrid。远距离阶段使用 K10 8-sample
 # path-medoid + H2；当名义剩余距离达到 FINAL_GOAL_WINDOW 时，切到
-# final-goal H5。默认窗口 25，可用环境变量覆盖。
+# final-goal H5。默认窗口 10，可用环境变量覆盖。
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BASE_SCRIPT="$SCRIPT_DIR/20260901_eval_node4_gciql_chunk_all_latent_path_flow_hist3_k10_guided.sh"
 
 NUM_EVAL=${NUM_EVAL:-50}
 EVAL_SEED=${EVAL_SEED:-42}
 POLICY_SEED=${POLICY_SEED:-777}
-FINAL_GOAL_WINDOW=${FINAL_GOAL_WINDOW:-25}
+FINAL_GOAL_WINDOW=${FINAL_GOAL_WINDOW:-10}
 if (( FINAL_GOAL_WINDOW <= 0 || FINAL_GOAL_WINDOW >= 50 || FINAL_GOAL_WINDOW % 5 )); then
   echo "FINAL_GOAL_WINDOW must be a multiple of five in [5, 45]." >&2
   exit 2
