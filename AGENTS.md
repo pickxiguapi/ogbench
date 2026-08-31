@@ -194,6 +194,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/20260823_train_s23_lewm_cube_pusht_seeds42_777.sh` | Server23 GPU2–5 训练 Cube/PushT × seed42/777 LeWM-JAX |
 | `exp/train/20260823_train_yb_gciql_chunk_4tasks.sh` | 英博云训练 LeWM-4Tasks 四种 GCIQL-Chunk 表征模式 |
 | `exp/train/20260823_train_node2_lewm_ogbench_env_8tasks.sh` | node2 训练 OGBench-Env-8Tasks canonical LeWM-JAX |
+| `exp/train/20260901_train_node3_lewm_ogbench_env_8tasks_e10.sh` | node3 按数据集统一训练 10 epochs 的 OGBench-Env-8Tasks canonical LeWM-JAX；bs128、seed3072，每个 epoch 保存 checkpoint |
 | `exp/train/20260823_train_node2_gciql_chunk_ogbench_env_8tasks.sh` | node2 训练 OGBench-Env-8Tasks 四种 GCIQL-Chunk 表征模式 |
 | `exp/eval/lewm_4tasks/20260823_eval_yb_lewm_4tasks.sh` | LeWM-4Tasks 主评测 |
 | `exp/eval/lewm_4tasks/20260823_eval_s23_lewm_seed666.sh` | Server23 四卡评测 seed 666 的 LeWM-4Tasks checkpoint |
