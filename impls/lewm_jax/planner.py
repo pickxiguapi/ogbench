@@ -16,8 +16,10 @@ import jax.numpy as jnp
 import numpy as np
 from latent_subgoal import (
     FLOW_TRANSFORMER_ARCHITECTURE,
+    LATENT_PATH_FLOW_ARCHITECTURE,
     load_latent_subgoal_checkpoint,
     sample_conditional_flow,
+    sample_conditional_path_flow,
 )
 
 from lewm_jax import ARCHITECTURE, LeWM
@@ -169,6 +171,18 @@ def fixed_subgoal_horizon_index(subgoal_steps, action_block, horizon):
     if index >= horizon:
         raise ValueError('Fixed subgoal horizon must lie within the CEM horizon.')
     return index
+
+
+def latent_path_waypoint_index(waypoint_steps, target_step):
+    """Return the unique path-token index corresponding to a requested step."""
+    waypoint_steps = tuple(int(step) for step in waypoint_steps)
+    matches = [index for index, step in enumerate(waypoint_steps) if step == target_step]
+    if len(matches) != 1:
+        raise ValueError(
+            f'Latent path must contain target step {target_step} exactly once; '
+            f'got {waypoint_steps}.'
+        )
+    return matches[0]
 
 
 def select_latent_subgoal_costs(
@@ -386,6 +400,8 @@ class JAXLeWMCEMPolicy:
         self.latent_subgoal_refresh_steps = int(latent_subgoal_refresh_steps)
         self._predict_latent_subgoal = None
         self._latent_subgoal_requires_rng = False
+        self.latent_subgoal_waypoint_index = None
+        self.latent_subgoal_waypoint_step = None
         if latent_subgoal_checkpoint is not None:
             (
                 subgoal_model,
@@ -427,6 +443,27 @@ class JAXLeWMCEMPolicy:
                         num_steps=sampling_steps,
                         solver=flow_solver,
                     )
+                )
+            elif subgoal_config['architecture'] == LATENT_PATH_FLOW_ARCHITECTURE:
+                sampling_steps = int(subgoal_config['flow_sampling_steps'])
+                flow_solver = str(subgoal_config['flow_solver'])
+                waypoint_step = int(subgoal_config['subgoal_steps'])
+                waypoint_index = latent_path_waypoint_index(
+                    subgoal_config['waypoint_steps'], waypoint_step
+                )
+                self.latent_subgoal_waypoint_index = waypoint_index
+                self.latent_subgoal_waypoint_step = waypoint_step
+                self._latent_subgoal_requires_rng = True
+                self._predict_latent_subgoal = jax.jit(
+                    lambda current, goal, rng: sample_conditional_path_flow(
+                        subgoal_model,
+                        subgoal_params,
+                        current,
+                        goal,
+                        rng,
+                        num_steps=sampling_steps,
+                        solver=flow_solver,
+                    )[:, waypoint_index]
                 )
             else:
                 self._predict_latent_subgoal = jax.jit(

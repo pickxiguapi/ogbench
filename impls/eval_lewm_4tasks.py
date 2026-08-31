@@ -160,6 +160,8 @@ def main():
                 'training_subgoal_steps': int(
                     policy.latent_subgoal_config['subgoal_steps']
                 ),
+                'selected_waypoint_index': policy.latent_subgoal_waypoint_index,
+                'selected_waypoint_step': policy.latent_subgoal_waypoint_step,
                 'generation_counts': policy.latent_subgoal_generation_counts,
             }
         ),
