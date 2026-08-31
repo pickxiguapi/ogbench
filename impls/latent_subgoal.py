@@ -327,6 +327,37 @@ def sample_conditional_flow(
     return jax.lax.fori_loop(0, num_steps, integrate_step, samples)
 
 
+def sample_conditional_flow_candidates(
+    model,
+    params,
+    current_latents,
+    goal_latents,
+    rng,
+    *,
+    num_samples,
+    num_steps=16,
+    solver='heun',
+):
+    """Draw multiple conditional single-subgoal latents per conditioning pair."""
+    if num_samples <= 0:
+        raise ValueError('Latent subgoal sample count must be positive.')
+    current_latents = jnp.asarray(current_latents, dtype=jnp.float32)
+    goal_latents = jnp.asarray(goal_latents, dtype=jnp.float32)
+    batch_size = current_latents.shape[0]
+    repeated_current = jnp.repeat(current_latents, num_samples, axis=0)
+    repeated_goal = jnp.repeat(goal_latents, num_samples, axis=0)
+    samples = sample_conditional_flow(
+        model,
+        params,
+        repeated_current,
+        repeated_goal,
+        rng,
+        num_steps=num_steps,
+        solver=solver,
+    )
+    return samples.reshape(batch_size, num_samples, current_latents.shape[-1])
+
+
 def sample_conditional_path_flow(
     model,
     params,
@@ -431,6 +462,25 @@ def select_latent_path_medoid(candidate_paths):
         candidate_paths,
         medoid_indices[:, None, None, None],
         axis=1,
+    )[:, 0]
+
+
+def select_latent_medoid(candidate_latents):
+    """Select the sampled latent with minimum mean distance to all samples."""
+    candidate_latents = jnp.asarray(candidate_latents, dtype=jnp.float32)
+    if candidate_latents.ndim != 3:
+        raise ValueError('Candidate latents must have shape [B, num_samples, D].')
+    pairwise_squared_distances = jnp.sum(
+        jnp.square(
+            candidate_latents[:, :, None] - candidate_latents[:, None, :]
+        ),
+        axis=-1,
+    )
+    medoid_indices = jnp.argmin(
+        jnp.mean(pairwise_squared_distances, axis=-1), axis=-1
+    )
+    return jnp.take_along_axis(
+        candidate_latents, medoid_indices[:, None, None], axis=1
     )[:, 0]
 
 

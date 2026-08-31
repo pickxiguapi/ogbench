@@ -8,8 +8,10 @@ from latent_subgoal import (
     LatentSubgoalFlowTransformer,
     latent_path_waypoint_steps,
     sample_conditional_flow,
+    sample_conditional_flow_candidates,
     sample_conditional_path_flow,
     sample_conditional_path_flow_candidates,
+    select_latent_medoid,
     select_latent_path_medoid,
     sinusoidal_time_embedding,
 )
@@ -274,6 +276,61 @@ class LatentSubgoalFlowTest(unittest.TestCase):
         self.assertTrue(np.isfinite(np.asarray(first)).all())
         np.testing.assert_array_equal(first, repeated)
         self.assertFalse(np.array_equal(np.asarray(first), np.asarray(different)))
+
+    def test_transformer_flow_can_draw_multiple_candidates(self):
+        model = LatentSubgoalFlowTransformer(
+            embed_dim=8,
+            model_dim=16,
+            num_layers=1,
+            num_heads=4,
+            mlp_dim=32,
+        )
+        current = jnp.ones((2, 8), dtype=jnp.float32)
+        goal = jnp.full((2, 8), 2.0, dtype=jnp.float32)
+        variables = model.init(
+            jax.random.PRNGKey(0),
+            current,
+            current,
+            goal,
+            jnp.zeros((2,), dtype=jnp.float32),
+        )
+
+        candidates = sample_conditional_flow_candidates(
+            model,
+            variables['params'],
+            current,
+            goal,
+            jax.random.PRNGKey(7),
+            num_samples=4,
+            num_steps=2,
+            solver='euler',
+        )
+        repeated = sample_conditional_flow_candidates(
+            model,
+            variables['params'],
+            current,
+            goal,
+            jax.random.PRNGKey(7),
+            num_samples=4,
+            num_steps=2,
+            solver='euler',
+        )
+
+        self.assertEqual(candidates.shape, (2, 4, 8))
+        np.testing.assert_array_equal(candidates, repeated)
+        self.assertFalse(
+            np.array_equal(np.asarray(candidates[:, 0]), np.asarray(candidates[:, 1]))
+        )
+
+    def test_latent_medoid_returns_an_actual_central_sample(self):
+        candidates = jnp.asarray(
+            [[[0.0], [1.0], [10.0]]], dtype=jnp.float32
+        )
+
+        selected = select_latent_medoid(candidates)
+
+        self.assertEqual(selected.shape, (1, 1))
+        np.testing.assert_array_equal(selected, [[1.0]])
 
 
 if __name__ == '__main__':

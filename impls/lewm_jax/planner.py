@@ -19,8 +19,9 @@ from latent_subgoal import (
     LATENT_PATH_FLOW_ARCHITECTURE,
     latent_path_waypoint_steps,
     load_latent_subgoal_checkpoint,
-    sample_conditional_flow,
+    sample_conditional_flow_candidates,
     sample_conditional_path_flow_candidates,
+    select_latent_medoid,
     select_latent_path_medoid,
 )
 
@@ -445,16 +446,20 @@ class JAXLeWMCEMPolicy:
             if subgoal_config['architecture'] == FLOW_TRANSFORMER_ARCHITECTURE:
                 sampling_steps = int(subgoal_config['flow_sampling_steps'])
                 flow_solver = str(subgoal_config['flow_solver'])
+                self.latent_subgoal_sample_selection = 'latent_medoid'
                 self._latent_subgoal_requires_rng = True
                 self._predict_latent_subgoal = jax.jit(
-                    lambda current, goal, rng: sample_conditional_flow(
-                        subgoal_model,
-                        subgoal_params,
-                        current,
-                        goal,
-                        rng,
-                        num_steps=sampling_steps,
-                        solver=flow_solver,
+                    lambda current, goal, rng: select_latent_medoid(
+                        sample_conditional_flow_candidates(
+                            subgoal_model,
+                            subgoal_params,
+                            current,
+                            goal,
+                            rng,
+                            num_samples=self.latent_subgoal_num_samples,
+                            num_steps=sampling_steps,
+                            solver=flow_solver,
+                        )
                     )
                 )
             elif subgoal_config['architecture'] == LATENT_PATH_FLOW_ARCHITECTURE:

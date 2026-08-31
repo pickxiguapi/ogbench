@@ -37,7 +37,7 @@ v_\theta(z_\tau,\tau\mid z_c,z_g),\qquad
 \mathbb E\left[\lVert v_\theta-v^*\rVert_2^2\right].
 \]
 
-推理从 `N(0,I)` 采样初值，并积分 ODE `dz/dtau=v_theta`。正式配置使用 16-step Heun solver 和 EMA 参数。规划器中的噪声 key 由 evaluation seed、environment index、subgoal generation count 确定，因此 paired evaluation 可复现。
+推理从 `N(0,I)` 采样初值，并积分 ODE `dz/dtau=v_theta`。正式配置使用 16-step Heun solver 和 EMA 参数。每个条件生成 `num_samples` 个 latent（默认 8），选择与其余样本平均距离最小的真实样本（latent medoid），不直接平均 latent。规划器中的噪声 key 由 evaluation seed、environment index、subgoal generation count 确定，因此 paired evaluation 可复现。
 
 ## Transformer Encoder
 
@@ -77,6 +77,8 @@ v_\theta(z_\tau,\tau\mid z_c,z_g),\qquad
 训练 loss 是速度场 MSE；最终关心的 generator 指标仍是完整 ODE sample 相对 `z^*` 的 latent MSE、L2 和 cosine。因为模型表达的是条件分布，单样本 MSE 不必严格低于条件均值 MLP；最终判断标准是相同 CEM protocol 下的闭环成功率，并同时保留 GT-subgoal oracle 与 global-goal CEM 作为上下界参照。
 
 ## 200k CEM 闭环结果
+
+以下结果来自旧的 `num_samples=1` 单样本推理，作为历史对照保留；启用默认 8-sample latent medoid 后需要重新评测，不能直接沿用本节分数。
 
 正式评测使用 50 episodes、evaluation seed42、goal offset25、budget50、CEM300x30、H5/RH1、top-k30、min-over-horizon，并与 MLP/global/oracle 共享起点和 CEM plan keys。正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_yb_lewm_flow_transformer_subgoal_moh.sh`。
 

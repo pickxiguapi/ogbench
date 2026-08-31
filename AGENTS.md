@@ -254,7 +254,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 新版设计见 `reports/2026-08-31-latent-subgoal-flow-transformer-k10-design.md`；旧 MLP checkpoint 仍兼容读取，但新旧 architecture/loss 标记和输出目录必须分开。
 - 条件为 `z_t,z_g`，target 和 goal sampling 与 MLP 版完全相同。训练从 `epsilon ~ N(0,I)` 构造 `z_tau=(1-tau)epsilon+tau z_target`，用 MSE 回归速度 `z_target-epsilon`。
 - 模型固定为 4 token Transformer Encoder：`z_t,z_g,z_tau,tau`；`d_model=384`、8 layers、8 heads、FFN 1536，参数量约 14.64M，不预测 residual subgoal。
-- 推理使用 EMA 参数，从确定性派生的高斯噪声出发做 16-step Heun ODE integration；同 evaluation seed、env index、generation count 必须得到相同 subgoal。
+- 推理使用 EMA 参数，从确定性派生的高斯噪声出发做 16-step Heun ODE integration；每个条件生成 `num_samples` 个 latent（默认 8）并选择 latent medoid。同 evaluation seed、env index、generation count 必须得到相同 subgoal。
 - seed0 正式设置为 200k steps、batch size 1024、AdamW、peak lr 1e-4、warmup 5k、cosine decay 到 1e-5、EMA 0.9999、episode 95/5 split。
 
 ## LatentPathFlow（subgoal/action block）
