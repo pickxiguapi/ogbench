@@ -24,8 +24,10 @@ from latent_subgoal import (
     LatentSubgoalFlowTransformer,
     LatentSubgoalMLP,
     latent_path_waypoint_steps,
-    sample_conditional_flow,
-    sample_conditional_path_flow,
+    sample_conditional_flow_candidates,
+    sample_conditional_path_flow_candidates,
+    select_latent_medoid,
+    select_latent_path_medoid,
 )
 from utils.latent_subgoal_dataset import (
     build_history_indices,
@@ -59,6 +61,7 @@ def parse_args():
     parser.add_argument('--mlp-dim', type=int, default=1536)
     parser.add_argument('--flow-sampling-steps', type=int, default=16)
     parser.add_argument('--flow-solver', choices=('euler', 'heun'), default='heun')
+    parser.add_argument('--num-samples', type=int, default=8)
     parser.add_argument('--ema-decay', type=float, default=0.9999)
     parser.add_argument('--action-block', type=int, default=5)
     parser.add_argument('--hidden-dim', type=int, default=512)
@@ -97,6 +100,7 @@ def validate_args(args):
         'num_heads',
         'mlp_dim',
         'flow_sampling_steps',
+        'num_samples',
         'hidden_dim',
         'depth',
         'ff_dim',
@@ -337,6 +341,7 @@ def make_predict_indices(
     history_size=1,
     flow_sampling_steps=16,
     flow_solver='heun',
+    num_samples=8,
 ):
     @jax.jit
     def predict_indices(params, z, current_idxs, history_idxs, goal_idxs, rng):
@@ -344,24 +349,30 @@ def make_predict_indices(
             current_latents = (
                 z[history_idxs] if history_size > 1 else z[current_idxs]
             )
-            return sample_conditional_path_flow(
-                model,
-                params,
-                current_latents,
-                z[goal_idxs],
-                rng,
-                num_steps=flow_sampling_steps,
-                solver=flow_solver,
+            return select_latent_path_medoid(
+                sample_conditional_path_flow_candidates(
+                    model,
+                    params,
+                    current_latents,
+                    z[goal_idxs],
+                    rng,
+                    num_samples=num_samples,
+                    num_steps=flow_sampling_steps,
+                    solver=flow_solver,
+                )
             )
         if flow_matching:
-            return sample_conditional_flow(
-                model,
-                params,
-                z[current_idxs],
-                z[goal_idxs],
-                rng,
-                num_steps=flow_sampling_steps,
-                solver=flow_solver,
+            return select_latent_medoid(
+                sample_conditional_flow_candidates(
+                    model,
+                    params,
+                    z[current_idxs],
+                    z[goal_idxs],
+                    rng,
+                    num_samples=num_samples,
+                    num_steps=flow_sampling_steps,
+                    solver=flow_solver,
+                )
             )
         return model.apply({'params': params}, z[current_idxs], z[goal_idxs])
 
@@ -521,6 +532,7 @@ def main():
             'flow_sampling_steps',
             'flow_solver',
             'ema_decay',
+            'num_samples',
             'action_block',
             'hidden_dim',
             'depth',
@@ -686,6 +698,7 @@ def main():
         history_size=args.history_size,
         flow_sampling_steps=args.flow_sampling_steps,
         flow_solver=args.flow_solver,
+        num_samples=args.num_samples,
     )
     current_step = int(jax.device_get(state.step))
     if current_step > args.train_steps:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Shared formal trainer. Call through one of the task/server wrappers beside this file.
+# 四任务共用正式训练入口：frozen LeWM z192、HIQL 同轨迹未来 goal、K10 单点 Transformer-CFM、validation 按 NUM_SAMPLES 选择 latent medoid、200k、bs1024、seed0。
 : "${CLIENT_ID:?CLIENT_ID is required}"
 : "${LATENT_DATASET:?LATENT_DATASET is required}"
 : "${SUBGOAL_RUNS_ROOT:?SUBGOAL_RUNS_ROOT is required}"
@@ -15,6 +15,7 @@ GPU_ID=${GPU_ID:-0}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 TRAIN_SEED=${TRAIN_SEED:-0}
+NUM_SAMPLES=${NUM_SAMPLES:-8}
 WARMUP_STEPS=${WARMUP_STEPS:-5000}
 VALIDATION_PAIRS=${VALIDATION_PAIRS:-10000}
 EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-1024}
@@ -47,6 +48,7 @@ PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
   --mlp-dim=1536 \
   --flow-sampling-steps=16 \
   --flow-solver=heun \
+  --num-samples="$NUM_SAMPLES" \
   --ema-decay=0.9999 \
   --learning-rate=1e-4 \
   --final-learning-rate=1e-5 \

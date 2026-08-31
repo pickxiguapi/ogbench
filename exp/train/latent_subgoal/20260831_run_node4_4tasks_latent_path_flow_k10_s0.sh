@@ -10,6 +10,7 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 TRAIN_SEED=${TRAIN_SEED:-0}
 SUBGOAL_STEPS=${SUBGOAL_STEPS:-10}
 ACTION_BLOCK=${ACTION_BLOCK:-5}
+NUM_SAMPLES=${NUM_SAMPLES:-8}
 LEWM_LATENT_ROOT=${LEWM_LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 SUBGOAL_RUNS_ROOT=${SUBGOAL_RUNS_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10}
 TASKS=${TASKS:-"tworoom pusht cube reacher"}
@@ -21,22 +22,22 @@ run_task() {
     tworoom)
       gpu_id=0
       latent_dataset="$LEWM_LATENT_ROOT/tworoom__lewm_s3072_e10_z192.h5"
-      exp_name="latent_pathflow_tworoom_lewm3072_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_tworoom_lewm3072_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_ns${NUM_SAMPLES}_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     pusht)
       gpu_id=1
       latent_dataset="$LEWM_LATENT_ROOT/pusht_expert_train__lewm_s666_e10_z192.h5"
-      exp_name="latent_pathflow_pusht_lewm666_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_pusht_lewm666_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_ns${NUM_SAMPLES}_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     cube)
       gpu_id=2
       latent_dataset="$LEWM_LATENT_ROOT/cube_single_expert__lewm_s3072_e10_z192.h5"
-      exp_name="latent_pathflow_cube_lewm3072_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_cube_lewm3072_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_ns${NUM_SAMPLES}_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     reacher)
       gpu_id=3
       latent_dataset="$LEWM_LATENT_ROOT/reacher__lewm_s3072_e10_z192.h5"
-      exp_name="latent_pathflow_reacher_lewm3072_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
+      exp_name="latent_pathflow_reacher_lewm3072_hist3_sg${SUBGOAL_STEPS}_ab${ACTION_BLOCK}_cfm_ns${NUM_SAMPLES}_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${TRAIN_SEED}"
       ;;
     *)
       echo "Unsupported TASKS entry: $task" >&2
@@ -51,6 +52,7 @@ run_task() {
   TRAIN_SEED="$TRAIN_SEED" \
   SUBGOAL_STEPS="$SUBGOAL_STEPS" \
   ACTION_BLOCK="$ACTION_BLOCK" \
+  NUM_SAMPLES="$NUM_SAMPLES" \
   LATENT_DATASET="$latent_dataset" \
   SUBGOAL_RUNS_ROOT="$SUBGOAL_RUNS_ROOT" \
   EXP_NAME="$exp_name" \

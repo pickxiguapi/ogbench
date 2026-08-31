@@ -84,7 +84,7 @@ X_\tau=(1-\tau)\epsilon+\tau Z^*.
 | inference path samples | 8（可调） |
 | training seed | 0 |
 
-验证同时记录整条路径以及 K5、K10 各自的 MSE 与 cosine similarity。模型选择与正式推理使用 EMA 参数。
+验证同时记录整条路径以及 K5、K10 各自的 MSE 与 cosine similarity。模型选择与正式推理使用 EMA 参数；validation 严格使用配置中的 `num_samples` 生成候选并选择 path medoid，与 planner 推理对齐。
 
 正式推理对同一个 `(history, z_g)` 一次生成 `N` 条完整 latent path，`N` 由 `--num-samples` 控制，默认 8。将每条 path 展平后计算样本间距离，选择总距离最小的真实样本（path medoid），再取其中 K10 token 交给 planner。这里不直接平均 latent，避免构造偏离 LeWM latent manifold 的目标。评测侧的 `action_block` 必须与 checkpoint 的 `action_block` 完全相等。
 

@@ -37,7 +37,7 @@ v_\theta(z_\tau,\tau\mid z_c,z_g),\qquad
 \mathbb E\left[\lVert v_\theta-v^*\rVert_2^2\right].
 \]
 
-推理从 `N(0,I)` 采样初值，并积分 ODE `dz/dtau=v_theta`。正式配置使用 16-step Heun solver 和 EMA 参数。每个条件生成 `num_samples` 个 latent（默认 8），选择与其余样本平均距离最小的真实样本（latent medoid），不直接平均 latent。规划器中的噪声 key 由 evaluation seed、environment index、subgoal generation count 确定，因此 paired evaluation 可复现。
+推理从 `N(0,I)` 采样初值，并积分 ODE `dz/dtau=v_theta`。正式配置使用 16-step Heun solver 和 EMA 参数。validation 与 planner 对每个条件都严格生成 `num_samples` 个 latent（默认 8），选择与其余样本平均距离最小的真实样本（latent medoid），再计算指标或用于规划，不直接平均 latent。规划器中的噪声 key 由 evaluation seed、environment index、subgoal generation count 确定，因此 paired evaluation 可复现。
 
 ## Transformer Encoder
 

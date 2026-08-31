@@ -147,6 +147,8 @@ class LatentSubgoalFlowTest(unittest.TestCase):
         np.testing.assert_array_equal(first, repeated)
 
     def test_latent_path_flow_can_draw_multiple_candidates(self):
+        from train_latent_subgoal_gcbc import make_predict_indices
+
         model = LatentPathFlow(
             embed_dim=8,
             num_waypoints=2,
@@ -191,6 +193,29 @@ class LatentSubgoalFlowTest(unittest.TestCase):
         np.testing.assert_array_equal(candidates, repeated)
         self.assertFalse(
             np.array_equal(np.asarray(candidates[:, 0]), np.asarray(candidates[:, 1]))
+        )
+        z = jnp.concatenate((current.reshape(6, 8), goal), axis=0)
+        current_indices = jnp.asarray([2, 5], dtype=jnp.int32)
+        history_indices = jnp.asarray([[0, 1, 2], [3, 4, 5]], dtype=jnp.int32)
+        goal_indices = jnp.asarray([6, 7], dtype=jnp.int32)
+        validation_predict = make_predict_indices(
+            model,
+            path_flow_matching=True,
+            history_size=3,
+            flow_sampling_steps=2,
+            flow_solver='euler',
+            num_samples=4,
+        )
+        validation_prediction = validation_predict(
+            variables['params'],
+            z,
+            current_indices,
+            history_indices,
+            goal_indices,
+            jax.random.PRNGKey(7),
+        )
+        np.testing.assert_array_equal(
+            validation_prediction, select_latent_path_medoid(candidates)
         )
 
     def test_path_medoid_returns_an_actual_central_sample(self):
@@ -278,6 +303,8 @@ class LatentSubgoalFlowTest(unittest.TestCase):
         self.assertFalse(np.array_equal(np.asarray(first), np.asarray(different)))
 
     def test_transformer_flow_can_draw_multiple_candidates(self):
+        from train_latent_subgoal_gcbc import make_predict_indices
+
         model = LatentSubgoalFlowTransformer(
             embed_dim=8,
             model_dim=16,
@@ -320,6 +347,27 @@ class LatentSubgoalFlowTest(unittest.TestCase):
         np.testing.assert_array_equal(candidates, repeated)
         self.assertFalse(
             np.array_equal(np.asarray(candidates[:, 0]), np.asarray(candidates[:, 1]))
+        )
+        z = jnp.concatenate((current, goal), axis=0)
+        current_indices = jnp.asarray([0, 1], dtype=jnp.int32)
+        goal_indices = jnp.asarray([2, 3], dtype=jnp.int32)
+        validation_predict = make_predict_indices(
+            model,
+            flow_matching=True,
+            flow_sampling_steps=2,
+            flow_solver='euler',
+            num_samples=4,
+        )
+        validation_prediction = validation_predict(
+            variables['params'],
+            z,
+            current_indices,
+            jnp.zeros((2, 1), dtype=jnp.int32),
+            goal_indices,
+            jax.random.PRNGKey(7),
+        )
+        np.testing.assert_array_equal(
+            validation_prediction, select_latent_medoid(candidates)
         )
 
     def test_latent_medoid_returns_an_actual_central_sample(self):
