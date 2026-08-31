@@ -433,3 +433,48 @@ class JAXLeWMCEMPolicy:
         for env_index in np.flatnonzero(alive):
             actions[env_index] = self.buffers[env_index].popleft()
         return actions
+
+
+class StagedLeWMCEMPolicy:
+    """Use local-subgoal CEM first, then final-goal CEM near the goal."""
+
+    def __init__(self, local_policy, final_policy, switch_after_steps):
+        if local_policy.subgoal_generator is None:
+            raise ValueError('The local stage requires a latent subgoal generator.')
+        if final_policy.subgoal_generator is not None:
+            raise ValueError('The final stage must plan directly to the final goal.')
+        if int(switch_after_steps) < 0:
+            raise ValueError('Stage switch step must be non-negative.')
+        if local_policy.action_block != final_policy.action_block:
+            raise ValueError('Local and final planners must share one action block.')
+        if int(switch_after_steps) % local_policy.action_block:
+            raise ValueError('Stage switch step must align with the action block.')
+        if local_policy.lewm_checkpoint != final_policy.lewm_checkpoint:
+            raise ValueError('Local and final planners must use the same LeWM.')
+
+        self.local_policy = local_policy
+        self.final_policy = final_policy
+        self.switch_after_steps = int(switch_after_steps)
+        self.horizon = local_policy.horizon
+        self.final_goal_horizon = final_policy.horizon
+        self.elapsed_steps = 0
+
+    def __getattr__(self, name):
+        # Evaluation metadata for the predictor belongs to the local stage.
+        return getattr(self.local_policy, name)
+
+    def reset(self, action_space, num_envs):
+        self.local_policy.reset(action_space, num_envs)
+        self.final_policy.reset(action_space, num_envs)
+        self.elapsed_steps = 0
+
+    def get_actions(self, pixels, goals, alive):
+        planner = (
+            self.local_policy
+            if self.elapsed_steps < self.switch_after_steps
+            else self.final_policy
+        )
+        actions = planner.get_actions(pixels, goals, alive)
+        if np.any(alive):
+            self.elapsed_steps += 1
+        return actions

@@ -8,6 +8,7 @@ import numpy as np
 from latent_subgoal_runtime import LatentSubgoalGenerator
 from lewm_jax.planner import (
     JAXLeWMCEMPolicy,
+    StagedLeWMCEMPolicy,
     reduce_rollout_costs,
     subgoal_planning_horizon,
 )
@@ -49,6 +50,23 @@ class FakeScaler:
         return (np.asarray(value) - self.mean) / self.scale
 
 
+class FakePlanner:
+    def __init__(self, value, *, use_subgoal):
+        self.value = value
+        self.subgoal_generator = object() if use_subgoal else None
+        self.action_block = 5
+        self.horizon = 2 if use_subgoal else 5
+        self.lewm_checkpoint = '/tmp/shared.msgpack'
+        self.calls = 0
+
+    def reset(self, action_space, num_envs):
+        self.num_envs = num_envs
+
+    def get_actions(self, pixels, goals, alive):
+        self.calls += 1
+        return np.full((len(alive), 2), self.value, dtype=np.float32)
+
+
 def guidance_policy():
     policy = object.__new__(JAXLeWMCEMPolicy)
     policy.horizon = 5
@@ -64,6 +82,26 @@ def guidance_policy():
 
 
 class PlannerTest(unittest.TestCase):
+    def test_staged_planner_switches_on_an_action_block_boundary(self):
+        local = FakePlanner(1.0, use_subgoal=True)
+        final = FakePlanner(2.0, use_subgoal=False)
+        policy = StagedLeWMCEMPolicy(local, final, switch_after_steps=10)
+        policy.reset(type('Space', (), {'shape': (2,)})(), 2)
+        pixels = np.zeros((2, 1, 4, 4, 3), dtype=np.uint8)
+        alive = np.ones(2, dtype=bool)
+
+        for _ in range(10):
+            np.testing.assert_array_equal(
+                policy.get_actions(pixels, pixels, alive),
+                np.ones((2, 2), dtype=np.float32),
+            )
+        np.testing.assert_array_equal(
+            policy.get_actions(pixels, pixels, alive),
+            np.full((2, 2), 2.0, dtype=np.float32),
+        )
+        self.assertEqual(local.calls, 10)
+        self.assertEqual(final.calls, 1)
+
     def test_subgoal_horizon_and_cost_reduction(self):
         self.assertEqual(subgoal_planning_horizon(10, 5), 2)
         with self.assertRaisesRegex(ValueError, 'divisible'):

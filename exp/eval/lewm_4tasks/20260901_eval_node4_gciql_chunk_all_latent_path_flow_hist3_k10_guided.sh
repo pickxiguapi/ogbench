@@ -16,11 +16,18 @@ POLICY_SEED=${POLICY_SEED:-777}
 GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-25}
 EVAL_BUDGET=${EVAL_BUDGET:-50}
 NUM_SAMPLES=${NUM_SAMPLES:-1}
+FINAL_GOAL_SWITCH_STEPS=${FINAL_GOAL_SWITCH_STEPS:-}
 POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10
 EVAL_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks
-OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260901_gciql_chunk_all_sd${POLICY_SEED}_latent_path_flow_hist3_k10_ns${NUM_SAMPLES}_guided_moh_cem300x30_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}_seed${EVAL_SEED}}
+STAGE_TAG=
+stage_args=()
+if [[ -n "$FINAL_GOAL_SWITCH_STEPS" ]]; then
+  STAGE_TAG="_switch${FINAL_GOAL_SWITCH_STEPS}_to_final_h5"
+  stage_args+=(--final-goal-switch-steps="$FINAL_GOAL_SWITCH_STEPS")
+fi
+OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260901_gciql_chunk_all_sd${POLICY_SEED}_latent_path_flow_hist3_k10_ns${NUM_SAMPLES}_guided${STAGE_TAG}_moh_cem300x30_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}_seed${EVAL_SEED}}
 TMP_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-k10-subgoal-guided
 
 tasks=(cube pusht reacher tworoom)
@@ -64,6 +71,7 @@ for i in "${!tasks[@]}"; do
     --policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS" \
     --latent-subgoal-checkpoint="${subgoal_checkpoints[$i]}" \
     --num-samples="$NUM_SAMPLES" \
+    "${stage_args[@]}" \
     --num-eval="$NUM_EVAL" --seed="$EVAL_SEED" \
     --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
     --cem-horizon=5 --cem-receding-horizon=1 --action-block=5 \

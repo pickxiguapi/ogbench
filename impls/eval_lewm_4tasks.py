@@ -13,7 +13,7 @@ from gciql_chunk_policy import (
     load_agent_config,
     load_lance_policy,
 )
-from lewm_jax.planner import JAXLeWMCEMPolicy
+from lewm_jax.planner import JAXLeWMCEMPolicy, StagedLeWMCEMPolicy
 
 from ogbench.lewm_envs.evaluation import (
     HDF5EvaluationDataset,
@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--latent-subgoal-checkpoint')
     parser.add_argument('--num-samples', type=int, default=1)
+    parser.add_argument('--final-goal-switch-steps', type=int)
     parser.add_argument(
         '--cem-cost-mode',
         choices=('last', 'moh'),
@@ -79,6 +80,13 @@ def main():
         raise ValueError('--num-samples must be positive.')
     if not needs_subgoal and args.num_samples != 1:
         raise ValueError('--num-samples only applies when --use-subgoal is set.')
+    if args.final_goal_switch_steps is not None:
+        if args.controller != 'lewm_cem' or not needs_subgoal:
+            raise ValueError(
+                '--final-goal-switch-steps requires lewm_cem with --use-subgoal.'
+            )
+        if args.final_goal_switch_steps < 0:
+            raise ValueError('--final-goal-switch-steps must be non-negative.')
 
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
@@ -121,9 +129,9 @@ def main():
             else:
                 policy = GCIQLChunkPolicy(policy_agent, scaler, args.seed)
         else:
-            policy = JAXLeWMCEMPolicy(
-                args.lewm_checkpoint,
-                scaler,
+            planner_kwargs = dict(
+                checkpoint=args.lewm_checkpoint,
+                scaler=scaler,
                 seed=args.seed,
                 horizon=args.cem_horizon,
                 receding_horizon=args.cem_receding_horizon,
@@ -135,9 +143,24 @@ def main():
                 cost_mode=args.cem_cost_mode,
                 guidance_policy=policy_agent,
                 paired_plan_keys=True,
+            )
+            local_policy = JAXLeWMCEMPolicy(
+                **planner_kwargs,
                 latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
                 latent_subgoal_num_samples=args.num_samples,
             )
+            if args.final_goal_switch_steps is None:
+                policy = local_policy
+            else:
+                final_policy = JAXLeWMCEMPolicy(
+                    **planner_kwargs,
+                    latent_subgoal_checkpoint=None,
+                )
+                policy = StagedLeWMCEMPolicy(
+                    local_policy,
+                    final_policy,
+                    args.final_goal_switch_steps,
+                )
         started = time.time()
         metrics = evaluate_dataset_goals(
             task=args.task,
@@ -200,6 +223,8 @@ def main():
                 'topk': args.cem_topk,
                 'var_scale': args.cem_var_scale,
                 'cost_mode': args.cem_cost_mode,
+                'final_goal_switch_steps': args.final_goal_switch_steps,
+                'final_goal_horizon': getattr(policy, 'final_goal_horizon', None),
             }
         ),
         'metrics': metrics,
