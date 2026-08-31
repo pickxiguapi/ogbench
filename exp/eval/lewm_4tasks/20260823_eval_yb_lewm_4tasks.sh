@@ -43,8 +43,8 @@ if [[ "$CONTROLLER" == direct_policy && "$POLICY_GUIDANCE" != none ]]; then
   echo "direct_policy requires POLICY_GUIDANCE=none" >&2
   exit 2
 fi
-if [[ "$USE_SUBGOAL" == 1 && "$POLICY_GUIDANCE" != none ]]; then
-  echo "USE_SUBGOAL=1 does not yet combine with policy-guided CEM" >&2
+if [[ "$USE_SUBGOAL" == 1 && "$POLICY_GUIDANCE" != none && "$REPRESENTATION_MODE" != pi && "$REPRESENTATION_MODE" != all ]]; then
+  echo "Subgoal-guided CEM requires REPRESENTATION_MODE=pi or all" >&2
   exit 2
 fi
 if [[ "$CONTROLLER" == direct_policy && "$USE_SUBGOAL" == 1 && "$REPRESENTATION_MODE" != pi && "$REPRESENTATION_MODE" != all ]]; then

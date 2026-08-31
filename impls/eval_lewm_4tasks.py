@@ -13,12 +13,13 @@ from gciql_chunk_policy import (
     load_agent_config,
     load_lance_policy,
 )
-from lewm_jax.planner import JAXLeWMCEMPolicy, json_safe
+from lewm_jax.planner import JAXLeWMCEMPolicy
 
 from ogbench.lewm_envs.evaluation import (
     HDF5EvaluationDataset,
     StandardActionScaler,
     evaluate_dataset_goals,
+    json_safe,
     task_paths,
 )
 
@@ -70,11 +71,6 @@ def main():
     needs_subgoal = args.use_subgoal
     if args.controller == 'direct_policy' and args.policy_guidance != 'none':
         raise ValueError('Policy guidance only applies to the lewm_cem controller.')
-    if needs_subgoal and args.policy_guidance != 'none':
-        raise ValueError(
-            'Subgoal evaluation currently supports pure LeWM CEM or direct policy, '
-            'not policy-guided CEM.'
-        )
     if needs_lewm != (args.lewm_checkpoint is not None):
         raise ValueError('Invalid controller/--lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
@@ -91,22 +87,31 @@ def main():
             args.num_eval, args.goal_offset_steps, args.seed
         )
         scaler = StandardActionScaler(dataset.get_column('action'))
-        proposal_agent = None
+        policy_agent = None
         representation_mode = None
         if needs_policy:
             _, _, policy_flags = load_agent_config(args.policy_checkpoint_dir)
             representation_mode = policy_flags.get('representation', {}).get(
                 'mode', 'independent'
             )
-            proposal_agent = load_lance_policy(
+            policy_agent = load_lance_policy(
                 lance_path,
                 args.policy_checkpoint_dir,
                 args.policy_checkpoint_step,
             )
+            if (
+                needs_subgoal
+                and args.policy_guidance != 'none'
+                and representation_mode not in ('pi', 'all')
+            ):
+                raise ValueError(
+                    'Subgoal-guided CEM requires a pi/all checkpoint whose actor '
+                    'accepts frozen LeWM latent goals.'
+                )
         if args.controller == 'direct_policy':
             if needs_subgoal:
                 policy = LatentSubgoalGCIQLChunkPolicy(
-                    proposal_agent,
+                    policy_agent,
                     scaler,
                     args.seed,
                     args.latent_subgoal_checkpoint,
@@ -114,7 +119,7 @@ def main():
                     args.action_block,
                 )
             else:
-                policy = GCIQLChunkPolicy(proposal_agent, scaler, args.seed)
+                policy = GCIQLChunkPolicy(policy_agent, scaler, args.seed)
         else:
             policy = JAXLeWMCEMPolicy(
                 args.lewm_checkpoint,
@@ -128,10 +133,7 @@ def main():
                 topk=args.cem_topk,
                 var_scale=args.cem_var_scale,
                 cost_mode=args.cem_cost_mode,
-                proposal_agent=proposal_agent,
-                proposal_temperature=0.0,
-                proposal_num_samples=1,
-                proposal_selection='mode',
+                guidance_policy=policy_agent,
                 paired_plan_keys=True,
                 latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
                 latent_subgoal_num_samples=LATENT_SUBGOAL_NUM_SAMPLES,

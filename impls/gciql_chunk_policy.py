@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from collections import deque
 from pathlib import Path
 
@@ -11,24 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from latent_subgoal import (
-    FLOW_TRANSFORMER_ARCHITECTURE,
-    LATENT_PATH_FLOW_ARCHITECTURE,
-    latent_path_waypoint_steps,
-    load_latent_subgoal_checkpoint,
-    sample_conditional_flow_candidates,
-    sample_conditional_path_flow_candidates,
-    select_latent_medoid,
-    select_latent_path_medoid,
-)
-
-
-def _sha256_file(path, chunk_size=8 * 1024 * 1024):
-    digest = hashlib.sha256()
-    with Path(path).open('rb') as file:
-        for chunk in iter(lambda: file.read(chunk_size), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
+from latent_subgoal_runtime import LatentSubgoalGenerator
 
 
 def load_agent_config(checkpoint_dir):
@@ -52,7 +34,7 @@ def load_agent_config(checkpoint_dir):
 
 
 def load_lance_policy(lance_path, checkpoint_dir, checkpoint_step):
-    """Load a final policy using a LeWM-4Tasks Lance shape probe."""
+    """Load a final policy using one LeWM-4Tasks Lance shape sample."""
     from agents import agents
     from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent
     from utils.datasets import GCChunkDataset
@@ -99,26 +81,23 @@ def load_lance_policy(lance_path, checkpoint_dir, checkpoint_step):
         agent,
         encode_pixels,
         share_pi_encoder=config.share_pi_encoder,
-        share_q_encoder=config.share_q_encoder,
         lewm_checkpoint=metadata['path'],
     )
 
 
 class LeWMEncodedAgent:
-    """Route actor and Q calls through their configured pixel/LeWM inputs."""
+    """Route actor calls through their configured pixel or LeWM inputs."""
 
     def __init__(
         self,
         agent,
         encode_pixels,
         share_pi_encoder,
-        share_q_encoder=False,
         lewm_checkpoint=None,
     ):
         self.agent = agent
         self.encode_pixels = encode_pixels
         self.share_pi_encoder = bool(share_pi_encoder)
-        self.share_q_encoder = bool(share_q_encoder)
         self.lewm_checkpoint = lewm_checkpoint
         self.action_horizon = int(agent.action_horizon)
 
@@ -148,6 +127,7 @@ class LeWMEncodedAgent:
             seed=seed,
             temperature=temperature,
         )
+
 
 class GCIQLChunkPolicy:
     """Execute normalized GCIQL-Chunk actions in LeWM-4Tasks environments."""
@@ -220,137 +200,73 @@ class LatentSubgoalGCIQLChunkPolicy:
             raise ValueError(
                 'Direct policy action horizon must match the configured action block.'
             )
-        if num_samples != 1:
-            raise ValueError(
-                'Latent subgoal inference is temporarily fixed to one sample.'
-            )
-        (
-            subgoal_model,
-            subgoal_params,
-            subgoal_config,
-            checkpoint_step,
-        ) = load_latent_subgoal_checkpoint(latent_subgoal_checkpoint)
-        expected_sha = subgoal_config.get('lewm_checkpoint_sha256')
-        actual_sha = _sha256_file(agent.lewm_checkpoint)
-        if expected_sha != actual_sha:
-            raise ValueError(
-                'Direct policy and latent subgoal generator must use the same '
-                'frozen LeWM checkpoint.'
-            )
-        trained_action_block = int(subgoal_config['action_block'])
-        if trained_action_block != int(action_block):
-            raise ValueError(
-                'Latent subgoal and direct-policy action blocks must match.'
-            )
 
         self.agent = agent
         self.scaler = scaler
         self.seed = int(seed)
         self.lewm_checkpoint = str(Path(agent.lewm_checkpoint).expanduser().resolve())
         self.action_horizon = int(action_block)
-        self.latent_subgoal_checkpoint = str(
-            Path(latent_subgoal_checkpoint).expanduser().resolve()
+        self.subgoal_generator = LatentSubgoalGenerator(
+            latent_subgoal_checkpoint,
+            self.agent.encode_pixels,
+            seed=self.seed,
+            action_block=self.action_horizon,
+            num_samples=num_samples,
+            lewm_checkpoint=self.lewm_checkpoint,
         )
-        self.latent_subgoal_checkpoint_step = int(checkpoint_step)
-        self.latent_subgoal_config = subgoal_config
-        self.latent_subgoal_num_samples = int(num_samples)
-        self.latent_subgoal_history_size = int(subgoal_config.get('history_size', 1))
-        self.latent_subgoal_waypoint_index = None
-        self.latent_subgoal_waypoint_step = int(subgoal_config['subgoal_steps'])
-        self._latent_subgoal_requires_rng = False
 
-        architecture = subgoal_config['architecture']
-        if architecture == FLOW_TRANSFORMER_ARCHITECTURE:
-            sampling_steps = int(subgoal_config['flow_sampling_steps'])
-            solver = str(subgoal_config['flow_solver'])
-            self.latent_subgoal_sample_selection = 'single_sample'
-            self._latent_subgoal_requires_rng = True
-            self._predict_latent_subgoal = jax.jit(
-                lambda current, goal, rng: select_latent_medoid(
-                    sample_conditional_flow_candidates(
-                        subgoal_model,
-                        subgoal_params,
-                        current,
-                        goal,
-                        rng,
-                        num_samples=self.latent_subgoal_num_samples,
-                        num_steps=sampling_steps,
-                        solver=solver,
-                    )
-                )
-            )
-        elif architecture == LATENT_PATH_FLOW_ARCHITECTURE:
-            sampling_steps = int(subgoal_config['flow_sampling_steps'])
-            solver = str(subgoal_config['flow_solver'])
-            waypoint_steps = latent_path_waypoint_steps(
-                subgoal_config['subgoal_steps'], trained_action_block
-            )
-            self.latent_subgoal_waypoint_index = len(waypoint_steps) - 1
-            self.latent_subgoal_sample_selection = 'single_sample'
-            self._latent_subgoal_requires_rng = True
-            self._predict_latent_subgoal = jax.jit(
-                lambda current, goal, rng: select_latent_path_medoid(
-                    sample_conditional_path_flow_candidates(
-                        subgoal_model,
-                        subgoal_params,
-                        current,
-                        goal,
-                        rng,
-                        num_samples=self.latent_subgoal_num_samples,
-                        num_steps=sampling_steps,
-                        solver=solver,
-                    )
-                )[:, self.latent_subgoal_waypoint_index]
-            )
-        else:
-            self.latent_subgoal_sample_selection = 'deterministic'
-            self._predict_latent_subgoal = jax.jit(
-                lambda current, goal: subgoal_model.apply(
-                    {'params': subgoal_params}, current, goal
-                )
-            )
+    @property
+    def latent_subgoal_checkpoint(self):
+        return self.subgoal_generator.checkpoint
+
+    @property
+    def latent_subgoal_checkpoint_step(self):
+        return self.subgoal_generator.checkpoint_step
+
+    @property
+    def latent_subgoal_config(self):
+        return self.subgoal_generator.config
+
+    @property
+    def latent_subgoal_num_samples(self):
+        return self.subgoal_generator.num_samples
+
+    @property
+    def latent_subgoal_history_size(self):
+        return self.subgoal_generator.history_size
+
+    @property
+    def latent_subgoal_waypoint_index(self):
+        return self.subgoal_generator.waypoint_index
+
+    @property
+    def latent_subgoal_waypoint_step(self):
+        return self.subgoal_generator.waypoint_step
+
+    @property
+    def latent_subgoal_sample_selection(self):
+        return self.subgoal_generator.sample_selection
+
+    @property
+    def latent_subgoal_generation_counts(self):
+        return self.subgoal_generator.generation_counts
 
     def reset(self, action_space, num_envs):
         self._action_dim = int(np.prod(action_space.shape))
         self._buffers = [deque() for _ in range(num_envs)]
-        self._pixel_histories = [
-            deque(maxlen=self.latent_subgoal_history_size) for _ in range(num_envs)
-        ]
-        self.latent_subgoal_generation_counts = np.zeros(num_envs, dtype=np.int64)
-
-    def _predict(self, env_index, goal):
-        history = list(self._pixel_histories[env_index])
-        history = [history[0]] * (self.latent_subgoal_history_size - len(history)) + history
-        history_embeddings = self.agent.encode_pixels(jnp.asarray(np.stack(history)))
-        current = (
-            history_embeddings[None]
-            if self.latent_subgoal_history_size > 1
-            else history_embeddings[-1:]
-        )
-        goal_embedding = self.agent.encode_pixels(jnp.asarray(goal[None]))
-        generation = int(self.latent_subgoal_generation_counts[env_index])
-        if self._latent_subgoal_requires_rng:
-            rng = jax.random.fold_in(jax.random.PRNGKey(self.seed), int(env_index))
-            rng = jax.random.fold_in(rng, generation)
-            prediction = self._predict_latent_subgoal(current, goal_embedding, rng)
-        else:
-            prediction = self._predict_latent_subgoal(current, goal_embedding)
-        prediction = np.asarray(prediction)[0].astype(np.float32)
-        expected_shape = (int(self.latent_subgoal_config['embed_dim']),)
-        if prediction.shape != expected_shape or not np.isfinite(prediction).all():
-            raise FloatingPointError(
-                f'Invalid predicted latent subgoal shape/value: {prediction.shape}.'
-            )
-        self.latent_subgoal_generation_counts[env_index] += 1
-        return prediction
+        self.subgoal_generator.reset(num_envs)
 
     def get_actions(self, pixels, goals, alive):
         for env_index in np.flatnonzero(alive):
-            self._pixel_histories[env_index].append(np.asarray(pixels[env_index, -1]))
+            self.subgoal_generator.observe(
+                env_index, np.asarray(pixels[env_index, -1])
+            )
             if self._buffers[env_index]:
                 continue
-            generation = int(self.latent_subgoal_generation_counts[env_index])
-            latent_goal = self._predict(env_index, np.asarray(goals[env_index, -1]))
+            generation = int(self.subgoal_generator.generation_counts[env_index])
+            latent_goal = self.subgoal_generator.predict(
+                env_index, np.asarray(goals[env_index, -1])
+            )
             action_rng = jax.random.fold_in(
                 jax.random.PRNGKey(self.seed + 1), int(env_index)
             )

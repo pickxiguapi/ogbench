@@ -16,7 +16,8 @@ from tqdm import trange
 
 from gciql_chunk_policy import LeWMEncodedAgent, load_agent_config
 from lewm_jax import load_frozen_lewm
-from lewm_jax.planner import JAXLeWMCEMPolicy, json_safe
+from lewm_jax.planner import JAXLeWMCEMPolicy
+from ogbench.lewm_envs.evaluation import json_safe
 
 
 class NPZActionScaler:
@@ -80,7 +81,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env-name', required=True)
     parser.add_argument('--dataset-path', required=True)
-    parser.add_argument('--mode', choices=('policy', 'lewm', 'guided', 'native_q'), required=True)
+    parser.add_argument(
+        '--controller', choices=('direct_policy', 'lewm_cem'), required=True
+    )
+    parser.add_argument(
+        '--policy-guidance', choices=('none', 'mode'), default='none'
+    )
     parser.add_argument('--lewm-checkpoint')
     parser.add_argument('--policy-checkpoint-dir')
     parser.add_argument('--policy-checkpoint-step', type=int, default=500_000)
@@ -91,11 +97,10 @@ def parse_args():
     parser.add_argument('--cem-receding-horizon', type=int, default=1)
     parser.add_argument('--action-block', type=int, default=5)
     parser.add_argument('--cem-num-samples', type=int, default=300)
-    parser.add_argument('--cem-steps', type=int, default=5)
+    parser.add_argument('--cem-iterations', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
-    parser.add_argument('--proposal-num-samples', type=int, default=64)
-    parser.add_argument('--proposal-temperature', type=float, default=0.1)
+    parser.add_argument('--cem-cost-mode', choices=('last', 'moh'), default='moh')
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
@@ -138,7 +143,6 @@ def load_policy(env, checkpoint_dir, checkpoint_step):
             agent,
             encode_pixels,
             share_pi_encoder=config.share_pi_encoder,
-            share_q_encoder=config.share_q_encoder,
             lewm_checkpoint=metadata['path'],
         ),
         saved,
@@ -147,29 +151,31 @@ def load_policy(env, checkpoint_dir, checkpoint_step):
 
 def main():
     args = parse_args()
-    needs_lewm = args.mode != 'policy'
-    needs_policy = args.mode != 'lewm'
+    needs_lewm = args.controller == 'lewm_cem'
+    needs_policy = args.controller == 'direct_policy' or args.policy_guidance != 'none'
+    if args.controller == 'direct_policy' and args.policy_guidance != 'none':
+        raise ValueError('Policy guidance only applies to the lewm_cem controller.')
     if needs_lewm != (args.lewm_checkpoint is not None):
-        raise ValueError('This mode has an invalid --lewm-checkpoint combination.')
+        raise ValueError('Invalid controller/--lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
-        raise ValueError('This mode has an invalid --policy-checkpoint-dir combination.')
+        raise ValueError('Invalid controller/guidance policy-checkpoint combination.')
 
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
     env.reset(seed=args.seed)
     scaler = NPZActionScaler(args.dataset_path)
-    proposal_agent = None
+    policy_agent = None
     representation_mode = None
     if needs_policy:
-        proposal_agent, policy_flags = load_policy(
+        policy_agent, policy_flags = load_policy(
             env,
             args.policy_checkpoint_dir,
             args.policy_checkpoint_step,
         )
         representation_mode = policy_flags['representation']['mode']
-    if args.mode == 'policy':
+    if args.controller == 'direct_policy':
         policy = OGBenchChunkPolicy(
-            proposal_agent, scaler, args.policy_action_space, args.seed
+            policy_agent, scaler, args.policy_action_space, args.seed
         )
     else:
         policy = JAXLeWMCEMPolicy(
@@ -180,21 +186,13 @@ def main():
             receding_horizon=args.cem_receding_horizon,
             action_block=args.action_block,
             num_samples=args.cem_num_samples,
-            steps=args.cem_steps,
+            iterations=args.cem_iterations,
             topk=args.cem_topk,
             var_scale=args.cem_var_scale,
-            cost_mode='min_over_horizon',
-            proposal_agent=proposal_agent,
-            proposal_temperature=(
-                args.proposal_temperature if args.mode == 'native_q' else 0.0
-            ),
-            proposal_action_space=args.policy_action_space,
-            proposal_num_samples=(
-                args.proposal_num_samples if args.mode == 'native_q' else 1
-            ),
-            proposal_selection='native_q' if args.mode == 'native_q' else 'mode',
+            cost_mode=args.cem_cost_mode,
+            guidance_policy=policy_agent,
+            guidance_action_space=args.policy_action_space,
             paired_plan_keys=True,
-            execution_steps=args.action_block,
             action_low=env.action_space.low,
             action_high=env.action_space.high,
         )
@@ -243,12 +241,27 @@ def main():
     result = {
         'suite': 'ogbench_env_8tasks',
         'environment': args.env_name,
-        'mode': args.mode,
+        'controller': args.controller,
+        'policy_guidance': args.policy_guidance,
         'representation_mode': representation_mode,
         'lewm_checkpoint': args.lewm_checkpoint,
         'policy_checkpoint_dir': args.policy_checkpoint_dir,
         'policy_checkpoint_step': args.policy_checkpoint_step if needs_policy else None,
         'policy_action_space': args.policy_action_space if needs_policy else None,
+        'cem': (
+            None
+            if args.controller == 'direct_policy'
+            else {
+                'horizon': policy.horizon,
+                'receding_horizon': args.cem_receding_horizon,
+                'action_block': args.action_block,
+                'num_samples': args.cem_num_samples,
+                'iterations': args.cem_iterations,
+                'topk': args.cem_topk,
+                'var_scale': args.cem_var_scale,
+                'cost_mode': args.cem_cost_mode,
+            }
+        ),
         'seed': args.seed,
         'episodes_per_task': args.num_eval,
         'metrics': metrics,

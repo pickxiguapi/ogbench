@@ -31,6 +31,7 @@ def _literal_assignment(path, name):
 def test_final_python_entrypoints_are_converged():
     assert sorted(path.name for path in IMPLS.glob('train_*.py')) == [
         'train_gciql_chunk.py',
+        'train_latent_subgoal_gcbc.py',
         'train_lewm_jax.py',
     ]
     assert sorted(path.name for path in IMPLS.glob('eval_*.py')) == [
@@ -49,7 +50,7 @@ def test_representation_modes_encode_the_four_design_choices():
     }
 
 
-def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
+def test_formal_bashes_expose_controller_axes_and_disable_augmentation_by_default():
     for path in POLICY_BASHES:
         text = path.read_text()
         assert '--p_aug="$P_AUG"' in text
@@ -62,15 +63,37 @@ def test_formal_bashes_expose_modes_and_disable_augmentation_by_default():
     assert '--representation_mode="$REPRESENTATION_MODE"' in shared
     for path in EVAL_BASHES:
         text = path.read_text()
-        assert 'MODE=${MODE:-guided}' in text
-        if 'lewm_4tasks' in str(path):
-            assert (
-                'policy|lewm|subgoal_lewm|oracle_subgoal_lewm|guided|native_q'
-                in text
-            )
-        else:
-            assert 'policy|lewm|guided|native_q' in text
+        assert 'CONTROLLER=${CONTROLLER:-lewm_cem}' in text
+        assert 'POLICY_GUIDANCE=${POLICY_GUIDANCE:-mode}' in text
+        assert 'direct_policy|lewm_cem' in text
+        assert 'none|mode' in text
         assert 'REPRESENTATION_MODE=${REPRESENTATION_MODE:-independent}' in text
+
+
+def test_evaluation_entrypoints_use_orthogonal_controller_axes():
+    lewm4 = (IMPLS / 'eval_lewm_4tasks.py').read_text()
+    ogbench8 = (IMPLS / 'eval_ogbench_env_8tasks.py').read_text()
+    for text in (lewm4, ogbench8):
+        assert "choices=('direct_policy', 'lewm_cem')" in text
+        assert "choices=('none', 'mode')" in text
+        assert "choices=('last', 'moh')" in text
+        assert "'--mode'" not in text
+        assert 'fixed_subgoal_horizon' not in text
+    assert "'--use-subgoal'" in lewm4
+
+
+def test_planner_contains_only_the_formal_cem_controller():
+    tree = ast.parse((IMPLS / 'lewm_jax' / 'planner.py').read_text())
+    public_definitions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+    }
+    assert public_definitions == {
+        'subgoal_planning_horizon',
+        'reduce_rollout_costs',
+        'JAXLeWMCEMPolicy',
+    }
 
 
 def test_policy_experiment_names_are_compact_and_guarded():
@@ -86,17 +109,11 @@ def test_policy_experiment_names_are_compact_and_guarded():
     assert max(map(len, names)) < 64
 
 
-def test_only_evaluation_uses_reproduction_wrappers():
+def test_reproduction_wrappers_are_not_active_entrypoints():
     train_wrappers = sorted((EXP / 'train').glob('*reproduce*main_matrix.sh'))
     eval_wrappers = sorted((EXP / 'eval').rglob('*reproduce*main_matrix.sh'))
     assert train_wrappers == []
-    assert len(eval_wrappers) == 2
-    for path in eval_wrappers:
-        text = path.read_text()
-        assert 'MODE=lewm REPRESENTATION_MODE=independent' in text
-        assert 'for representation in independent pi qv all' in text
-        for mode in ('policy', 'guided', 'native_q'):
-            assert f'MODE={mode} REPRESENTATION_MODE="$representation"' in text
+    assert eval_wrappers == []
 
 
 def test_policy_bashes_only_require_lewm_settings_for_shared_modes():

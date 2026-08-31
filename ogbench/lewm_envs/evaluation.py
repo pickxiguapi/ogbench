@@ -263,3 +263,14 @@ def task_paths(task, data_root):
     spec = TASK_SPECS[task]
     root = Path(data_root).expanduser().resolve()
     return root / spec.hdf5_name, root / spec.lance_name
+
+
+def json_safe(value):
+    """Convert NumPy containers to JSON-serializable Python values."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    return value
