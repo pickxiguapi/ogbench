@@ -29,7 +29,7 @@ PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 LATENT_SUBGOAL_STEPS=${LATENT_SUBGOAL_STEPS:-100000}
 LATENT_SUBGOAL_REFRESH_STEPS=${LATENT_SUBGOAL_REFRESH_STEPS:-10}
-LATENT_SUBGOAL_NUM_SAMPLES=${LATENT_SUBGOAL_NUM_SAMPLES:-8}
+NUM_SAMPLES=${NUM_SAMPLES:-8}
 ORACLE_SUBGOAL_STEPS=${ORACLE_SUBGOAL_STEPS:-10}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
@@ -87,7 +87,7 @@ for i in "${!tasks[@]}"; do
         --lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack"
         --latent-subgoal-checkpoint="$latent_subgoal_dir/$latent_subgoal_checkpoint"
         --latent-subgoal-refresh-steps="$LATENT_SUBGOAL_REFRESH_STEPS"
-        --latent-subgoal-num-samples="$LATENT_SUBGOAL_NUM_SAMPLES"
+        --num-samples="$NUM_SAMPLES"
       )
       ;;
     oracle_subgoal_lewm)

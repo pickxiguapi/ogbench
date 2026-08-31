@@ -264,7 +264,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 条件为最近 3 帧 latent history 与 `z_g`，goal sampling 仍为 HIQL 同轨迹未来均匀采样。
 - 唯一 loss 为 conditional flow matching MSE；不训练 inverse dynamics，不添加 LeWM consistency loss。
 - 网络固定为 LeFlow-style path-token Transformer：hidden 512、depth 4、8 heads、FFN 2048、time embedding 64、每个 waypoint 一个 learned position embedding；history、goal、未缩放的 unit-interval flow time 经非线性融合后用 AdaLN 注入所有 block。
-- 推理使用 EMA 参数和 16-step Euler；每个条件生成 `latent_subgoal_num_samples` 条完整 path（默认 8），用整条路径的 medoid 作为 planner target，禁止直接平均 latent。seed0 正式设置为 200k、batch size 1024、peak/final lr 1e-4/1e-5、warmup 5k、EMA 0.9999、episode 95/5 split。
+- 推理使用 EMA 参数和 16-step Euler；每个条件生成 `num_samples` 条完整 path（默认 8），用整条路径的 medoid 作为 planner target，禁止直接平均 latent。seed0 正式设置为 200k、batch size 1024、peak/final lr 1e-4/1e-5、warmup 5k、EMA 0.9999、episode 95/5 split。
 
 ## 服务器与 GitHub
 
