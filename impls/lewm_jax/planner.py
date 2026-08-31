@@ -17,9 +17,11 @@ import numpy as np
 from latent_subgoal import (
     FLOW_TRANSFORMER_ARCHITECTURE,
     LATENT_PATH_FLOW_ARCHITECTURE,
+    latent_path_waypoint_steps,
     load_latent_subgoal_checkpoint,
     sample_conditional_flow,
-    sample_conditional_path_flow,
+    sample_conditional_path_flow_candidates,
+    select_latent_path_medoid,
 )
 
 from lewm_jax import ARCHITECTURE, LeWM
@@ -251,6 +253,7 @@ class JAXLeWMCEMPolicy:
         empirical_context_rank_penalty=0.0,
         latent_subgoal_checkpoint=None,
         latent_subgoal_refresh_steps=10,
+        latent_subgoal_num_samples=8,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError('CEM horizon, receding horizon, and action block must be positive.')
@@ -292,6 +295,8 @@ class JAXLeWMCEMPolicy:
                 )
             if latent_subgoal_refresh_steps <= 0:
                 raise ValueError('Latent subgoal refresh steps must be positive.')
+            if latent_subgoal_num_samples <= 0:
+                raise ValueError('Latent subgoal sample count must be positive.')
         elif cost_mode == 'fixed_subgoal_horizon':
             raise ValueError(
                 'Fixed subgoal horizon cost requires a latent subgoal checkpoint.'
@@ -407,6 +412,8 @@ class JAXLeWMCEMPolicy:
         self.latent_subgoal_config = None
         self.latent_subgoal_checkpoint_step = None
         self.latent_subgoal_refresh_steps = int(latent_subgoal_refresh_steps)
+        self.latent_subgoal_num_samples = int(latent_subgoal_num_samples)
+        self.latent_subgoal_sample_selection = None
         self._predict_latent_subgoal = None
         self._latent_subgoal_requires_rng = False
         self.latent_subgoal_waypoint_index = None
@@ -457,22 +464,35 @@ class JAXLeWMCEMPolicy:
                 if history_size <= 0:
                     raise ValueError('Latent subgoal history size must be positive.')
                 waypoint_step = int(subgoal_config['subgoal_steps'])
+                trained_action_block = int(subgoal_config['action_block'])
+                if trained_action_block != int(action_block):
+                    raise ValueError(
+                        'Latent subgoal and planner action blocks must match: '
+                        f'{trained_action_block} != {action_block}.'
+                    )
+                waypoint_steps = latent_path_waypoint_steps(
+                    waypoint_step, trained_action_block
+                )
                 waypoint_index = latent_path_waypoint_index(
-                    subgoal_config['waypoint_steps'], waypoint_step
+                    waypoint_steps, waypoint_step
                 )
                 self.latent_subgoal_waypoint_index = waypoint_index
                 self.latent_subgoal_waypoint_step = waypoint_step
                 self.latent_subgoal_history_size = history_size
+                self.latent_subgoal_sample_selection = 'path_medoid'
                 self._latent_subgoal_requires_rng = True
                 self._predict_latent_subgoal = jax.jit(
-                    lambda current, goal, rng: sample_conditional_path_flow(
-                        subgoal_model,
-                        subgoal_params,
-                        current,
-                        goal,
-                        rng,
-                        num_steps=sampling_steps,
-                        solver=flow_solver,
+                    lambda current, goal, rng: select_latent_path_medoid(
+                        sample_conditional_path_flow_candidates(
+                            subgoal_model,
+                            subgoal_params,
+                            current,
+                            goal,
+                            rng,
+                            num_samples=self.latent_subgoal_num_samples,
+                            num_steps=sampling_steps,
+                            solver=flow_solver,
+                        )
                     )[:, waypoint_index]
                 )
             else:

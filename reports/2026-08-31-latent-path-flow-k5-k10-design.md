@@ -2,7 +2,18 @@
 
 ## 目标
 
-在每个任务已经冻结的 LeWM 表征空间中，用当前状态 latent `z_t` 和同轨迹未来目标 latent `z_g` 生成一条两点局部路径：
+在每个任务已经冻结的 LeWM 表征空间中，用最近 3 帧 latent history 和同轨迹未来目标 latent `z_g` 生成一条局部路径。路径时间点不再手写，而由两个参数决定：
+
+- `subgoal_steps=S`：局部目标最远预测到当前时刻之后多少个原子环境步；
+- `action_block=C`：LeWM/CEM 每个 action block 决策多少个原子动作，必须满足 `S % C == 0`。Generator 训练、checkpoint 和 planner 统一使用这个名字。
+
+代码自动构造 waypoint offsets：
+
+\[
+\mathcal K=\{C,2C,\ldots,S\}.
+\]
+
+正式设置 `S=10,C=5`，因此仍是一条 K5/K10 两点路径：
 
 \[
 Z^*=\left[z_{\min(t+5,g)},\;z_{\min(t+10,g)}\right]\in\mathbb R^{2\times192}.
@@ -45,10 +56,10 @@ X_\tau=(1-\tau)\epsilon+\tau Z^*.
 
 - noisy path 中的两个 waypoint 分别作为 Transformer token。
 - latent token projection：192 -> 512。
-- `z_t` 和 `z_g` 分别线性投影到 512，二者与 time condition 相加后广播到两个 path token。
-- sinusoidal time embedding 64，MLP `64 -> 512 -> 512`，SiLU。
+- 最近 3 帧 latent 展平后投影到 512，`z_g` 单独投影到 512；二者与 time condition 拼接并经两层非线性 MLP 融合。
+- sinusoidal time embedding 64 直接编码 `tau in [0,1]`，不额外乘 1000；MLP `64 -> 512 -> 512`，SiLU。
 - 两个可学习的位置 embedding，区分 K5 与 K10。
-- 4 个 pre-norm Transformer encoder blocks，8 heads，FFN 2048，GELU，无 dropout。
+- 4 个 AdaLN pre-norm Transformer encoder blocks，8 heads，FFN 2048，GELU，无 dropout；融合后的 history/goal/time condition 调制每一层。
 - output LayerNorm + linear `512 -> 192`，输出 `[B, 2, 192]`。
 - 参数量约 10–20M，单元测试强制检查预算。
 
@@ -68,9 +79,16 @@ X_\tau=(1-\tau)\epsilon+\tau Z^*.
 | validation interval | 10,000 |
 | inference solver | Euler |
 | inference steps | 16 |
+| subgoal steps / action block | 10 / 5 |
+| history frames | 3 |
+| inference path samples | 8（可调） |
 | training seed | 0 |
 
 验证同时记录整条路径以及 K5、K10 各自的 MSE 与 cosine similarity。模型选择与正式推理使用 EMA 参数。
+
+正式推理对同一个 `(history, z_g)` 一次生成 `N` 条完整 latent path，`N` 由 `--latent-subgoal-num-samples` 控制，默认 8。将每条 path 展平后计算样本间距离，选择总距离最小的真实样本（path medoid），再取其中 K10 token 交给 planner。这里不直接平均 latent，避免构造偏离 LeWM latent manifold 的目标。评测侧的 `action_block` 必须与 checkpoint 的 `action_block` 完全相等。
+
+本节之后记录的 200k 结果来自旧的单样本 K5/K10 checkpoint，作为历史对照保留；新配置去掉了 time `x1000`、加入 3 帧 history，并改为多样本 medoid，必须训练新 checkpoint 后重新评测，不能沿用旧 checkpoint。
 
 ## 与旧单点 Transformer-CFM 的隔离
 

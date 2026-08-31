@@ -257,13 +257,14 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 推理使用 EMA 参数，从确定性派生的高斯噪声出发做 16-step Heun ODE integration；同 evaluation seed、env index、generation count 必须得到相同 subgoal。
 - seed0 正式设置为 200k steps、batch size 1024、AdamW、peak lr 1e-4、warmup 5k、cosine decay 到 1e-5、EMA 0.9999、episode 95/5 split。
 
-## LatentPathFlow（K5/K10）
+## LatentPathFlow（subgoal/action block）
 
 - 定稿设计见 `reports/2026-08-31-latent-path-flow-k5-k10-design.md`；新模型不得覆盖旧单点 Transformer-CFM checkpoint 或输出目录。
-- 条件为 `z_t,z_g`，监督路径固定为 `[z_min(t+5,g), z_min(t+10,g)]`，goal sampling 仍为 HIQL 同轨迹未来均匀采样。
+- 两个时间尺度参数只有 `subgoal_steps=S` 和 `action_block=C`，且必须满足 `S % C == 0`；监督路径由代码自动生成为 `[z_min(t+C,g), ..., z_min(t+S,g)]`。正式 K10/block5 即 K5/K10 两个 token；generator 训练、checkpoint 和 LeWM planner 统一使用 `action_block` 这个名字。
+- 条件为最近 3 帧 latent history 与 `z_g`，goal sampling 仍为 HIQL 同轨迹未来均匀采样。
 - 唯一 loss 为 conditional flow matching MSE；不训练 inverse dynamics，不添加 LeWM consistency loss。
-- 网络固定为 LeFlow-style path-token Transformer：hidden 512、depth 4、8 heads、FFN 2048、time embedding 64、两个 learned waypoint position embeddings。
-- 推理使用 EMA 参数和 16-step Euler；seed0 正式设置为 200k、batch size 1024、peak/final lr 1e-4/1e-5、warmup 5k、EMA 0.9999、episode 95/5 split。
+- 网络固定为 LeFlow-style path-token Transformer：hidden 512、depth 4、8 heads、FFN 2048、time embedding 64、每个 waypoint 一个 learned position embedding；history、goal、未缩放的 unit-interval flow time 经非线性融合后用 AdaLN 注入所有 block。
+- 推理使用 EMA 参数和 16-step Euler；每个条件生成 `latent_subgoal_num_samples` 条完整 path（默认 8），用整条路径的 medoid 作为 planner target，禁止直接平均 latent。seed0 正式设置为 200k、batch size 1024、peak/final lr 1e-4/1e-5、warmup 5k、EMA 0.9999、episode 95/5 split。
 
 ## 服务器与 GitHub
 

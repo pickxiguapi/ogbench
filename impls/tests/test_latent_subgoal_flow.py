@@ -6,13 +6,22 @@ import numpy as np
 from latent_subgoal import (
     LatentPathFlow,
     LatentSubgoalFlowTransformer,
+    latent_path_waypoint_steps,
     sample_conditional_flow,
     sample_conditional_path_flow,
+    sample_conditional_path_flow_candidates,
+    select_latent_path_medoid,
     sinusoidal_time_embedding,
 )
 
 
 class LatentSubgoalFlowTest(unittest.TestCase):
+    def test_waypoints_are_derived_from_subgoal_steps_and_action_block(self):
+        self.assertEqual(latent_path_waypoint_steps(10, 5), (5, 10))
+        self.assertEqual(latent_path_waypoint_steps(15, 5), (5, 10, 15))
+        with self.assertRaisesRegex(ValueError, 'divisible'):
+            latent_path_waypoint_steps(10, 4)
+
     def test_flow_time_embedding_defaults_to_unscaled_unit_interval(self):
         embedding = sinusoidal_time_embedding(jnp.asarray([1.0]), dim=4)
         expected = jnp.asarray(
@@ -134,6 +143,63 @@ class LatentSubgoalFlowTest(unittest.TestCase):
         self.assertEqual(first.shape, (2, 2, 8))
         self.assertTrue(np.isfinite(np.asarray(first)).all())
         np.testing.assert_array_equal(first, repeated)
+
+    def test_latent_path_flow_can_draw_multiple_candidates(self):
+        model = LatentPathFlow(
+            embed_dim=8,
+            num_waypoints=2,
+            hidden_dim=16,
+            depth=1,
+            num_heads=4,
+            ff_dim=32,
+            time_dim=8,
+            history_size=3,
+        )
+        current = jnp.ones((2, 3, 8), dtype=jnp.float32)
+        goal = jnp.full((2, 8), 2.0, dtype=jnp.float32)
+        variables = model.init(
+            jax.random.PRNGKey(0),
+            jnp.zeros((2, 2, 8), dtype=jnp.float32),
+            current,
+            goal,
+            jnp.zeros((2,), dtype=jnp.float32),
+        )
+        candidates = sample_conditional_path_flow_candidates(
+            model,
+            variables['params'],
+            current,
+            goal,
+            jax.random.PRNGKey(7),
+            num_samples=4,
+            num_steps=2,
+            solver='euler',
+        )
+        repeated = sample_conditional_path_flow_candidates(
+            model,
+            variables['params'],
+            current,
+            goal,
+            jax.random.PRNGKey(7),
+            num_samples=4,
+            num_steps=2,
+            solver='euler',
+        )
+
+        self.assertEqual(candidates.shape, (2, 4, 2, 8))
+        np.testing.assert_array_equal(candidates, repeated)
+        self.assertFalse(
+            np.array_equal(np.asarray(candidates[:, 0]), np.asarray(candidates[:, 1]))
+        )
+
+    def test_path_medoid_returns_an_actual_central_sample(self):
+        candidates = jnp.asarray(
+            [[[[0.0]], [[1.0]], [[10.0]]]], dtype=jnp.float32
+        )
+
+        selected = select_latent_path_medoid(candidates)
+
+        self.assertEqual(selected.shape, (1, 1, 1))
+        np.testing.assert_array_equal(selected, [[[1.0]]])
 
     def test_formal_transformer_is_within_parameter_budget(self):
         model = LatentSubgoalFlowTransformer(

@@ -20,6 +20,7 @@ GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-25}
 EVAL_BUDGET=${EVAL_BUDGET:-50}
 CEM_HORIZON=${CEM_HORIZON:-5}
 CEM_RECEDING_HORIZON=${CEM_RECEDING_HORIZON:-1}
+ACTION_BLOCK=${ACTION_BLOCK:-5}
 CEM_NUM_SAMPLES=${CEM_NUM_SAMPLES:-300}
 CEM_STEPS=${CEM_STEPS:-5}
 CEM_TOPK=${CEM_TOPK:-30}
@@ -28,6 +29,7 @@ PROPOSAL_NUM_SAMPLES=${PROPOSAL_NUM_SAMPLES:-64}
 PROPOSAL_TEMPERATURE=${PROPOSAL_TEMPERATURE:-0.1}
 LATENT_SUBGOAL_STEPS=${LATENT_SUBGOAL_STEPS:-100000}
 LATENT_SUBGOAL_REFRESH_STEPS=${LATENT_SUBGOAL_REFRESH_STEPS:-10}
+LATENT_SUBGOAL_NUM_SAMPLES=${LATENT_SUBGOAL_NUM_SAMPLES:-8}
 ORACLE_SUBGOAL_STEPS=${ORACLE_SUBGOAL_STEPS:-10}
 EVAL_TAG=${EVAL_TAG:-p${POLICY_STEPS}_w${LEWM_EPOCH}_cem${CEM_NUM_SAMPLES}x${CEM_STEPS}_h${CEM_HORIZON}}
 source "$OGBENCH_ROOT/scripts/client_env.sh"
@@ -85,6 +87,7 @@ for i in "${!tasks[@]}"; do
         --lewm-checkpoint="$lewm_dir/weights_epoch_${LEWM_EPOCH}.msgpack"
         --latent-subgoal-checkpoint="$latent_subgoal_dir/$latent_subgoal_checkpoint"
         --latent-subgoal-refresh-steps="$LATENT_SUBGOAL_REFRESH_STEPS"
+        --latent-subgoal-num-samples="$LATENT_SUBGOAL_NUM_SAMPLES"
       )
       ;;
     oracle_subgoal_lewm)
@@ -112,7 +115,7 @@ for i in "${!tasks[@]}"; do
     --task="${tasks[$i]}" --mode="$MODE" --data-root="$LEWM_DATA_ROOT" "${args[@]}" \
     --num-eval="$NUM_EVAL" --seed="$EVAL_SEED" \
     --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
-    --cem-horizon="$CEM_HORIZON" --cem-receding-horizon="$CEM_RECEDING_HORIZON" --action-block=5 \
+    --cem-horizon="$CEM_HORIZON" --cem-receding-horizon="$CEM_RECEDING_HORIZON" --action-block="$ACTION_BLOCK" \
     --cem-num-samples="$CEM_NUM_SAMPLES" --cem-steps="$CEM_STEPS" --cem-topk="$CEM_TOPK" --cem-var-scale=1.0 \
     --cem-cost-mode="$CEM_COST_MODE" \
     --proposal-num-samples="$PROPOSAL_NUM_SAMPLES" --proposal-temperature="$PROPOSAL_TEMPERATURE" \

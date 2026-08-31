@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--latent-subgoal-checkpoint')
     parser.add_argument('--latent-subgoal-refresh-steps', type=int, default=10)
+    parser.add_argument('--latent-subgoal-num-samples', type=int, default=8)
     parser.add_argument('--oracle-subgoal-steps', type=int, default=10)
     parser.add_argument(
         '--cem-cost-mode',
@@ -124,6 +125,7 @@ def main():
                 paired_plan_keys=True,
                 latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
                 latent_subgoal_refresh_steps=args.latent_subgoal_refresh_steps,
+                latent_subgoal_num_samples=args.latent_subgoal_num_samples,
             )
         started = time.time()
         metrics = evaluate_dataset_goals(
@@ -157,8 +159,13 @@ def main():
                 'checkpoint': policy.latent_subgoal_checkpoint,
                 'checkpoint_step': policy.latent_subgoal_checkpoint_step,
                 'refresh_steps': policy.latent_subgoal_refresh_steps,
+                'num_samples': policy.latent_subgoal_num_samples,
+                'sample_selection': policy.latent_subgoal_sample_selection,
                 'training_subgoal_steps': int(
                     policy.latent_subgoal_config['subgoal_steps']
+                ),
+                'training_action_block': int(
+                    policy.latent_subgoal_config['action_block']
                 ),
                 'selected_waypoint_index': policy.latent_subgoal_waypoint_index,
                 'selected_waypoint_step': policy.latent_subgoal_waypoint_step,

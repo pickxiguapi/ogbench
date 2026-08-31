@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 四任务共用正式训练入口：frozen LeWM z192、3 帧历史、HIQL 同轨迹未来 goal、waypoint K5/K10、仅 CFM loss、LeFlow 风格 Transformer、200k、bs1024、seed0。
+# 四任务共用正式训练入口：frozen LeWM z192、3 帧历史、HIQL 同轨迹未来 goal、subgoal K10/action block5、仅 CFM loss、LeFlow 风格 Transformer、200k、bs1024、seed0。
 : "${CLIENT_ID:?CLIENT_ID is required}"
 : "${LATENT_DATASET:?LATENT_DATASET is required}"
 : "${SUBGOAL_RUNS_ROOT:?SUBGOAL_RUNS_ROOT is required}"
@@ -16,6 +16,8 @@ TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 TRAIN_SEED=${TRAIN_SEED:-0}
 HISTORY_SIZE=${HISTORY_SIZE:-3}
+SUBGOAL_STEPS=${SUBGOAL_STEPS:-10}
+ACTION_BLOCK=${ACTION_BLOCK:-5}
 WARMUP_STEPS=${WARMUP_STEPS:-5000}
 VALIDATION_PAIRS=${VALIDATION_PAIRS:-10000}
 EVAL_BATCH_SIZE=${EVAL_BATCH_SIZE:-1024}
@@ -39,8 +41,8 @@ PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
   --seed="$TRAIN_SEED" \
   --split-seed=0 \
   --train-fraction=0.95 \
-  --subgoal-steps=10 \
-  --waypoint-steps 5 10 \
+  --subgoal-steps="$SUBGOAL_STEPS" \
+  --action-block="$ACTION_BLOCK" \
   --history-size="$HISTORY_SIZE" \
   --train-steps="$TRAIN_STEPS" \
   --batch-size="$TRAIN_BATCH_SIZE" \

@@ -23,6 +23,7 @@ from latent_subgoal import (
     LatentPathFlow,
     LatentSubgoalFlowTransformer,
     LatentSubgoalMLP,
+    latent_path_waypoint_steps,
     sample_conditional_flow,
     sample_conditional_path_flow,
 )
@@ -59,7 +60,7 @@ def parse_args():
     parser.add_argument('--flow-sampling-steps', type=int, default=16)
     parser.add_argument('--flow-solver', choices=('euler', 'heun'), default='heun')
     parser.add_argument('--ema-decay', type=float, default=0.9999)
-    parser.add_argument('--waypoint-steps', type=int, nargs='+', default=(5, 10))
+    parser.add_argument('--action-block', type=int, default=5)
     parser.add_argument('--hidden-dim', type=int, default=512)
     parser.add_argument('--depth', type=int, default=4)
     parser.add_argument('--ff-dim', type=int, default=2048)
@@ -82,6 +83,7 @@ def parse_args():
 def validate_args(args):
     positive = (
         'subgoal_steps',
+        'action_block',
         'train_steps',
         'batch_size',
         'warmup_steps',
@@ -120,13 +122,8 @@ def validate_args(args):
         raise ValueError('model_dim must be even for sinusoidal flow-time embeddings.')
     if not 0.0 <= args.ema_decay < 1.0:
         raise ValueError('ema_decay must be in [0, 1).')
-    if not args.waypoint_steps or any(step <= 0 for step in args.waypoint_steps):
-        raise ValueError('waypoint_steps must contain positive integers.')
-    if tuple(sorted(set(args.waypoint_steps))) != tuple(args.waypoint_steps):
-        raise ValueError('waypoint_steps must be strictly increasing.')
     if args.architecture == 'latent_path_flow':
-        if args.waypoint_steps[-1] != args.subgoal_steps:
-            raise ValueError('The final waypoint step must equal subgoal_steps.')
+        latent_path_waypoint_steps(args.subgoal_steps, args.action_block)
         if args.hidden_dim % args.num_heads:
             raise ValueError('hidden_dim must be divisible by num_heads.')
         if args.time_dim % 2:
@@ -213,10 +210,15 @@ def make_train_step(
     *,
     flow_matching=False,
     path_flow_matching=False,
-    waypoint_steps=(5, 10),
+    action_block=5,
     history_size=1,
     ema_decay=0.0,
 ):
+    waypoint_steps = (
+        latent_path_waypoint_steps(subgoal_steps, action_block)
+        if path_flow_matching
+        else ()
+    )
     @jax.jit
     def train_step(state, rng, z, valid_t, valid_history, final_t):
         rng, index_key, goal_key, noise_key, time_key = jax.random.split(rng, 5)
@@ -480,6 +482,9 @@ def main():
 
     flow_matching = args.architecture == 'transformer_flow'
     path_flow_matching = args.architecture == 'latent_path_flow'
+    waypoint_steps = latent_path_waypoint_steps(
+        args.subgoal_steps, args.action_block
+    ) if path_flow_matching else ()
     if path_flow_matching:
         fixed_val = (
             fixed_val[0],
@@ -487,7 +492,7 @@ def main():
             np.stack(
                 [
                     np.minimum(fixed_val[0] + step, fixed_val[1]).astype(np.int32)
-                    for step in args.waypoint_steps
+                    for step in waypoint_steps
                 ],
                 axis=1,
             ),
@@ -496,7 +501,7 @@ def main():
     if flow_matching:
         config_args.pop('hidden_dims')
         for name in (
-            'waypoint_steps',
+            'action_block',
             'hidden_dim',
             'depth',
             'ff_dim',
@@ -516,7 +521,7 @@ def main():
             'flow_sampling_steps',
             'flow_solver',
             'ema_decay',
-            'waypoint_steps',
+            'action_block',
             'hidden_dim',
             'depth',
             'ff_dim',
@@ -553,7 +558,6 @@ def main():
         ),
     }
     if path_flow_matching:
-        config['waypoint_steps'] = list(args.waypoint_steps)
         if args.history_size > 1:
             config['conditioning'] = 'history_goal_time_adaln'
     if not flow_matching and not path_flow_matching:
@@ -581,7 +585,7 @@ def main():
     if path_flow_matching:
         model = LatentPathFlow(
             embed_dim=embed_dim,
-            num_waypoints=len(args.waypoint_steps),
+            num_waypoints=len(waypoint_steps),
             hidden_dim=args.hidden_dim,
             depth=args.depth,
             num_heads=args.num_heads,
@@ -611,7 +615,7 @@ def main():
         )
         variables = model.init(
             init_rng,
-            jnp.zeros((1, len(args.waypoint_steps), embed_dim), dtype=jnp.float32),
+            jnp.zeros((1, len(waypoint_steps), embed_dim), dtype=jnp.float32),
             empty_current_latents,
             empty_latents,
             jnp.zeros((1,), dtype=jnp.float32),
@@ -671,7 +675,7 @@ def main():
         args.subgoal_steps,
         flow_matching=flow_matching,
         path_flow_matching=path_flow_matching,
-        waypoint_steps=tuple(args.waypoint_steps),
+        action_block=args.action_block,
         history_size=args.history_size,
         ema_decay=args.ema_decay,
     )

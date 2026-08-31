@@ -16,6 +16,17 @@ FLOW_TRANSFORMER_ARCHITECTURE = 'latent_flow_transformer_encoder'
 LATENT_PATH_FLOW_ARCHITECTURE = 'latent_path_flow_transformer_encoder'
 
 
+def latent_path_waypoint_steps(subgoal_steps, action_block):
+    """Derive path prediction offsets from the control chunk granularity."""
+    subgoal_steps = int(subgoal_steps)
+    action_block = int(action_block)
+    if subgoal_steps <= 0 or action_block <= 0:
+        raise ValueError('Subgoal steps and action block must be positive.')
+    if subgoal_steps % action_block:
+        raise ValueError('Subgoal steps must be divisible by the action block.')
+    return tuple(range(action_block, subgoal_steps + 1, action_block))
+
+
 class LatentSubgoalMLP(nn.Module):
     embed_dim: int
     hidden_dims: tuple[int, ...] = (512, 512, 512)
@@ -364,6 +375,65 @@ def sample_conditional_path_flow(
     return jax.lax.fori_loop(0, num_steps, integrate_step, samples)
 
 
+def sample_conditional_path_flow_candidates(
+    model,
+    params,
+    current_latents,
+    goal_latents,
+    rng,
+    *,
+    num_samples,
+    num_steps=16,
+    solver='euler',
+):
+    """Draw multiple conditional latent paths for every conditioning pair."""
+    if num_samples <= 0:
+        raise ValueError('Latent subgoal sample count must be positive.')
+    current_latents = jnp.asarray(current_latents, dtype=jnp.float32)
+    goal_latents = jnp.asarray(goal_latents, dtype=jnp.float32)
+    batch_size = current_latents.shape[0]
+    repeated_current = jnp.repeat(current_latents, num_samples, axis=0)
+    repeated_goal = jnp.repeat(goal_latents, num_samples, axis=0)
+    paths = sample_conditional_path_flow(
+        model,
+        params,
+        repeated_current,
+        repeated_goal,
+        rng,
+        num_steps=num_steps,
+        solver=solver,
+    )
+    return paths.reshape(
+        batch_size,
+        num_samples,
+        int(model.num_waypoints),
+        current_latents.shape[-1],
+    )
+
+
+def select_latent_path_medoid(candidate_paths):
+    """Select the sampled path with minimum mean distance to all samples."""
+    candidate_paths = jnp.asarray(candidate_paths, dtype=jnp.float32)
+    if candidate_paths.ndim != 4:
+        raise ValueError(
+            'Candidate paths must have shape [B, num_samples, waypoints, D].'
+        )
+    flat_paths = candidate_paths.reshape(
+        candidate_paths.shape[0], candidate_paths.shape[1], -1
+    )
+    pairwise_squared_distances = jnp.sum(
+        jnp.square(flat_paths[:, :, None] - flat_paths[:, None, :]), axis=-1
+    )
+    medoid_indices = jnp.argmin(
+        jnp.mean(pairwise_squared_distances, axis=-1), axis=-1
+    )
+    return jnp.take_along_axis(
+        candidate_paths,
+        medoid_indices[:, None, None, None],
+        axis=1,
+    )[:, 0]
+
+
 def load_latent_subgoal_checkpoint(path):
     """Load generator parameters and its adjacent immutable run config."""
     path = Path(path).expanduser().resolve()
@@ -410,7 +480,9 @@ def load_latent_subgoal_checkpoint(path):
                 'History-conditioned latent path flow requires '
                 'conditioning="history_goal_time_adaln".'
             )
-        waypoint_steps = tuple(int(value) for value in config['waypoint_steps'])
+        waypoint_steps = latent_path_waypoint_steps(
+            config['subgoal_steps'], config['action_block']
+        )
         model = LatentPathFlow(
             embed_dim=embed_dim,
             num_waypoints=len(waypoint_steps),
