@@ -75,3 +75,22 @@ v_\theta(z_\tau,\tau\mid z_c,z_g),\qquad
 ## 评估原则
 
 训练 loss 是速度场 MSE；最终关心的 generator 指标仍是完整 ODE sample 相对 `z^*` 的 latent MSE、L2 和 cosine。因为模型表达的是条件分布，单样本 MSE 不必严格低于条件均值 MLP；最终判断标准是相同 CEM protocol 下的闭环成功率，并同时保留 GT-subgoal oracle 与 global-goal CEM 作为上下界参照。
+
+## 200k CEM 闭环结果
+
+正式评测使用 50 episodes、evaluation seed42、goal offset25、budget50、CEM300x30、H5/RH1、top-k30、min-over-horizon，并与 MLP/global/oracle 共享起点和 CEM plan keys。正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_yb_lewm_flow_transformer_subgoal_moh.sh`。
+
+结果目录：
+
+`/root/data/yyf/lewm-final/evals/lewm-4tasks/20260831_flow_transformer_subgoal_k10_moh_cem300x30_h5_rh1_ep50_seed42/`
+
+| 方法 | Cube | PushT | Reacher | TwoRoom | 四任务平均 | 成功数 |
+|---|---:|---:|---:|---:|---:|---:|
+| Global-goal CEM | 74 | 88 | 100 | 98 | 90.0 | 180/200 |
+| MLP predicted subgoal | 64 | 90 | 82 | 84 | 80.0 | 160/200 |
+| Transformer-CFM predicted subgoal | 70 | 84 | 52 | 92 | 74.5 | 149/200 |
+| GT subgoal oracle | 70 | 96 | 100 | 100 | 91.5 | 183/200 |
+
+Transformer-CFM 相对 MLP 的 paired episode flips：Cube `4/1`、PushT `2/5`、Reacher `1/16`、TwoRoom `5/1`（前者为 Flow-only success，后者为 MLP-only success），合计新增 12、丢失 23，净少 11 个成功 episode。
+
+结论：当前单样本 conditional-flow waypoint 没有解决 subgoal 精度瓶颈。它改善 Cube 和 TwoRoom，但 PushT 下降，Reacher 大幅下降 30 个百分点；总体也明显低于直接规划最终目标。结合离线单样本 MSE 同样变差，说明在当前数据与使用方式下，随机条件分布样本比 MSE 条件均值更容易生成对 CEM 不够精确或不可达的 waypoint。后续不应直接用单个 Flow sample 完全替换 global goal；更合理的方向是候选 subgoal 多采样后按可达性筛选，并保留 global-goal cost。
