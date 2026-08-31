@@ -7,7 +7,12 @@ import json
 import time
 from pathlib import Path
 
-from gciql_chunk_policy import GCIQLChunkPolicy, load_agent_config, load_lance_policy
+from gciql_chunk_policy import (
+    GCIQLChunkPolicy,
+    LatentSubgoalGCIQLChunkPolicy,
+    load_agent_config,
+    load_lance_policy,
+)
 from lewm_jax.planner import JAXLeWMCEMPolicy, json_safe
 
 from ogbench.lewm_envs.evaluation import (
@@ -17,22 +22,21 @@ from ogbench.lewm_envs.evaluation import (
     task_paths,
 )
 
+# TODO: Re-enable configurable multi-sample/medoid inference after the
+# single-sample subgoal baseline is fully characterized.
+LATENT_SUBGOAL_NUM_SAMPLES = 1
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task', choices=('cube', 'pusht', 'reacher', 'tworoom'), required=True)
     parser.add_argument(
-        '--mode',
-        choices=(
-            'policy',
-            'lewm',
-            'subgoal_lewm',
-            'oracle_subgoal_lewm',
-            'guided',
-            'native_q',
-        ),
-        required=True,
+        '--controller', choices=('direct_policy', 'lewm_cem'), required=True
     )
+    parser.add_argument(
+        '--policy-guidance', choices=('none', 'mode'), default='none'
+    )
+    parser.add_argument('--use-subgoal', action='store_true')
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--lewm-checkpoint')
     parser.add_argument('--policy-checkpoint-dir')
@@ -45,20 +49,15 @@ def parse_args():
     parser.add_argument('--cem-receding-horizon', type=int, default=1)
     parser.add_argument('--action-block', type=int, default=5)
     parser.add_argument('--cem-num-samples', type=int, default=300)
-    parser.add_argument('--cem-steps', type=int, default=5)
+    parser.add_argument('--cem-iterations', type=int, default=30)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--latent-subgoal-checkpoint')
-    parser.add_argument('--latent-subgoal-refresh-steps', type=int, default=10)
-    parser.add_argument('--num-samples', type=int, default=8)
-    parser.add_argument('--oracle-subgoal-steps', type=int, default=10)
     parser.add_argument(
         '--cem-cost-mode',
-        choices=('terminal', 'min_over_horizon', 'fixed_subgoal_horizon'),
-        default='min_over_horizon',
+        choices=('last', 'moh'),
+        default='moh',
     )
-    parser.add_argument('--proposal-num-samples', type=int, default=64)
-    parser.add_argument('--proposal-temperature', type=float, default=0.1)
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
@@ -66,17 +65,23 @@ def parse_args():
 
 def main():
     args = parse_args()
-    needs_lewm = args.mode != 'policy'
-    needs_policy = args.mode in ('policy', 'guided', 'native_q')
-    needs_subgoal = args.mode == 'subgoal_lewm'
-    needs_oracle_subgoal = args.mode == 'oracle_subgoal_lewm'
+    needs_lewm = args.controller == 'lewm_cem'
+    needs_policy = args.controller == 'direct_policy' or args.policy_guidance != 'none'
+    needs_subgoal = args.use_subgoal
+    if args.controller == 'direct_policy' and args.policy_guidance != 'none':
+        raise ValueError('Policy guidance only applies to the lewm_cem controller.')
+    if needs_subgoal and args.policy_guidance != 'none':
+        raise ValueError(
+            'Subgoal evaluation currently supports pure LeWM CEM or direct policy, '
+            'not policy-guided CEM.'
+        )
     if needs_lewm != (args.lewm_checkpoint is not None):
-        raise ValueError('This mode has an invalid --lewm-checkpoint combination.')
+        raise ValueError('Invalid controller/--lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
-        raise ValueError('This mode has an invalid --policy-checkpoint-dir combination.')
+        raise ValueError('Invalid controller/guidance policy-checkpoint combination.')
     if needs_subgoal != (args.latent_subgoal_checkpoint is not None):
         raise ValueError(
-            'This mode has an invalid --latent-subgoal-checkpoint combination.'
+            'Invalid use-subgoal/--latent-subgoal-checkpoint combination.'
         )
 
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
@@ -98,10 +103,19 @@ def main():
                 args.policy_checkpoint_dir,
                 args.policy_checkpoint_step,
             )
-        if args.mode == 'policy':
-            policy = GCIQLChunkPolicy(proposal_agent, scaler, args.seed)
+        if args.controller == 'direct_policy':
+            if needs_subgoal:
+                policy = LatentSubgoalGCIQLChunkPolicy(
+                    proposal_agent,
+                    scaler,
+                    args.seed,
+                    args.latent_subgoal_checkpoint,
+                    LATENT_SUBGOAL_NUM_SAMPLES,
+                    args.action_block,
+                )
+            else:
+                policy = GCIQLChunkPolicy(proposal_agent, scaler, args.seed)
         else:
-            selection = 'native_q' if args.mode == 'native_q' else 'mode'
             policy = JAXLeWMCEMPolicy(
                 args.lewm_checkpoint,
                 scaler,
@@ -110,22 +124,17 @@ def main():
                 receding_horizon=args.cem_receding_horizon,
                 action_block=args.action_block,
                 num_samples=args.cem_num_samples,
-                steps=args.cem_steps,
+                iterations=args.cem_iterations,
                 topk=args.cem_topk,
                 var_scale=args.cem_var_scale,
                 cost_mode=args.cem_cost_mode,
                 proposal_agent=proposal_agent,
-                proposal_temperature=(
-                    args.proposal_temperature if args.mode == 'native_q' else 0.0
-                ),
-                proposal_num_samples=(
-                    args.proposal_num_samples if args.mode == 'native_q' else 1
-                ),
-                proposal_selection=selection,
+                proposal_temperature=0.0,
+                proposal_num_samples=1,
+                proposal_selection='mode',
                 paired_plan_keys=True,
                 latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
-                latent_subgoal_refresh_steps=args.latent_subgoal_refresh_steps,
-                latent_subgoal_num_samples=args.num_samples,
+                latent_subgoal_num_samples=LATENT_SUBGOAL_NUM_SAMPLES,
             )
         started = time.time()
         metrics = evaluate_dataset_goals(
@@ -137,9 +146,6 @@ def main():
             eval_budget=args.eval_budget,
             policy=policy,
             video_dir=args.video_dir,
-            oracle_subgoal_steps=(
-                args.oracle_subgoal_steps if needs_oracle_subgoal else None
-            ),
         )
     finally:
         dataset.close()
@@ -147,7 +153,9 @@ def main():
     result = {
         'suite': 'lewm_4tasks',
         'task': args.task,
-        'mode': args.mode,
+        'controller': args.controller,
+        'policy_guidance': args.policy_guidance,
+        'use_subgoal': args.use_subgoal,
         'representation_mode': representation_mode,
         'lewm_checkpoint': args.lewm_checkpoint,
         'policy_checkpoint_dir': args.policy_checkpoint_dir,
@@ -157,8 +165,8 @@ def main():
             if not needs_subgoal
             else {
                 'checkpoint': policy.latent_subgoal_checkpoint,
+                'lewm_checkpoint': policy.lewm_checkpoint,
                 'checkpoint_step': policy.latent_subgoal_checkpoint_step,
-                'refresh_steps': policy.latent_subgoal_refresh_steps,
                 'num_samples': policy.latent_subgoal_num_samples,
                 'sample_selection': policy.latent_subgoal_sample_selection,
                 'training_subgoal_steps': int(
@@ -173,36 +181,23 @@ def main():
                 'generation_counts': policy.latent_subgoal_generation_counts,
             }
         ),
-        'oracle_subgoal': (
-            None
-            if not needs_oracle_subgoal
-            else {
-                'subgoal_steps': args.oracle_subgoal_steps,
-                'waypoint_offsets': metrics['oracle_subgoal_offsets'],
-                'source': 'same_evaluation_dataset_trajectory',
-            }
-        ),
         'seed': args.seed,
         'num_eval': args.num_eval,
         'goal_offset_steps': args.goal_offset_steps,
         'eval_budget': args.eval_budget,
         'cem': (
             None
-            if args.mode == 'policy'
+            if args.controller == 'direct_policy'
             else {
-                'horizon': args.cem_horizon,
+                'requested_horizon': args.cem_horizon,
+                'horizon': policy.horizon,
                 'receding_horizon': args.cem_receding_horizon,
                 'action_block': args.action_block,
                 'num_samples': args.cem_num_samples,
-                'steps': args.cem_steps,
+                'iterations': args.cem_iterations,
                 'topk': args.cem_topk,
                 'var_scale': args.cem_var_scale,
                 'cost_mode': args.cem_cost_mode,
-                'fixed_subgoal_horizon_index': (
-                    policy.fixed_subgoal_horizon_index
-                    if needs_subgoal
-                    else None
-                ),
             }
         ),
         'metrics': metrics,

@@ -158,15 +158,6 @@ def _resize_frame(value, image_size):
     return frame.astype(np.uint8, copy=False)
 
 
-def oracle_subgoal_offsets(goal_offset, subgoal_steps):
-    """Return demonstration waypoint offsets ending exactly at the final goal."""
-    goal_offset = int(goal_offset)
-    subgoal_steps = int(subgoal_steps)
-    if goal_offset <= 0 or subgoal_steps <= 0:
-        raise ValueError('Goal offset and oracle subgoal steps must be positive.')
-    return tuple(range(subgoal_steps, goal_offset, subgoal_steps)) + (goal_offset,)
-
-
 def _set_dataset_state(task, env, init_row, goal_row):
     env = env.unwrapped
     if task == 'cube':
@@ -200,7 +191,6 @@ def evaluate_dataset_goals(
     policy,
     image_size=224,
     video_dir=None,
-    oracle_subgoal_steps=None,
 ):
     """Evaluate one policy from fixed dataset states and future image goals."""
     spec = TASK_SPECS[task]
@@ -216,12 +206,6 @@ def evaluate_dataset_goals(
     frames = [[] for _ in envs] if video_dir else None
     seeds = []
     goals = []
-    oracle_goals = []
-    oracle_offsets = None
-    if oracle_subgoal_steps is not None:
-        oracle_offsets = oracle_subgoal_offsets(
-            goal_offset, oracle_subgoal_steps
-        )
     try:
         for env, episode, start in zip(envs, episodes, starts):
             init_row = dataset.row(episode, start)
@@ -231,25 +215,9 @@ def evaluate_dataset_goals(
             env.reset(seed=seed)
             _set_dataset_state(task, env, init_row, goal_row)
             goals.append(_resize_frame(_dataset_pixels(goal_row['pixels']), image_size))
-            if oracle_offsets is not None:
-                oracle_goals.append(
-                    np.stack(
-                        [
-                            _resize_frame(
-                                _dataset_pixels(
-                                    dataset.row(episode, start + offset)['pixels']
-                                ),
-                                image_size,
-                            )
-                            for offset in oracle_offsets
-                        ]
-                    )
-                )
 
         pixels = np.stack([_resize_frame(env.render(), image_size) for env in envs])
         goals = np.stack(goals)
-        if oracle_offsets is not None:
-            oracle_goals = np.stack(oracle_goals)
         if frames is not None:
             for index, frame in enumerate(pixels):
                 frames[index].append(frame.copy())
@@ -257,19 +225,8 @@ def evaluate_dataset_goals(
         alive = np.ones(len(envs), dtype=bool)
         successes = np.zeros(len(envs), dtype=bool)
         policy.reset(envs[0].action_space, len(envs))
-        for step in range(eval_budget):
-            if oracle_offsets is None:
-                planning_goals = goals
-            else:
-                waypoint_index = min(
-                    step // int(oracle_subgoal_steps), len(oracle_offsets) - 1
-                )
-                planning_goals = oracle_goals[:, waypoint_index]
-            actions = np.asarray(
-                policy.get_actions(
-                    pixels[:, None], planning_goals[:, None], alive
-                )
-            )
+        for _ in range(eval_budget):
+            actions = np.asarray(policy.get_actions(pixels[:, None], goals[:, None], alive))
             expected = (len(envs), *envs[0].action_space.shape)
             if actions.shape != expected:
                 raise ValueError(f'Policy action shape {actions.shape} does not match {expected}.')
@@ -292,14 +249,11 @@ def evaluate_dataset_goals(
             output.mkdir(parents=True, exist_ok=True)
             for index, episode_frames in enumerate(frames):
                 iio.imwrite(output / f'episode_{index}.mp4', np.stack(episode_frames), fps=10)
-        result = {
+        return {
             'success_rate': float(successes.mean() * 100.0),
             'episode_successes': successes,
             'seeds': seeds,
         }
-        if oracle_offsets is not None:
-            result['oracle_subgoal_offsets'] = oracle_offsets
-        return result
     finally:
         for env in envs:
             env.close()
