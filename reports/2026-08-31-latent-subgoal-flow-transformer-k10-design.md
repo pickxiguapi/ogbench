@@ -84,28 +84,35 @@ v_\theta(z_\tau,\tau\mid z_c,z_g),\qquad
 
 `/root/data/yyf/lewm-final/evals/lewm-4tasks/20260831_flow_transformer_subgoal_k10_moh_cem300x30_h5_rh1_ep50_seed42/`
 
-| 方法 | Cube | PushT | Reacher | TwoRoom | 四任务平均 | 成功数 |
-|---|---:|---:|---:|---:|---:|---:|
-| Global-goal CEM | 74 | 88 | 100 | 98 | 90.0 | 180/200 |
-| MLP predicted subgoal | 64 | 90 | 82 | 84 | 80.0 | 160/200 |
-| Transformer-CFM predicted subgoal | 70 | 84 | 52 | 92 | 74.5 | 149/200 |
-| GT subgoal oracle | 70 | 96 | 100 | 100 | 91.5 | 183/200 |
+| 方法 | Cube | PushT | Reacher | TwoRoom | 四任务平均 |
+|---|---:|---:|---:|---:|---:|
+| Global-goal CEM | 74 | 88 | 100 | 98 | 90.0 |
+| MLP predicted subgoal | 64 | 90 | 82 | 84 | 80.0 |
+| Transformer-CFM predicted subgoal | 70 | 84 | 52 | 92 | 74.5 |
+| GT subgoal oracle | 70 | 96 | 100 | 100 | 91.5 |
 
 Transformer-CFM 相对 MLP 的 paired episode flips：Cube `4/1`、PushT `2/5`、Reacher `1/16`、TwoRoom `5/1`（前者为 Flow-only success，后者为 MLP-only success），合计新增 12、丢失 23，净少 11 个成功 episode。
 
 结论：当前单样本 conditional-flow waypoint 没有解决 subgoal 精度瓶颈。它改善 Cube 和 TwoRoom，但 PushT 下降，Reacher 大幅下降 30 个百分点；总体也明显低于直接规划最终目标。结合离线单样本 MSE 同样变差，说明在当前数据与使用方式下，随机条件分布样本比 MSE 条件均值更容易生成对 CEM 不够精确或不可达的 waypoint。后续不应直接用单个 Flow sample 完全替换 global goal；更合理的方向是候选 subgoal 多采样后按可达性筛选，并保留 global-goal cost。
 
-### 不使用 MoH：H5 terminal cost
+### Subgoal cost 时间位置消融
 
 保持其他协议完全相同，只将 CEM cost 从 `min_over_horizon` 改为 `terminal`。此时只比较第 5 个 LeWM rollout checkpoint，即约 `t+25`，而 generator 的训练与刷新尺度仍是 K10。
 
 | Flow subgoal cost | Cube | PushT | Reacher | TwoRoom | 四任务平均 |
 |---|---:|---:|---:|---:|---:|
 | MoH | 70 | 84 | 52 | 92 | 74.5 |
+| Fixed K10（第 2 个 checkpoint） | 72 | 76 | 50 | 84 | 70.5 |
 | H5 terminal | 58 | 8 | 24 | 50 | 35.0 |
 
-Terminal 相对 MoH 的 paired episode flips 合计为 terminal-only 3、MoH-only 82。结果表明 MoH 对当前 K10 subgoal 是必要的：H5 terminal 要求预测 rollout 在约 `t+25` 才接近一个本应在 `t+10` 到达、并且每 10 步刷新的 waypoint，时间尺度严重错位。若要做合理的非 MoH K10 版本，应把固定 cost 放在 rollout 的第 2 个 checkpoint，不能使用 H5 terminal。
+Terminal 相对 MoH 的 paired episode flips 合计为 terminal-only 3、MoH-only 82。H5 terminal 要求预测 rollout 在约 `t+25` 才接近一个本应在 `t+10` 到达、并且每 10 步刷新的 waypoint，时间尺度严重错位；因此另测固定第 2 个 checkpoint 的 K10 cost。
+
+Fixed K10 的正式 Bash 为 `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_flow_transformer_subgoal_fixed_k10.sh`。结果 JSON 中记录 `fixed_subgoal_horizon_index=1`，确认使用零基第 2 个未来 checkpoint。Fixed K10 相对 MoH 的 paired flips 为 fixed-only 11、MoH-only 19；Cube 提高 2 分，但 PushT、Reacher、TwoRoom 分别下降 8、2、8 分。说明校正时间位置能够消除 terminal 的主要错误，却仍不如 MoH 对单样本 Flow subgoal 的误差容忍度。
 
 Terminal 结果目录：
 
 `/root/data/yyf/lewm-final/evals/lewm-4tasks/20260831_flow_transformer_subgoal_k10_terminal_cem300x30_h5_rh1_ep50_seed42/`
+
+Fixed K10 结果目录：
+
+`/root/data/yyf/lewm-final/evals/lewm-4tasks/20260831_flow_transformer_subgoal_fixed_k10_cem300x30_h5_rh1_ep50_seed42/`
