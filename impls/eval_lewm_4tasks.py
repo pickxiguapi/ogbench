@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument('--oracle-subgoal-steps', type=int, default=10)
     parser.add_argument(
         '--cem-cost-mode',
-        choices=('terminal', 'min_over_horizon'),
+        choices=('terminal', 'min_over_horizon', 'fixed_subgoal_horizon'),
         default='min_over_horizon',
     )
     parser.add_argument('--proposal-num-samples', type=int, default=64)
@@ -188,6 +188,11 @@ def main():
                 'topk': args.cem_topk,
                 'var_scale': args.cem_var_scale,
                 'cost_mode': args.cem_cost_mode,
+                'fixed_subgoal_horizon_index': (
+                    policy.fixed_subgoal_horizon_index
+                    if needs_subgoal
+                    else None
+                ),
             }
         ),
         'metrics': metrics,

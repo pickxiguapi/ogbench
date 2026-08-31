@@ -63,7 +63,7 @@ def parse_args():
     )
     parser.add_argument(
         '--cem-cost-mode',
-        choices=('terminal', 'min_over_horizon'),
+        choices=('terminal', 'min_over_horizon', 'fixed_subgoal_horizon'),
         default='terminal',
     )
     parser.add_argument(
@@ -159,6 +159,33 @@ def sha256_file(path, chunk_size=8 * 1024 * 1024):
     return digest.hexdigest()
 
 
+def fixed_subgoal_horizon_index(subgoal_steps, action_block, horizon):
+    """Map a K-step subgoal to its zero-based LeWM rollout checkpoint."""
+    if subgoal_steps <= 0 or action_block <= 0 or horizon <= 0:
+        raise ValueError('Subgoal steps, action block, and horizon must be positive.')
+    if subgoal_steps % action_block:
+        raise ValueError('Fixed subgoal steps must be divisible by the action block.')
+    index = subgoal_steps // action_block - 1
+    if index >= horizon:
+        raise ValueError('Fixed subgoal horizon must lie within the CEM horizon.')
+    return index
+
+
+def select_latent_subgoal_costs(
+    latent_distances, cost_mode, fixed_horizon_index=None
+):
+    """Select one cost per candidate from rollout-to-subgoal distances."""
+    if cost_mode == 'terminal':
+        return latent_distances[:, :, -1][0]
+    if cost_mode == 'min_over_horizon':
+        return jnp.min(latent_distances, axis=-1)[0]
+    if cost_mode == 'fixed_subgoal_horizon':
+        if fixed_horizon_index is None:
+            raise ValueError('Fixed subgoal cost requires a horizon index.')
+        return latent_distances[:, :, fixed_horizon_index][0]
+    raise ValueError(f'Unsupported latent subgoal cost mode: {cost_mode!r}.')
+
+
 class JAXLeWMCEMPolicy:
     """Direct JAX CEM/MPPI planner with normalized action-block warm starts."""
 
@@ -242,6 +269,10 @@ class JAXLeWMCEMPolicy:
                 )
             if latent_subgoal_refresh_steps <= 0:
                 raise ValueError('Latent subgoal refresh steps must be positive.')
+        elif cost_mode == 'fixed_subgoal_horizon':
+            raise ValueError(
+                'Fixed subgoal horizon cost requires a latent subgoal checkpoint.'
+            )
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if planner not in ('cem', 'mppi'):
@@ -409,6 +440,13 @@ class JAXLeWMCEMPolicy:
         self.horizon = int(horizon)
         self.receding_horizon = int(receding_horizon)
         self.action_block = int(action_block)
+        self.fixed_subgoal_horizon_index = None
+        if cost_mode == 'fixed_subgoal_horizon':
+            self.fixed_subgoal_horizon_index = fixed_subgoal_horizon_index(
+                self.latent_subgoal_refresh_steps,
+                self.action_block,
+                self.horizon,
+            )
         self.context_history_size = int(context_history_size)
         self.temporal_parameterization = str(temporal_parameterization)
         self.empirical_action_blocks = None
@@ -642,6 +680,8 @@ class JAXLeWMCEMPolicy:
             rollout_cost_method = model.rollout_cost
         elif self.cost_mode == 'min_over_horizon':
             rollout_cost_method = model.rollout_cost_min_over_horizon
+        elif self.cost_mode == 'fixed_subgoal_horizon':
+            rollout_cost_method = model.rollout_cost
         else:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
 
@@ -791,10 +831,11 @@ class JAXLeWMCEMPolicy:
                         ** 2,
                         axis=-1,
                     )
-                    if self.cost_mode == 'terminal':
-                        costs = latent_distances[:, :, -1][0]
-                    else:
-                        costs = jnp.min(latent_distances, axis=-1)[0]
+                    costs = select_latent_subgoal_costs(
+                        latent_distances,
+                        self.cost_mode,
+                        self.fixed_subgoal_horizon_index,
+                    )
                 elif latent_probe_weight is None:
                     costs = model.apply(
                         variables,
@@ -916,6 +957,8 @@ class JAXLeWMCEMPolicy:
             rollout_cost_method = model.rollout_cost
         elif self.cost_mode == 'min_over_horizon':
             rollout_cost_method = model.rollout_cost_min_over_horizon
+        elif self.cost_mode == 'fixed_subgoal_horizon':
+            rollout_cost_method = model.rollout_cost
         else:
             raise ValueError(f'Unsupported CEM cost mode: {self.cost_mode!r}.')
         latent_probe_weight = (

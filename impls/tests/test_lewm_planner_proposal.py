@@ -4,7 +4,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from eval_lewm_4tasks import JAXLeWMCEMPolicy
-from lewm_jax.planner import validate_shared_q_lewm_checkpoint
+from lewm_jax.planner import (
+    fixed_subgoal_horizon_index,
+    select_latent_subgoal_costs,
+    validate_shared_q_lewm_checkpoint,
+)
 
 
 class FakeChunkAgent:
@@ -58,6 +62,21 @@ def proposal_policy():
 
 
 class ProposalInitializationTest(unittest.TestCase):
+    def test_fixed_subgoal_horizon_maps_k10_to_second_checkpoint(self):
+        self.assertEqual(fixed_subgoal_horizon_index(10, 5, 5), 1)
+        with self.assertRaisesRegex(ValueError, 'divisible'):
+            fixed_subgoal_horizon_index(7, 5, 5)
+        with self.assertRaisesRegex(ValueError, 'within'):
+            fixed_subgoal_horizon_index(30, 5, 5)
+
+        distances = jnp.asarray([[[5.0, 1.0, 4.0], [2.0, 3.0, 6.0]]])
+        np.testing.assert_array_equal(
+            select_latent_subgoal_costs(
+                distances, 'fixed_subgoal_horizon', fixed_horizon_index=1
+            ),
+            [1.0, 3.0],
+        )
+
     def test_latent_subgoal_is_held_for_exact_refresh_interval(self):
         policy = object.__new__(JAXLeWMCEMPolicy)
         policy.checkpoint_metadata = {'embed_dim': 3}

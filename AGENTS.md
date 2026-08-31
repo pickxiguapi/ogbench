@@ -202,6 +202,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_oracle_subgoal_moh.sh` | 英博云用 evaluation trajectory 的 GT K10 waypoint 评测纯 CEM MoH，测量 subgoal 可利用性的 oracle 上界 |
 | `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_flow_transformer_subgoal_moh.sh` | 英博云用 200k Transformer-CFM K10 predicted latent subgoal 评测纯 CEM MoH，与 MLP/global/oracle 严格配对 |
 | `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_flow_transformer_subgoal_terminal.sh` | 英博云用 200k Transformer-CFM K10 predicted latent subgoal 评测 H5 terminal CEM；除不用 MoH 外与 Flow-MoH 严格配对 |
+| `exp/eval/lewm_4tasks/20260831_eval_yb_lewm_flow_transformer_subgoal_fixed_k10.sh` | 英博云固定比较第 2 个 rollout checkpoint (t+10) 与 200k Transformer-CFM K10 subgoal；其余协议与 Flow-MoH 严格配对 |
 | `exp/eval/ogbench_env_8tasks/20260823_eval_node2_ogbench_env_8tasks.sh` | OGBench-Env-8Tasks 主评测 |
 | `exp/train/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 顺序复现 LeWM-4Tasks 四种训练设计 |
 | `exp/train/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 顺序复现 OGBench-Env-8Tasks 四种训练设计 |
