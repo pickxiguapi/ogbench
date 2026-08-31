@@ -167,3 +167,15 @@ J_{\mathrm{MoH}}=
 | Direct global-goal H5 MoH | 74 | 88 | 100 | 98 | 90.0 |
 
 MoH 相对 terminal 的 paired flips（MoH-only / terminal-only）为 Cube `1/3`、PushT `6/3`、Reacher `12/5`、TwoRoom `0/0`，净增加 8 个成功 episode，宏平均提高 4 分。MoH 后 Cube、PushT、TwoRoom 均不低于 direct global-goal baseline；剩余 8 分宏平均差距全部由 Reacher 的 62 vs 100 造成。
+
+### 与无 subgoal 的严格 H2 MoH 对照
+
+为了排除上一表 H5 与 H2 规划视野不同的混杂因素，额外运行无 subgoal 的 global-goal 对照。除 planner 直接追踪 dataset K25 global goal 外，其余参数与 corrected K10 subgoal 完全相同：50 episodes、seed42、budget50、CEM300x30、H2/RH1、action block5、top-k30、MoH。
+
+| H2 MoH target | Cube | PushT | Reacher | TwoRoom | Macro |
+|---|---:|---:|---:|---:|---:|
+| K25 global goal（无 subgoal） | 76 | 76 | 96 | 86 | 83.5 |
+| Predicted K10 subgoal | 76 | 90 | 62 | 100 | 82.0 |
+| Predicted K10 - global | 0 | +14 | -34 | +14 | -1.5 |
+
+同一批 episode 的 paired flips（subgoal-only / global-only）为 Cube `3/3`、PushT `10/3`、Reacher `1/18`、TwoRoom `7/0`。因此不能笼统地说 predicted subgoal 在四个任务上都不准确或都伤害规划：它在 PushT 与 TwoRoom 明显有益，Cube 持平。当前主要失败点集中在 Reacher；该任务的 K10 离线指标也是四个任务中第二差（MSE `0.9133`、cosine `0.5394`），且严格同视野下换回 global goal 即由 62% 恢复到 96%，支持“Reacher 的主要瓶颈是 subgoal prediction quality”。但这仍是强证据而非单独充分的因果证明；最终应以同协议的 GT K10 oracle 上限来区分 predictor error 与局部目标本身的可规划性。
