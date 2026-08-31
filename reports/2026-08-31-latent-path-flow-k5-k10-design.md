@@ -143,3 +143,27 @@ J(a_{t:t+9})=
 | H2 terminal，正确每次 replan refresh=5 | 80 | 84 | 48 | 100 | 78.0 |
 
 从 H5 错位协议到完全修正协议，宏平均提高 38.5 个百分点；仅修正刷新频率就提高 10.5 个百分点。结果 JSON 明确记录 `training_subgoal_steps=10`、`selected_waypoint_step=10`、`refresh_steps=5`、`horizon=2`、`cost_mode=terminal`。Reacher 仍只有 48%，与它最差的 K10 离线预测指标（MSE 0.9133、cosine 0.5394）一致，当前剩余的主要瓶颈是该任务的 subgoal prediction quality。
+
+### Refresh5 H2 MoH
+
+在完全修正的 K10-only H2 协议上，只将 cost 从 terminal 改成：
+
+\[
+J_{\mathrm{MoH}}=
+\min_{h\in\{5,10\}}
+\left\|\hat z^{\mathrm{LeWM}}_{t+h}-z^{\mathrm{pred}}_{t+10}\right\|_2^2.
+\]
+
+正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_node4_lewm_latent_path_flow_k10_h2_moh.sh`。其余保持 K25 condition goal、refresh5、H2/RH1、CEM300x30、50 episodes、seed42，不使用预测的 K5 token。
+
+结果目录：
+
+`/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260831_latent_path_flow_k10_only_refresh5_moh_cem300x30_h2_rh1_ep50_seed42/`
+
+| Corrected K10-only cost | Cube | PushT | Reacher | TwoRoom | Macro |
+|---|---:|---:|---:|---:|---:|
+| H2 terminal | 80 | 84 | 48 | 100 | 78.0 |
+| H2 MoH over t+5/t+10 | 76 | 90 | 62 | 100 | 82.0 |
+| Direct global-goal H5 MoH | 74 | 88 | 100 | 98 | 90.0 |
+
+MoH 相对 terminal 的 paired flips（MoH-only / terminal-only）为 Cube `1/3`、PushT `6/3`、Reacher `12/5`、TwoRoom `0/0`，净增加 8 个成功 episode，宏平均提高 4 分。MoH 后 Cube、PushT、TwoRoom 均不低于 direct global-goal baseline；剩余 8 分宏平均差距全部由 Reacher 的 62 vs 100 造成。
