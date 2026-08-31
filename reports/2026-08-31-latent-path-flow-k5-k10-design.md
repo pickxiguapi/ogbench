@@ -85,3 +85,31 @@ X_\tau=(1-\tau)\epsilon+\tau Z^*.
 - `exp/train/latent_subgoal/20260831_run_node4_4tasks_latent_path_flow_k10_s0.sh`（node4 GPU0–3 四任务并行；`TASKS` 可选择子集）
 
 训练完成后的 CEM 使用方式另行做严格配对评测：LeWM 第一个 rollout checkpoint（t+5）匹配预测 K5，第二个 checkpoint（t+10）匹配预测 K10，并将两个 latent MSE 相加作为候选动作序列 cost。
+
+## 200k 训练结果
+
+四任务均在 node4 完成 200k steps，单任务约 20.4 分钟。最终单样本验证如下：
+
+| Task | Joint MSE / cosine | K5 MSE / cosine | K10 MSE / cosine |
+|---|---:|---:|---:|
+| PushT | 0.0878 / 0.9538 | 0.0676 / 0.9645 | 0.1081 / 0.9429 |
+| Cube | 0.2406 / 0.8760 | 0.1732 / 0.9091 | 0.3080 / 0.8428 |
+| Reacher | 0.7509 / 0.6213 | 0.5885 / 0.7032 | 0.9133 / 0.5394 |
+| TwoRoom | 1.0780 / 0.4356 | 1.0824 / 0.4289 | 1.0735 / 0.4396 |
+
+## 只用 K10 替换 K25 global goal：H5 terminal CEM
+
+正式 Bash：`exp/eval/lewm_4tasks/20260831_eval_node4_lewm_latent_path_flow_k10_terminal.sh`。
+
+协议为 50 episodes、evaluation seed42、dataset goal offset25、budget50、CEM300x30、H5/RH1、top-k30。Generator 仍以 `z_t,z_g(K25)` 为条件生成 `[K5,K10]`，planner 只选择 index1 的 K10 token，并每 10 atomic steps 刷新。CEM cost 仅比较第 5 个 LeWM rollout checkpoint（约 t+25）与 predicted K10；不使用 K5，也不使用 MoH。
+
+结果目录：
+
+`/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260831_latent_path_flow_k10_only_terminal_cem300x30_h5_rh1_ep50_seed42/`
+
+| Method | Cube | PushT | Reacher | TwoRoom | Macro |
+|---|---:|---:|---:|---:|---:|
+| Single-point Transformer-CFM K10, H5 terminal | 58 | 8 | 24 | 50 | 35.0 |
+| LatentPathFlow K10 token, H5 terminal | 62 | 14 | 24 | 58 | 39.5 |
+
+结果 JSON 均记录 `selected_waypoint_index=1`、`selected_waypoint_step=10` 和 `cost_mode=terminal`。LatentPathFlow 相对旧单点 Flow 提升 4.5 个宏平均百分点，但总体仍很差。原因不是误用了 K5 或 MoH，而是 H5 terminal 要求约 t+25 的 LeWM rollout 回到一个应在 t+10 到达的局部 waypoint，时间位置不匹配。下一步若要检验 K10 本身的可利用性，应固定比较第 2 个 rollout checkpoint（t+10）；若要检验两点路径，则使用 K5/K10 两项对齐 cost。
