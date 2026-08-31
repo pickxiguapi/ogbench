@@ -102,6 +102,35 @@ class ProposalInitializationTest(unittest.TestCase):
 
         np.testing.assert_array_equal(target, np.zeros(4, dtype=np.float32))
 
+    def test_flow_subgoal_rng_is_reproducible_per_generation(self):
+        policy = object.__new__(JAXLeWMCEMPolicy)
+        policy.checkpoint_metadata = {'embed_dim': 3}
+        policy.seed = 42
+        policy._latent_subgoal_requires_rng = True
+        policy._predict_latent_subgoal = lambda current, goal, rng: jax.random.normal(
+            rng, current.shape
+        )
+        policy.latent_subgoal_refresh_steps = 10
+        policy.latent_subgoals = [None]
+        policy.latent_subgoal_ages = np.zeros(1, dtype=np.int64)
+        policy.latent_subgoal_generation_counts = np.zeros(1, dtype=np.int64)
+        policy.encode_pixels = lambda pixels: np.zeros((1, 3), dtype=np.float32)
+
+        first = policy._planning_target_embedding(0, np.zeros((1,)), np.zeros((1,)))
+        policy.latent_subgoal_ages[0] = 10
+        second = policy._planning_target_embedding(0, np.zeros((1,)), np.zeros((1,)))
+
+        self.assertFalse(np.array_equal(first, second))
+        replay = object.__new__(JAXLeWMCEMPolicy)
+        replay.__dict__.update(policy.__dict__)
+        replay.latent_subgoals = [None]
+        replay.latent_subgoal_ages = np.zeros(1, dtype=np.int64)
+        replay.latent_subgoal_generation_counts = np.zeros(1, dtype=np.int64)
+        replay_first = replay._planning_target_embedding(
+            0, np.zeros((1,)), np.zeros((1,))
+        )
+        np.testing.assert_array_equal(first, replay_first)
+
     def test_checkpoint_path_check_applies_only_to_shared_q(self):
         pi_only = type(
             'PiOnly',

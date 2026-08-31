@@ -1,4 +1,4 @@
-"""Train a pure supervised subgoal generator on frozen LeWM latent caches."""
+"""Train a latent subgoal generator on frozen LeWM latent caches."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import os
 import re
 import time
 from pathlib import Path
+from typing import Any
 
 import flax
 import jax
@@ -15,7 +16,13 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.training import train_state
-from latent_subgoal import LatentSubgoalMLP
+from latent_subgoal import (
+    DIRECT_MLP_ARCHITECTURE,
+    FLOW_TRANSFORMER_ARCHITECTURE,
+    LatentSubgoalFlowTransformer,
+    LatentSubgoalMLP,
+    sample_conditional_flow,
+)
 from utils.latent_subgoal_dataset import (
     build_valid_transitions,
     load_latent_cache,
@@ -35,7 +42,19 @@ def parse_args():
     parser.add_argument('--subgoal-steps', type=int, default=10)
     parser.add_argument('--train-steps', type=int, default=100_000)
     parser.add_argument('--batch-size', type=int, default=1024)
+    parser.add_argument(
+        '--architecture',
+        choices=('direct_mlp', 'transformer_flow'),
+        default='direct_mlp',
+    )
     parser.add_argument('--hidden-dims', type=int, nargs='+', default=(512, 512, 512))
+    parser.add_argument('--model-dim', type=int, default=384)
+    parser.add_argument('--num-layers', type=int, default=8)
+    parser.add_argument('--num-heads', type=int, default=8)
+    parser.add_argument('--mlp-dim', type=int, default=1536)
+    parser.add_argument('--flow-sampling-steps', type=int, default=16)
+    parser.add_argument('--flow-solver', choices=('euler', 'heun'), default='heun')
+    parser.add_argument('--ema-decay', type=float, default=0.9999)
     parser.add_argument('--learning-rate', type=float, default=3e-4)
     parser.add_argument('--final-learning-rate', type=float, default=3e-5)
     parser.add_argument('--warmup-steps', type=int, default=2000)
@@ -61,6 +80,11 @@ def validate_args(args):
         'log_interval',
         'eval_interval',
         'checkpoint_interval',
+        'model_dim',
+        'num_layers',
+        'num_heads',
+        'mlp_dim',
+        'flow_sampling_steps',
     )
     for name in positive:
         if getattr(args, name) <= 0:
@@ -75,6 +99,16 @@ def validate_args(args):
         raise ValueError('weight_decay must be non-negative and gradient_clip must be positive.')
     if not args.hidden_dims or any(value <= 0 for value in args.hidden_dims):
         raise ValueError('hidden_dims must contain positive integers.')
+    if args.model_dim % args.num_heads:
+        raise ValueError('model_dim must be divisible by num_heads.')
+    if args.model_dim % 2:
+        raise ValueError('model_dim must be even for sinusoidal flow-time embeddings.')
+    if not 0.0 <= args.ema_decay < 1.0:
+        raise ValueError('ema_decay must be in [0, 1).')
+
+
+class FlowTrainState(train_state.TrainState):
+    ema_params: Any
 
 
 def json_safe(value):
@@ -145,10 +179,18 @@ def restore_checkpoint(state, path):
     return restored, rng
 
 
-def make_train_step(model, learning_rate_schedule, batch_size, subgoal_steps):
+def make_train_step(
+    model,
+    learning_rate_schedule,
+    batch_size,
+    subgoal_steps,
+    *,
+    flow_matching=False,
+    ema_decay=0.0,
+):
     @jax.jit
     def train_step(state, rng, z, valid_t, final_t):
-        rng, index_key, goal_key = jax.random.split(rng, 3)
+        rng, index_key, goal_key, noise_key, time_key = jax.random.split(rng, 5)
         positions = jax.random.randint(
             index_key, (batch_size,), minval=0, maxval=len(valid_t)
         )
@@ -165,29 +207,78 @@ def make_train_step(model, learning_rate_schedule, batch_size, subgoal_steps):
         target_latents = z[target_idxs]
 
         def loss_fn(params):
-            predictions = model.apply(
-                {'params': params}, current_latents, goal_latents
-            )
-            errors = predictions - target_latents
-            loss = jnp.mean(jnp.square(errors))
-            cosine = jnp.mean(
-                jnp.sum(predictions * target_latents, axis=-1)
-                / (
-                    jnp.linalg.norm(predictions, axis=-1)
-                    * jnp.linalg.norm(target_latents, axis=-1)
-                    + 1e-8
+            if flow_matching:
+                noise = jax.random.normal(noise_key, target_latents.shape)
+                flow_times = jax.random.uniform(
+                    time_key, (batch_size,), minval=0.0, maxval=1.0
                 )
-            )
-            metrics = {
-                'mse': loss,
-                'cosine_similarity': cosine,
-                'prediction_norm': jnp.mean(jnp.linalg.norm(predictions, axis=-1)),
-                'target_norm': jnp.mean(jnp.linalg.norm(target_latents, axis=-1)),
-            }
+                interpolation = (
+                    (1.0 - flow_times[:, None]) * noise
+                    + flow_times[:, None] * target_latents
+                )
+                target_velocity = target_latents - noise
+                predictions = model.apply(
+                    {'params': params},
+                    interpolation,
+                    current_latents,
+                    goal_latents,
+                    flow_times,
+                )
+                errors = predictions - target_velocity
+                loss = jnp.mean(jnp.square(errors))
+                endpoint_predictions = interpolation + (
+                    1.0 - flow_times[:, None]
+                ) * predictions
+                metrics = {
+                    'flow_matching_mse': loss,
+                    'endpoint_proxy_mse': jnp.mean(
+                        jnp.square(endpoint_predictions - target_latents)
+                    ),
+                    'velocity_norm': jnp.mean(
+                        jnp.linalg.norm(predictions, axis=-1)
+                    ),
+                    'target_velocity_norm': jnp.mean(
+                        jnp.linalg.norm(target_velocity, axis=-1)
+                    ),
+                    'target_norm': jnp.mean(
+                        jnp.linalg.norm(target_latents, axis=-1)
+                    ),
+                }
+            else:
+                predictions = model.apply(
+                    {'params': params}, current_latents, goal_latents
+                )
+                errors = predictions - target_latents
+                loss = jnp.mean(jnp.square(errors))
+                cosine = jnp.mean(
+                    jnp.sum(predictions * target_latents, axis=-1)
+                    / (
+                        jnp.linalg.norm(predictions, axis=-1)
+                        * jnp.linalg.norm(target_latents, axis=-1)
+                        + 1e-8
+                    )
+                )
+                metrics = {
+                    'mse': loss,
+                    'cosine_similarity': cosine,
+                    'prediction_norm': jnp.mean(
+                        jnp.linalg.norm(predictions, axis=-1)
+                    ),
+                    'target_norm': jnp.mean(
+                        jnp.linalg.norm(target_latents, axis=-1)
+                    ),
+                }
             return loss, metrics
 
         (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
         state = state.apply_gradients(grads=grads)
+        if flow_matching:
+            ema_params = jax.tree_util.tree_map(
+                lambda ema, value: ema_decay * ema + (1.0 - ema_decay) * value,
+                state.ema_params,
+                state.params,
+            )
+            state = state.replace(ema_params=ema_params)
         metrics['learning_rate'] = learning_rate_schedule(state.step - 1)
         metrics['gradient_norm'] = optax.global_norm(grads)
         return state, rng, metrics
@@ -195,12 +286,22 @@ def make_train_step(model, learning_rate_schedule, batch_size, subgoal_steps):
     return train_step
 
 
-def make_predict_indices(model):
+def make_predict_indices(
+    model, *, flow_matching=False, flow_sampling_steps=16, flow_solver='heun'
+):
     @jax.jit
-    def predict_indices(params, z, current_idxs, goal_idxs):
-        return model.apply(
-            {'params': params}, z[current_idxs], z[goal_idxs]
-        )
+    def predict_indices(params, z, current_idxs, goal_idxs, rng):
+        if flow_matching:
+            return sample_conditional_flow(
+                model,
+                params,
+                z[current_idxs],
+                z[goal_idxs],
+                rng,
+                num_steps=flow_sampling_steps,
+                solver=flow_solver,
+            )
+        return model.apply({'params': params}, z[current_idxs], z[goal_idxs])
 
     return predict_indices
 
@@ -219,10 +320,12 @@ def evaluate_validation(
     target_idxs,
     predict_indices,
     batch_size,
+    seed,
 ):
     predictions = np.empty((len(current_idxs), z_host.shape[1]), dtype=np.float32)
     for start in range(0, len(current_idxs), batch_size):
         stop = min(start + batch_size, len(current_idxs))
+        batch_rng = jax.random.fold_in(jax.random.PRNGKey(seed), start)
         predictions[start:stop] = np.asarray(
             jax.device_get(
                 predict_indices(
@@ -230,6 +333,7 @@ def evaluate_validation(
                     z_device,
                     jnp.asarray(current_idxs[start:stop]),
                     jnp.asarray(goal_idxs[start:stop]),
+                    batch_rng,
                 )
             )
         )
@@ -283,11 +387,30 @@ def main():
         seed=args.split_seed + 1,
     )
 
+    flow_matching = args.architecture == 'transformer_flow'
+    config_args = dict(vars(args))
+    if flow_matching:
+        config_args.pop('hidden_dims')
+    else:
+        for name in (
+            'model_dim',
+            'num_layers',
+            'num_heads',
+            'mlp_dim',
+            'flow_sampling_steps',
+            'flow_solver',
+            'ema_decay',
+        ):
+            config_args.pop(name)
+    architecture = (
+        FLOW_TRANSFORMER_ARCHITECTURE
+        if flow_matching
+        else DIRECT_MLP_ARCHITECTURE
+    )
     config = {
-        **vars(args),
+        **config_args,
         'latent_dataset': str(Path(args.latent_dataset).expanduser().resolve()),
         'save_dir': str(output_dir),
-        'hidden_dims': list(args.hidden_dims),
         'embed_dim': embed_dim,
         'num_rows': len(cache.z),
         'num_episodes': len(cache.episode_offsets),
@@ -296,10 +419,16 @@ def main():
         'num_train_transitions': len(train_t),
         'num_val_transitions': len(val_t),
         'lewm_checkpoint_sha256': cache.metadata.get('checkpoint_sha256'),
-        'architecture': 'direct_latent_mlp_512x3',
+        'architecture': architecture,
         'goal_sampling': 'hiql_uniform_future_same_trajectory',
-        'loss': 'raw_latent_mse',
+        'loss': (
+            'conditional_flow_matching_mse'
+            if flow_matching
+            else 'raw_latent_mse'
+        ),
     }
+    if not flow_matching:
+        config['hidden_dims'] = list(args.hidden_dims)
     config_path = output_dir / 'config.json'
     if config_path.exists():
         existing_config = json.loads(config_path.read_text())
@@ -319,13 +448,30 @@ def main():
     z_device = jax.device_put(cache.z)
     train_t_device = jax.device_put(train_t)
     train_final_device = jax.device_put(train_final)
-    model = LatentSubgoalMLP(embed_dim=embed_dim, hidden_dims=tuple(args.hidden_dims))
+    if flow_matching:
+        model = LatentSubgoalFlowTransformer(
+            embed_dim=embed_dim,
+            model_dim=args.model_dim,
+            num_layers=args.num_layers,
+            num_heads=args.num_heads,
+            mlp_dim=args.mlp_dim,
+        )
+    else:
+        model = LatentSubgoalMLP(
+            embed_dim=embed_dim, hidden_dims=tuple(args.hidden_dims)
+        )
     init_rng, train_rng = jax.random.split(jax.random.PRNGKey(args.seed))
-    variables = model.init(
-        init_rng,
-        jnp.zeros((1, embed_dim), dtype=jnp.float32),
-        jnp.zeros((1, embed_dim), dtype=jnp.float32),
-    )
+    empty_latents = jnp.zeros((1, embed_dim), dtype=jnp.float32)
+    if flow_matching:
+        variables = model.init(
+            init_rng,
+            empty_latents,
+            empty_latents,
+            empty_latents,
+            jnp.zeros((1,), dtype=jnp.float32),
+        )
+    else:
+        variables = model.init(init_rng, empty_latents, empty_latents)
     learning_rate_schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=args.learning_rate,
@@ -342,11 +488,19 @@ def main():
             mask=decay_mask,
         ),
     )
-    state = train_state.TrainState.create(
-        apply_fn=model.apply,
-        params=variables['params'],
-        tx=optimizer,
-    )
+    if flow_matching:
+        state = FlowTrainState.create(
+            apply_fn=model.apply,
+            params=variables['params'],
+            ema_params=variables['params'],
+            tx=optimizer,
+        )
+    else:
+        state = train_state.TrainState.create(
+            apply_fn=model.apply,
+            params=variables['params'],
+            tx=optimizer,
+        )
     parameter_count = sum(value.size for value in jax.tree_util.tree_leaves(state.params))
     print(f'Model parameters={parameter_count:,}', flush=True)
 
@@ -361,8 +515,15 @@ def main():
         learning_rate_schedule,
         args.batch_size,
         args.subgoal_steps,
+        flow_matching=flow_matching,
+        ema_decay=args.ema_decay,
     )
-    predict_indices = make_predict_indices(model)
+    predict_indices = make_predict_indices(
+        model,
+        flow_matching=flow_matching,
+        flow_sampling_steps=args.flow_sampling_steps,
+        flow_solver=args.flow_solver,
+    )
     current_step = int(jax.device_get(state.step))
     if current_step > args.train_steps:
         raise ValueError(
@@ -371,7 +532,7 @@ def main():
 
     started = time.monotonic()
     val_metrics = evaluate_validation(
-        state.params,
+        state.ema_params if flow_matching else state.params,
         z_device=z_device,
         z_host=cache.z,
         current_idxs=fixed_val[0],
@@ -379,6 +540,7 @@ def main():
         target_idxs=fixed_val[2],
         predict_indices=predict_indices,
         batch_size=args.eval_batch_size,
+        seed=args.split_seed + 2,
     )
     initial_row = {'type': 'validation', 'step': current_step, **val_metrics}
     append_jsonl(metrics_path, initial_row)
@@ -410,7 +572,7 @@ def main():
 
         if current_step % args.eval_interval == 0 or current_step == args.train_steps:
             val_metrics = evaluate_validation(
-                state.params,
+                state.ema_params if flow_matching else state.params,
                 z_device=z_device,
                 z_host=cache.z,
                 current_idxs=fixed_val[0],
@@ -418,6 +580,7 @@ def main():
                 target_idxs=fixed_val[2],
                 predict_indices=predict_indices,
                 batch_size=args.eval_batch_size,
+                seed=args.split_seed + 2,
             )
             row = {
                 'type': 'validation',

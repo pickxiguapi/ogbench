@@ -14,7 +14,11 @@ import flax
 import jax
 import jax.numpy as jnp
 import numpy as np
-from latent_subgoal import load_latent_subgoal_checkpoint
+from latent_subgoal import (
+    FLOW_TRANSFORMER_ARCHITECTURE,
+    load_latent_subgoal_checkpoint,
+    sample_conditional_flow,
+)
 
 from lewm_jax import ARCHITECTURE, LeWM
 from ogbench.lewm_envs.evaluation import (
@@ -354,6 +358,7 @@ class JAXLeWMCEMPolicy:
         self.latent_subgoal_checkpoint_step = None
         self.latent_subgoal_refresh_steps = int(latent_subgoal_refresh_steps)
         self._predict_latent_subgoal = None
+        self._latent_subgoal_requires_rng = False
         if latent_subgoal_checkpoint is not None:
             (
                 subgoal_model,
@@ -381,11 +386,27 @@ class JAXLeWMCEMPolicy:
             )
             self.latent_subgoal_config = subgoal_config
             self.latent_subgoal_checkpoint_step = subgoal_checkpoint_step
-            self._predict_latent_subgoal = jax.jit(
-                lambda current, goal: subgoal_model.apply(
-                    {'params': subgoal_params}, current, goal
+            if subgoal_config['architecture'] == FLOW_TRANSFORMER_ARCHITECTURE:
+                sampling_steps = int(subgoal_config['flow_sampling_steps'])
+                flow_solver = str(subgoal_config['flow_solver'])
+                self._latent_subgoal_requires_rng = True
+                self._predict_latent_subgoal = jax.jit(
+                    lambda current, goal, rng: sample_conditional_flow(
+                        subgoal_model,
+                        subgoal_params,
+                        current,
+                        goal,
+                        rng,
+                        num_steps=sampling_steps,
+                        solver=flow_solver,
+                    )
                 )
-            )
+            else:
+                self._predict_latent_subgoal = jax.jit(
+                    lambda current, goal: subgoal_model.apply(
+                        {'params': subgoal_params}, current, goal
+                    )
+                )
         self.scaler = scaler
         self.seed = int(seed)
         self.rng = jax.random.PRNGKey(seed)
@@ -1030,12 +1051,25 @@ class JAXLeWMCEMPolicy:
         ):
             current_embedding = self.encode_pixels(np.asarray(pixels[-1:]))
             goal_embedding = self.encode_pixels(np.asarray(goals[-1:]))
-            subgoal = np.asarray(
-                self._predict_latent_subgoal(
+            if getattr(self, '_latent_subgoal_requires_rng', False):
+                subgoal_key = jax.random.fold_in(
+                    jax.random.PRNGKey(self.seed), int(env_index)
+                )
+                subgoal_key = jax.random.fold_in(
+                    subgoal_key,
+                    int(self.latent_subgoal_generation_counts[env_index]),
+                )
+                prediction = self._predict_latent_subgoal(
+                    jnp.asarray(current_embedding),
+                    jnp.asarray(goal_embedding),
+                    subgoal_key,
+                )
+            else:
+                prediction = self._predict_latent_subgoal(
                     jnp.asarray(current_embedding),
                     jnp.asarray(goal_embedding),
                 )
-            )[0].astype(np.float32)
+            subgoal = np.asarray(prediction)[0].astype(np.float32)
             if subgoal.shape != (embed_dim,) or not np.isfinite(subgoal).all():
                 raise FloatingPointError(
                     f'Invalid predicted latent subgoal shape/value: {subgoal.shape}.'

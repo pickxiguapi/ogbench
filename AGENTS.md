@@ -213,6 +213,10 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/latent_subgoal/20260830_run_node2_cube_latent_gcbc_k10_s0.sh` | node2 生成 Cube cache 并训练 K10 latent subgoal GCBC seed0 |
 | `exp/train/latent_subgoal/20260830_run_node3_reacher_latent_gcbc_k10_s0.sh` | node3 生成 Reacher cache 并训练 K10 latent subgoal GCBC seed0 |
 | `exp/train/latent_subgoal/20260830_run_node4_tworoom_latent_gcbc_k10_s0.sh` | node4 生成 TwoRoom cache 并训练 K10 latent subgoal GCBC seed0 |
+| `exp/train/latent_subgoal/20260831_run_yb_pusht_flow_transformer_k10_s0.sh` | 英博云训练 PushT K10 Transformer-CFM subgoal generator seed0 |
+| `exp/train/latent_subgoal/20260831_run_node2_cube_flow_transformer_k10_s0.sh` | node2 训练 Cube K10 Transformer-CFM subgoal generator seed0 |
+| `exp/train/latent_subgoal/20260831_run_node3_reacher_flow_transformer_k10_s0.sh` | node3 训练 Reacher K10 Transformer-CFM subgoal generator seed0 |
+| `exp/train/latent_subgoal/20260831_run_node4_tworoom_flow_transformer_k10_s0.sh` | node4 训练 TwoRoom K10 Transformer-CFM subgoal generator seed0 |
 
 ## Frozen LeWM latent 数据集
 
@@ -232,6 +236,14 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 唯一训练 loss 为 raw LeWM latent MSE；cosine similarity 只记录为验证指标。
 - seed0 正式设置固定为 100k steps、batch size 1024、AdamW、peak lr 3e-4、warmup 2k、cosine decay 到 3e-5、episode 95/5 split。
 - 正式训练必须通过 `exp/train/latent_subgoal/` 下对应服务器的流水线 Bash；流水线先完成或复用 latent cache，再开始训练。
+
+## Latent Subgoal Transformer-CFM（K=10）
+
+- 新版设计见 `reports/2026-08-31-latent-subgoal-flow-transformer-k10-design.md`；旧 MLP checkpoint 仍兼容读取，但新旧 architecture/loss 标记和输出目录必须分开。
+- 条件为 `z_t,z_g`，target 和 goal sampling 与 MLP 版完全相同。训练从 `epsilon ~ N(0,I)` 构造 `z_tau=(1-tau)epsilon+tau z_target`，用 MSE 回归速度 `z_target-epsilon`。
+- 模型固定为 4 token Transformer Encoder：`z_t,z_g,z_tau,tau`；`d_model=384`、8 layers、8 heads、FFN 1536，参数量约 14.64M，不预测 residual subgoal。
+- 推理使用 EMA 参数，从确定性派生的高斯噪声出发做 16-step Heun ODE integration；同 evaluation seed、env index、generation count 必须得到相同 subgoal。
+- seed0 正式设置为 200k steps、batch size 1024、AdamW、peak lr 1e-4、warmup 5k、cosine decay 到 1e-5、EMA 0.9999、episode 95/5 split。
 
 ## 服务器与 GitHub
 
