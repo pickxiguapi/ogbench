@@ -227,10 +227,6 @@ class JAXLeWMCEMPolicy:
         if latent_subgoal_checkpoint is not None:
             if planner != 'cem':
                 raise ValueError('Latent subgoal planning currently requires pure CEM.')
-            if cost_mode != 'min_over_horizon':
-                raise ValueError(
-                    'A K-step latent subgoal requires min-over-horizon CEM cost.'
-                )
             if proposal_agent is not None or dual_center_q or native_q_keep:
                 raise ValueError(
                     'Latent subgoal planning is a pure-CEM evaluation and cannot '
