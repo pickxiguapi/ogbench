@@ -206,6 +206,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/eval/lewm_4tasks/20260831_eval_node4_lewm_latent_path_flow_k10_terminal.sh` | node4 只取 200k LatentPathFlow 的 K10 token 替代 K25 global goal，以 H5 terminal cost 四卡评测，不使用 K5 或 MoH |
 | `exp/eval/lewm_4tasks/20260831_eval_node4_lewm_latent_path_flow_k10_h2_terminal.sh` | node4 只取 200k LatentPathFlow K10 token，H2 terminal 对齐 t+10，并在每次 RH1 replan（5步）重新预测 K10；不使用 K5 或 MoH |
 | `exp/eval/lewm_4tasks/20260831_eval_node4_lewm_latent_path_flow_k10_h2_moh.sh` | node4 只取 200k LatentPathFlow K10 token，每次 RH1 replan（5步）重新预测，并在 H2 的 t+5/t+10 rollout 上使用 MoH |
+| `exp/eval/lewm_4tasks/20260831_eval_node4_lewm_global_goal_h2_moh.sh` | node4 无 subgoal 的 K25 global-goal H2 MoH，作为 K10-subgoal H2 MoH 的严格规划长度对照 |
 | `exp/eval/ogbench_env_8tasks/20260823_eval_node2_ogbench_env_8tasks.sh` | OGBench-Env-8Tasks 主评测 |
 | `exp/train/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 顺序复现 LeWM-4Tasks 四种训练设计 |
 | `exp/train/20260823_reproduce_node2_ogbench_env_8tasks_main_matrix.sh` | 顺序复现 OGBench-Env-8Tasks 四种训练设计 |
