@@ -413,10 +413,6 @@ class JAXLeWMCEMPolicy:
                 raise ValueError(
                     'Latent subgoal and LeWM embedding dimensions do not match.'
                 )
-            if int(subgoal_config['subgoal_steps']) != self.latent_subgoal_refresh_steps:
-                raise ValueError(
-                    'Generator training horizon must equal its evaluation refresh interval.'
-                )
             expected_sha = subgoal_config.get('lewm_checkpoint_sha256')
             actual_sha = sha256_file(checkpoint)
             if expected_sha != actual_sha:

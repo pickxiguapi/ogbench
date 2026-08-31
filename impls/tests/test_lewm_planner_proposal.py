@@ -87,7 +87,7 @@ class ProposalInitializationTest(unittest.TestCase):
         policy = object.__new__(JAXLeWMCEMPolicy)
         policy.checkpoint_metadata = {'embed_dim': 3}
         policy._predict_latent_subgoal = lambda current, goal: current + goal
-        policy.latent_subgoal_refresh_steps = 10
+        policy.latent_subgoal_refresh_steps = 5
         policy.latent_subgoals = [None]
         policy.latent_subgoal_ages = np.zeros(1, dtype=np.int64)
         policy.latent_subgoal_generation_counts = np.zeros(1, dtype=np.int64)
@@ -100,13 +100,13 @@ class ProposalInitializationTest(unittest.TestCase):
             np.ones((1, 2, 2, 1), dtype=np.float32),
             np.full((1, 2, 2, 1), 2.0, dtype=np.float32),
         )
-        policy.latent_subgoal_ages[0] = 5
+        policy.latent_subgoal_ages[0] = 4
         held = policy._planning_target_embedding(
             0,
             np.full((1, 2, 2, 1), 8.0, dtype=np.float32),
             np.full((1, 2, 2, 1), 2.0, dtype=np.float32),
         )
-        policy.latent_subgoal_ages[0] = 10
+        policy.latent_subgoal_ages[0] = 5
         refreshed = policy._planning_target_embedding(
             0,
             np.full((1, 2, 2, 1), 8.0, dtype=np.float32),
