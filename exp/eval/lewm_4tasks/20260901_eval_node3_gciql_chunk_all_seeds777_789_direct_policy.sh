@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A800 node3：评测 shared-all GCIQL-Chunk-AWR policy seeds 777/789 的
-# final-goal direct-policy 基线；每个 seed 四任务在 GPU1-4 并行，两个 seed
-# 顺序运行。配置为 50 episodes、goal/budget=25/50、evaluation seed42。
-CLIENT_ID=node3
+# 评测源自 A800 node3 的 shared-all GCIQL-Chunk-AWR policy seeds 777/789：
+# final-goal direct-policy 基线；每个 seed 四任务并行，两个 seed 顺序运行。
+# 配置为 50 episodes、goal/budget=25/50、evaluation seed42。
+CLIENT_ID=${CLIENT_ID:-node3}
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 source "$OGBENCH_ROOT/scripts/client_env.sh"
@@ -13,10 +13,10 @@ GPU_IDS=${GPU_IDS:-"1 2 3 4"}
 NUM_EVAL=${NUM_EVAL:-50}
 EVAL_SEED=${EVAL_SEED:-42}
 POLICY_STEPS=100000
-POLICY_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks
-DATA_ROOT=/data-training/yyf/datasets/lewm
+POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks}
+DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/lewm}
 OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260901_gciql_chunk_all_seeds777_789_direct_policy_g25_b50_ep${NUM_EVAL}_seed${EVAL_SEED}}
-TMP_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-direct-policy
+TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-direct-policy}
 
 tasks=(cube pusht reacher tworoom)
 read -r -a gpus <<< "$GPU_IDS"
