@@ -13,6 +13,7 @@ import jax.numpy as jnp
 
 DIRECT_MLP_ARCHITECTURE = 'direct_latent_mlp_512x3'
 FLOW_TRANSFORMER_ARCHITECTURE = 'latent_flow_transformer_encoder'
+LATENT_PATH_FLOW_ARCHITECTURE = 'latent_path_flow_transformer_encoder'
 
 
 class LatentSubgoalMLP(nn.Module):
@@ -106,6 +107,63 @@ class LatentSubgoalFlowTransformer(nn.Module):
         return nn.Dense(self.embed_dim, name='velocity_head')(noisy_token)
 
 
+class LatentPathFlow(nn.Module):
+    """LeFlow-style conditional vector field over a short latent waypoint path."""
+
+    embed_dim: int
+    num_waypoints: int = 2
+    hidden_dim: int = 512
+    depth: int = 4
+    num_heads: int = 8
+    ff_dim: int = 2048
+    time_dim: int = 64
+
+    @nn.compact
+    def __call__(self, noisy_path, current_latents, goal_latents, flow_times):
+        if noisy_path.ndim != 3:
+            raise ValueError('LatentPathFlow expects noisy_path with shape [B, T, D].')
+        if noisy_path.shape[1] != self.num_waypoints:
+            raise ValueError(
+                f'Expected {self.num_waypoints} waypoints, got {noisy_path.shape[1]}.'
+            )
+
+        tokens = nn.Dense(self.hidden_dim, name='token_projection')(noisy_path)
+        positions = self.param(
+            'position_embeddings',
+            nn.initializers.normal(stddev=0.02),
+            (self.num_waypoints, self.hidden_dim),
+        )
+        tokens = tokens + positions[None]
+
+        start_condition = nn.Dense(self.hidden_dim, name='start_projection')(
+            current_latents
+        )
+        goal_condition = nn.Dense(self.hidden_dim, name='goal_projection')(
+            goal_latents
+        )
+        time_features = sinusoidal_time_embedding(flow_times, self.time_dim)
+        time_condition = nn.Dense(self.hidden_dim, name='time_projection_in')(
+            time_features
+        )
+        time_condition = nn.silu(time_condition)
+        time_condition = nn.Dense(self.hidden_dim, name='time_projection_out')(
+            time_condition
+        )
+        tokens = tokens + (
+            start_condition + goal_condition + time_condition
+        )[:, None]
+
+        for layer_index in range(self.depth):
+            tokens = TransformerEncoderBlock(
+                model_dim=self.hidden_dim,
+                num_heads=self.num_heads,
+                mlp_dim=self.ff_dim,
+                name=f'encoder_block_{layer_index}',
+            )(tokens)
+        tokens = nn.LayerNorm(name='output_norm')(tokens)
+        return nn.Dense(self.embed_dim, name='velocity_head')(tokens)
+
+
 def sample_conditional_flow(
     model,
     params,
@@ -124,6 +182,54 @@ def sample_conditional_flow(
     current_latents = jnp.asarray(current_latents, dtype=jnp.float32)
     goal_latents = jnp.asarray(goal_latents, dtype=jnp.float32)
     samples = jax.random.normal(rng, current_latents.shape, dtype=jnp.float32)
+    step_size = jnp.asarray(1.0 / num_steps, dtype=jnp.float32)
+
+    def integrate_step(index, value):
+        flow_time = jnp.full(
+            (value.shape[0],), index.astype(jnp.float32) * step_size
+        )
+        velocity = model.apply(
+            {'params': params}, value, current_latents, goal_latents, flow_time
+        )
+        proposal = value + step_size * velocity
+        if solver == 'euler':
+            return proposal
+        next_time = jnp.minimum(flow_time + step_size, 1.0)
+        next_velocity = model.apply(
+            {'params': params},
+            proposal,
+            current_latents,
+            goal_latents,
+            next_time,
+        )
+        return value + 0.5 * step_size * (velocity + next_velocity)
+
+    return jax.lax.fori_loop(0, num_steps, integrate_step, samples)
+
+
+def sample_conditional_path_flow(
+    model,
+    params,
+    current_latents,
+    goal_latents,
+    rng,
+    *,
+    num_steps=16,
+    solver='euler',
+):
+    """Integrate a learned path flow from Gaussian noise to latent waypoints."""
+    if num_steps <= 0:
+        raise ValueError('Flow sampling steps must be positive.')
+    if solver not in ('euler', 'heun'):
+        raise ValueError(f'Unsupported flow solver: {solver!r}.')
+    current_latents = jnp.asarray(current_latents, dtype=jnp.float32)
+    goal_latents = jnp.asarray(goal_latents, dtype=jnp.float32)
+    sample_shape = (
+        current_latents.shape[0],
+        int(model.num_waypoints),
+        current_latents.shape[-1],
+    )
+    samples = jax.random.normal(rng, sample_shape, dtype=jnp.float32)
     step_size = jnp.asarray(1.0 / num_steps, dtype=jnp.float32)
 
     def integrate_step(index, value):
@@ -180,6 +286,21 @@ def load_latent_subgoal_checkpoint(path):
             num_layers=int(config['num_layers']),
             num_heads=int(config['num_heads']),
             mlp_dim=int(config['mlp_dim']),
+        )
+    elif architecture == LATENT_PATH_FLOW_ARCHITECTURE:
+        if config.get('loss') != 'conditional_path_flow_matching_mse':
+            raise ValueError(
+                f'Unsupported latent path flow loss: {config.get("loss")!r}.'
+            )
+        waypoint_steps = tuple(int(value) for value in config['waypoint_steps'])
+        model = LatentPathFlow(
+            embed_dim=embed_dim,
+            num_waypoints=len(waypoint_steps),
+            hidden_dim=int(config['hidden_dim']),
+            depth=int(config['depth']),
+            num_heads=int(config['num_heads']),
+            ff_dim=int(config['ff_dim']),
+            time_dim=int(config['time_dim']),
         )
     else:
         raise ValueError(f'Unsupported latent subgoal architecture: {architecture!r}.')

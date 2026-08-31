@@ -19,9 +19,12 @@ from flax.training import train_state
 from latent_subgoal import (
     DIRECT_MLP_ARCHITECTURE,
     FLOW_TRANSFORMER_ARCHITECTURE,
+    LATENT_PATH_FLOW_ARCHITECTURE,
+    LatentPathFlow,
     LatentSubgoalFlowTransformer,
     LatentSubgoalMLP,
     sample_conditional_flow,
+    sample_conditional_path_flow,
 )
 from utils.latent_subgoal_dataset import (
     build_valid_transitions,
@@ -44,7 +47,7 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=1024)
     parser.add_argument(
         '--architecture',
-        choices=('direct_mlp', 'transformer_flow'),
+        choices=('direct_mlp', 'transformer_flow', 'latent_path_flow'),
         default='direct_mlp',
     )
     parser.add_argument('--hidden-dims', type=int, nargs='+', default=(512, 512, 512))
@@ -55,6 +58,11 @@ def parse_args():
     parser.add_argument('--flow-sampling-steps', type=int, default=16)
     parser.add_argument('--flow-solver', choices=('euler', 'heun'), default='heun')
     parser.add_argument('--ema-decay', type=float, default=0.9999)
+    parser.add_argument('--waypoint-steps', type=int, nargs='+', default=(5, 10))
+    parser.add_argument('--hidden-dim', type=int, default=512)
+    parser.add_argument('--depth', type=int, default=4)
+    parser.add_argument('--ff-dim', type=int, default=2048)
+    parser.add_argument('--time-dim', type=int, default=64)
     parser.add_argument('--learning-rate', type=float, default=3e-4)
     parser.add_argument('--final-learning-rate', type=float, default=3e-5)
     parser.add_argument('--warmup-steps', type=int, default=2000)
@@ -85,6 +93,10 @@ def validate_args(args):
         'num_heads',
         'mlp_dim',
         'flow_sampling_steps',
+        'hidden_dim',
+        'depth',
+        'ff_dim',
+        'time_dim',
     )
     for name in positive:
         if getattr(args, name) <= 0:
@@ -105,6 +117,17 @@ def validate_args(args):
         raise ValueError('model_dim must be even for sinusoidal flow-time embeddings.')
     if not 0.0 <= args.ema_decay < 1.0:
         raise ValueError('ema_decay must be in [0, 1).')
+    if not args.waypoint_steps or any(step <= 0 for step in args.waypoint_steps):
+        raise ValueError('waypoint_steps must contain positive integers.')
+    if tuple(sorted(set(args.waypoint_steps))) != tuple(args.waypoint_steps):
+        raise ValueError('waypoint_steps must be strictly increasing.')
+    if args.architecture == 'latent_path_flow':
+        if args.waypoint_steps[-1] != args.subgoal_steps:
+            raise ValueError('The final waypoint step must equal subgoal_steps.')
+        if args.hidden_dim % args.num_heads:
+            raise ValueError('hidden_dim must be divisible by num_heads.')
+        if args.time_dim % 2:
+            raise ValueError('time_dim must be even.')
 
 
 class FlowTrainState(train_state.TrainState):
@@ -186,6 +209,8 @@ def make_train_step(
     subgoal_steps,
     *,
     flow_matching=False,
+    path_flow_matching=False,
+    waypoint_steps=(5, 10),
     ema_decay=0.0,
 ):
     @jax.jit
@@ -201,20 +226,29 @@ def make_train_step(
         goal_idxs = current_idxs + 1 + jnp.floor(
             distances * future_counts
         ).astype(jnp.int32)
-        target_idxs = jnp.minimum(current_idxs + subgoal_steps, goal_idxs)
+        if path_flow_matching:
+            target_idxs = jnp.stack(
+                [jnp.minimum(current_idxs + step, goal_idxs) for step in waypoint_steps],
+                axis=1,
+            )
+        else:
+            target_idxs = jnp.minimum(current_idxs + subgoal_steps, goal_idxs)
         current_latents = z[current_idxs]
         goal_latents = z[goal_idxs]
         target_latents = z[target_idxs]
 
         def loss_fn(params):
-            if flow_matching:
+            if flow_matching or path_flow_matching:
                 noise = jax.random.normal(noise_key, target_latents.shape)
                 flow_times = jax.random.uniform(
                     time_key, (batch_size,), minval=0.0, maxval=1.0
                 )
+                time_broadcast = flow_times.reshape(
+                    (batch_size,) + (1,) * (noise.ndim - 1)
+                )
                 interpolation = (
-                    (1.0 - flow_times[:, None]) * noise
-                    + flow_times[:, None] * target_latents
+                    (1.0 - time_broadcast) * noise
+                    + time_broadcast * target_latents
                 )
                 target_velocity = target_latents - noise
                 predictions = model.apply(
@@ -227,16 +261,14 @@ def make_train_step(
                 errors = predictions - target_velocity
                 loss = jnp.mean(jnp.square(errors))
                 endpoint_predictions = interpolation + (
-                    1.0 - flow_times[:, None]
+                    1.0 - time_broadcast
                 ) * predictions
                 metrics = {
                     'flow_matching_mse': loss,
                     'endpoint_proxy_mse': jnp.mean(
                         jnp.square(endpoint_predictions - target_latents)
                     ),
-                    'velocity_norm': jnp.mean(
-                        jnp.linalg.norm(predictions, axis=-1)
-                    ),
+                    'velocity_norm': jnp.mean(jnp.linalg.norm(predictions, axis=-1)),
                     'target_velocity_norm': jnp.mean(
                         jnp.linalg.norm(target_velocity, axis=-1)
                     ),
@@ -272,7 +304,7 @@ def make_train_step(
 
         (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
         state = state.apply_gradients(grads=grads)
-        if flow_matching:
+        if flow_matching or path_flow_matching:
             ema_params = jax.tree_util.tree_map(
                 lambda ema, value: ema_decay * ema + (1.0 - ema_decay) * value,
                 state.ema_params,
@@ -287,10 +319,25 @@ def make_train_step(
 
 
 def make_predict_indices(
-    model, *, flow_matching=False, flow_sampling_steps=16, flow_solver='heun'
+    model,
+    *,
+    flow_matching=False,
+    path_flow_matching=False,
+    flow_sampling_steps=16,
+    flow_solver='heun',
 ):
     @jax.jit
     def predict_indices(params, z, current_idxs, goal_idxs, rng):
+        if path_flow_matching:
+            return sample_conditional_path_flow(
+                model,
+                params,
+                z[current_idxs],
+                z[goal_idxs],
+                rng,
+                num_steps=flow_sampling_steps,
+                solver=flow_solver,
+            )
         if flow_matching:
             return sample_conditional_flow(
                 model,
@@ -322,7 +369,8 @@ def evaluate_validation(
     batch_size,
     seed,
 ):
-    predictions = np.empty((len(current_idxs), z_host.shape[1]), dtype=np.float32)
+    target_shape = z_host[target_idxs].shape[1:]
+    predictions = np.empty((len(current_idxs), *target_shape), dtype=np.float32)
     for start in range(0, len(current_idxs), batch_size):
         stop = min(start + batch_size, len(current_idxs))
         batch_rng = jax.random.fold_in(jax.random.PRNGKey(seed), start)
@@ -338,26 +386,48 @@ def evaluate_validation(
             )
         )
     targets = z_host[target_idxs]
-    per_example_mse = np.mean(np.square(predictions - targets), axis=-1)
+    squared_errors = np.square(predictions - targets)
+    per_example_mse = np.mean(squared_errors, axis=tuple(range(1, squared_errors.ndim)))
     deltas = goal_idxs - current_idxs
-    cosine = np.sum(predictions * targets, axis=-1) / (
-        np.linalg.norm(predictions, axis=-1)
-        * np.linalg.norm(targets, axis=-1)
+    flat_predictions = predictions.reshape(len(predictions), -1)
+    flat_targets = targets.reshape(len(targets), -1)
+    cosine = np.sum(flat_predictions * flat_targets, axis=-1) / (
+        np.linalg.norm(flat_predictions, axis=-1)
+        * np.linalg.norm(flat_targets, axis=-1)
         + 1e-8
     )
-    return {
+    metrics = {
         'mse': float(per_example_mse.mean()),
         'mse_near': mean_or_nan(per_example_mse, deltas <= 10),
         'mse_medium': mean_or_nan(per_example_mse, (deltas > 10) & (deltas <= 25)),
         'mse_far': mean_or_nan(per_example_mse, deltas > 25),
-        'l2': float(np.linalg.norm(predictions - targets, axis=-1).mean()),
+        'l2': float(np.linalg.norm(flat_predictions - flat_targets, axis=-1).mean()),
         'cosine_similarity': float(cosine.mean()),
-        'prediction_norm': float(np.linalg.norm(predictions, axis=-1).mean()),
-        'target_norm': float(np.linalg.norm(targets, axis=-1).mean()),
+        'prediction_norm': float(np.linalg.norm(flat_predictions, axis=-1).mean()),
+        'target_norm': float(np.linalg.norm(flat_targets, axis=-1).mean()),
         'near_fraction': float(np.mean(deltas <= 10)),
         'medium_fraction': float(np.mean((deltas > 10) & (deltas <= 25))),
         'far_fraction': float(np.mean(deltas > 25)),
     }
+    if predictions.ndim == 3:
+        for waypoint_index in range(predictions.shape[1]):
+            waypoint_predictions = predictions[:, waypoint_index]
+            waypoint_targets = targets[:, waypoint_index]
+            waypoint_mse = np.mean(
+                np.square(waypoint_predictions - waypoint_targets), axis=-1
+            )
+            waypoint_cosine = np.sum(
+                waypoint_predictions * waypoint_targets, axis=-1
+            ) / (
+                np.linalg.norm(waypoint_predictions, axis=-1)
+                * np.linalg.norm(waypoint_targets, axis=-1)
+                + 1e-8
+            )
+            metrics[f'waypoint_{waypoint_index}_mse'] = float(waypoint_mse.mean())
+            metrics[f'waypoint_{waypoint_index}_cosine_similarity'] = float(
+                waypoint_cosine.mean()
+            )
+    return metrics
 
 
 def main():
@@ -388,9 +458,27 @@ def main():
     )
 
     flow_matching = args.architecture == 'transformer_flow'
+    path_flow_matching = args.architecture == 'latent_path_flow'
+    if path_flow_matching:
+        fixed_val = (
+            fixed_val[0],
+            fixed_val[1],
+            np.stack(
+                [
+                    np.minimum(fixed_val[0] + step, fixed_val[1]).astype(np.int32)
+                    for step in args.waypoint_steps
+                ],
+                axis=1,
+            ),
+        )
     config_args = dict(vars(args))
     if flow_matching:
         config_args.pop('hidden_dims')
+        for name in ('waypoint_steps', 'hidden_dim', 'depth', 'ff_dim', 'time_dim'):
+            config_args.pop(name)
+    elif path_flow_matching:
+        for name in ('hidden_dims', 'model_dim', 'num_layers', 'mlp_dim'):
+            config_args.pop(name)
     else:
         for name in (
             'model_dim',
@@ -400,13 +488,19 @@ def main():
             'flow_sampling_steps',
             'flow_solver',
             'ema_decay',
+            'waypoint_steps',
+            'hidden_dim',
+            'depth',
+            'ff_dim',
+            'time_dim',
         ):
             config_args.pop(name)
-    architecture = (
-        FLOW_TRANSFORMER_ARCHITECTURE
-        if flow_matching
-        else DIRECT_MLP_ARCHITECTURE
-    )
+    if path_flow_matching:
+        architecture = LATENT_PATH_FLOW_ARCHITECTURE
+    elif flow_matching:
+        architecture = FLOW_TRANSFORMER_ARCHITECTURE
+    else:
+        architecture = DIRECT_MLP_ARCHITECTURE
     config = {
         **config_args,
         'latent_dataset': str(Path(args.latent_dataset).expanduser().resolve()),
@@ -422,12 +516,16 @@ def main():
         'architecture': architecture,
         'goal_sampling': 'hiql_uniform_future_same_trajectory',
         'loss': (
-            'conditional_flow_matching_mse'
+            'conditional_path_flow_matching_mse'
+            if path_flow_matching
+            else 'conditional_flow_matching_mse'
             if flow_matching
             else 'raw_latent_mse'
         ),
     }
-    if not flow_matching:
+    if path_flow_matching:
+        config['waypoint_steps'] = list(args.waypoint_steps)
+    if not flow_matching and not path_flow_matching:
         config['hidden_dims'] = list(args.hidden_dims)
     config_path = output_dir / 'config.json'
     if config_path.exists():
@@ -448,7 +546,17 @@ def main():
     z_device = jax.device_put(cache.z)
     train_t_device = jax.device_put(train_t)
     train_final_device = jax.device_put(train_final)
-    if flow_matching:
+    if path_flow_matching:
+        model = LatentPathFlow(
+            embed_dim=embed_dim,
+            num_waypoints=len(args.waypoint_steps),
+            hidden_dim=args.hidden_dim,
+            depth=args.depth,
+            num_heads=args.num_heads,
+            ff_dim=args.ff_dim,
+            time_dim=args.time_dim,
+        )
+    elif flow_matching:
         model = LatentSubgoalFlowTransformer(
             embed_dim=embed_dim,
             model_dim=args.model_dim,
@@ -462,7 +570,15 @@ def main():
         )
     init_rng, train_rng = jax.random.split(jax.random.PRNGKey(args.seed))
     empty_latents = jnp.zeros((1, embed_dim), dtype=jnp.float32)
-    if flow_matching:
+    if path_flow_matching:
+        variables = model.init(
+            init_rng,
+            jnp.zeros((1, len(args.waypoint_steps), embed_dim), dtype=jnp.float32),
+            empty_latents,
+            empty_latents,
+            jnp.zeros((1,), dtype=jnp.float32),
+        )
+    elif flow_matching:
         variables = model.init(
             init_rng,
             empty_latents,
@@ -488,7 +604,7 @@ def main():
             mask=decay_mask,
         ),
     )
-    if flow_matching:
+    if flow_matching or path_flow_matching:
         state = FlowTrainState.create(
             apply_fn=model.apply,
             params=variables['params'],
@@ -516,11 +632,14 @@ def main():
         args.batch_size,
         args.subgoal_steps,
         flow_matching=flow_matching,
+        path_flow_matching=path_flow_matching,
+        waypoint_steps=tuple(args.waypoint_steps),
         ema_decay=args.ema_decay,
     )
     predict_indices = make_predict_indices(
         model,
         flow_matching=flow_matching,
+        path_flow_matching=path_flow_matching,
         flow_sampling_steps=args.flow_sampling_steps,
         flow_solver=args.flow_solver,
     )
@@ -532,7 +651,7 @@ def main():
 
     started = time.monotonic()
     val_metrics = evaluate_validation(
-        state.ema_params if flow_matching else state.params,
+        state.ema_params if (flow_matching or path_flow_matching) else state.params,
         z_device=z_device,
         z_host=cache.z,
         current_idxs=fixed_val[0],
@@ -572,7 +691,7 @@ def main():
 
         if current_step % args.eval_interval == 0 or current_step == args.train_steps:
             val_metrics = evaluate_validation(
-                state.ema_params if flow_matching else state.params,
+                state.ema_params if (flow_matching or path_flow_matching) else state.params,
                 z_device=z_device,
                 z_host=cache.z,
                 current_idxs=fixed_val[0],

@@ -3,10 +3,80 @@ import unittest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from latent_subgoal import LatentSubgoalFlowTransformer, sample_conditional_flow
+from latent_subgoal import (
+    LatentPathFlow,
+    LatentSubgoalFlowTransformer,
+    sample_conditional_flow,
+    sample_conditional_path_flow,
+)
 
 
 class LatentSubgoalFlowTest(unittest.TestCase):
+    def test_latent_path_flow_matches_leflow_parameter_budget_and_shape(self):
+        model = LatentPathFlow(embed_dim=192)
+        current = jnp.zeros((2, 192), dtype=jnp.float32)
+        path = jnp.zeros((2, 2, 192), dtype=jnp.float32)
+        variables = model.init(
+            jax.random.PRNGKey(0),
+            path,
+            current,
+            current,
+            jnp.zeros((2,), dtype=jnp.float32),
+        )
+        output = model.apply(
+            variables, path, current, current, jnp.zeros((2,), dtype=jnp.float32)
+        )
+        parameter_count = sum(
+            value.size for value in jax.tree_util.tree_leaves(variables['params'])
+        )
+
+        self.assertEqual(output.shape, (2, 2, 192))
+        self.assertGreaterEqual(parameter_count, 10_000_000)
+        self.assertLessEqual(parameter_count, 20_000_000)
+
+    def test_latent_path_flow_euler_sampling_is_deterministic(self):
+        model = LatentPathFlow(
+            embed_dim=8,
+            num_waypoints=2,
+            hidden_dim=16,
+            depth=2,
+            num_heads=4,
+            ff_dim=32,
+            time_dim=8,
+        )
+        current = jnp.ones((2, 8), dtype=jnp.float32)
+        goal = jnp.full((2, 8), 2.0, dtype=jnp.float32)
+        path = jnp.zeros((2, 2, 8), dtype=jnp.float32)
+        variables = model.init(
+            jax.random.PRNGKey(0),
+            path,
+            current,
+            goal,
+            jnp.zeros((2,), dtype=jnp.float32),
+        )
+        first = sample_conditional_path_flow(
+            model,
+            variables['params'],
+            current,
+            goal,
+            jax.random.PRNGKey(7),
+            num_steps=4,
+            solver='euler',
+        )
+        repeated = sample_conditional_path_flow(
+            model,
+            variables['params'],
+            current,
+            goal,
+            jax.random.PRNGKey(7),
+            num_steps=4,
+            solver='euler',
+        )
+
+        self.assertEqual(first.shape, (2, 2, 8))
+        self.assertTrue(np.isfinite(np.asarray(first)).all())
+        np.testing.assert_array_equal(first, repeated)
+
     def test_formal_transformer_is_within_parameter_budget(self):
         model = LatentSubgoalFlowTransformer(
             embed_dim=192,

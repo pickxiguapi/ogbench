@@ -220,6 +220,10 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/latent_subgoal/20260831_run_node2_cube_flow_transformer_k10_s0.sh` | node2 训练 Cube K10 Transformer-CFM subgoal generator seed0 |
 | `exp/train/latent_subgoal/20260831_run_node3_reacher_flow_transformer_k10_s0.sh` | node3 训练 Reacher K10 Transformer-CFM subgoal generator seed0 |
 | `exp/train/latent_subgoal/20260831_run_node4_tworoom_flow_transformer_k10_s0.sh` | node4 训练 TwoRoom K10 Transformer-CFM subgoal generator seed0 |
+| `exp/train/latent_subgoal/20260831_run_yb_pusht_latent_path_flow_k10_s0.sh` | 英博云训练 PushT K5/K10 LeFlow-style LatentPathFlow seed0 |
+| `exp/train/latent_subgoal/20260831_run_node2_cube_latent_path_flow_k10_s0.sh` | node2 训练 Cube K5/K10 LeFlow-style LatentPathFlow seed0 |
+| `exp/train/latent_subgoal/20260831_run_node3_reacher_latent_path_flow_k10_s0.sh` | node3 训练 Reacher K5/K10 LeFlow-style LatentPathFlow seed0 |
+| `exp/train/latent_subgoal/20260831_run_node4_tworoom_latent_path_flow_k10_s0.sh` | node4 训练 TwoRoom K5/K10 LeFlow-style LatentPathFlow seed0 |
 
 ## Frozen LeWM latent 数据集
 
@@ -247,6 +251,14 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 模型固定为 4 token Transformer Encoder：`z_t,z_g,z_tau,tau`；`d_model=384`、8 layers、8 heads、FFN 1536，参数量约 14.64M，不预测 residual subgoal。
 - 推理使用 EMA 参数，从确定性派生的高斯噪声出发做 16-step Heun ODE integration；同 evaluation seed、env index、generation count 必须得到相同 subgoal。
 - seed0 正式设置为 200k steps、batch size 1024、AdamW、peak lr 1e-4、warmup 5k、cosine decay 到 1e-5、EMA 0.9999、episode 95/5 split。
+
+## LatentPathFlow（K5/K10）
+
+- 定稿设计见 `reports/2026-08-31-latent-path-flow-k5-k10-design.md`；新模型不得覆盖旧单点 Transformer-CFM checkpoint 或输出目录。
+- 条件为 `z_t,z_g`，监督路径固定为 `[z_min(t+5,g), z_min(t+10,g)]`，goal sampling 仍为 HIQL 同轨迹未来均匀采样。
+- 唯一 loss 为 conditional flow matching MSE；不训练 inverse dynamics，不添加 LeWM consistency loss。
+- 网络固定为 LeFlow-style path-token Transformer：hidden 512、depth 4、8 heads、FFN 2048、time embedding 64、两个 learned waypoint position embeddings。
+- 推理使用 EMA 参数和 16-step Euler；seed0 正式设置为 200k、batch size 1024、peak/final lr 1e-4/1e-5、warmup 5k、EMA 0.9999、episode 95/5 split。
 
 ## 服务器与 GitHub
 
