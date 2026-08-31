@@ -23,11 +23,6 @@ from ogbench.lewm_envs.evaluation import (
     task_paths,
 )
 
-# TODO: Re-enable configurable multi-sample/medoid inference after the
-# single-sample subgoal baseline is fully characterized.
-LATENT_SUBGOAL_NUM_SAMPLES = 1
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task', choices=('cube', 'pusht', 'reacher', 'tworoom'), required=True)
@@ -54,6 +49,7 @@ def parse_args():
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--latent-subgoal-checkpoint')
+    parser.add_argument('--num-samples', type=int, default=1)
     parser.add_argument(
         '--cem-cost-mode',
         choices=('last', 'moh'),
@@ -79,6 +75,10 @@ def main():
         raise ValueError(
             'Invalid use-subgoal/--latent-subgoal-checkpoint combination.'
         )
+    if args.num_samples <= 0:
+        raise ValueError('--num-samples must be positive.')
+    if not needs_subgoal and args.num_samples != 1:
+        raise ValueError('--num-samples only applies when --use-subgoal is set.')
 
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
@@ -115,7 +115,7 @@ def main():
                     scaler,
                     args.seed,
                     args.latent_subgoal_checkpoint,
-                    LATENT_SUBGOAL_NUM_SAMPLES,
+                    args.num_samples,
                     args.action_block,
                 )
             else:
@@ -136,7 +136,7 @@ def main():
                 guidance_policy=policy_agent,
                 paired_plan_keys=True,
                 latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
-                latent_subgoal_num_samples=LATENT_SUBGOAL_NUM_SAMPLES,
+                latent_subgoal_num_samples=args.num_samples,
             )
         started = time.time()
         metrics = evaluate_dataset_goals(

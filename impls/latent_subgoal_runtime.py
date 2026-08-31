@@ -17,6 +17,8 @@ from latent_subgoal import (
     load_latent_subgoal_checkpoint,
     sample_conditional_flow_candidates,
     sample_conditional_path_flow_candidates,
+    select_latent_medoid,
+    select_latent_path_medoid,
 )
 
 
@@ -33,8 +35,8 @@ class LatentSubgoalGenerator:
         num_samples=1,
         lewm_checkpoint=None,
     ):
-        if int(num_samples) != 1:
-            raise ValueError('Latent subgoal inference is temporarily fixed to one sample.')
+        if int(num_samples) <= 0:
+            raise ValueError('Latent subgoal sample count must be positive.')
 
         model, params, config, checkpoint_step = load_latent_subgoal_checkpoint(
             checkpoint
@@ -78,19 +80,23 @@ class LatentSubgoalGenerator:
         if architecture == FLOW_TRANSFORMER_ARCHITECTURE:
             sampling_steps = int(config['flow_sampling_steps'])
             solver = str(config['flow_solver'])
-            self.sample_selection = 'single_sample'
+            self.sample_selection = (
+                'single_sample' if self.num_samples == 1 else 'latent_medoid'
+            )
             self._requires_rng = True
             self._predict = jax.jit(
-                lambda current, goal, rng: sample_conditional_flow_candidates(
-                    model,
-                    params,
-                    current,
-                    goal,
-                    rng,
-                    num_samples=1,
-                    num_steps=sampling_steps,
-                    solver=solver,
-                )[:, 0]
+                lambda current, goal, rng: select_latent_medoid(
+                    sample_conditional_flow_candidates(
+                        model,
+                        params,
+                        current,
+                        goal,
+                        rng,
+                        num_samples=self.num_samples,
+                        num_steps=sampling_steps,
+                        solver=solver,
+                    )
+                )
             )
         elif architecture == LATENT_PATH_FLOW_ARCHITECTURE:
             sampling_steps = int(config['flow_sampling_steps'])
@@ -102,21 +108,29 @@ class LatentSubgoalGenerator:
                 self.waypoint_step, trained_action_block
             )
             self.waypoint_index = waypoint_steps.index(self.waypoint_step)
-            self.sample_selection = 'single_sample'
+            self.sample_selection = (
+                'single_sample' if self.num_samples == 1 else 'path_medoid'
+            )
             self._requires_rng = True
             self._predict = jax.jit(
-                lambda current, goal, rng: sample_conditional_path_flow_candidates(
-                    model,
-                    params,
-                    current,
-                    goal,
-                    rng,
-                    num_samples=1,
-                    num_steps=sampling_steps,
-                    solver=solver,
-                )[:, 0, self.waypoint_index]
+                lambda current, goal, rng: select_latent_path_medoid(
+                    sample_conditional_path_flow_candidates(
+                        model,
+                        params,
+                        current,
+                        goal,
+                        rng,
+                        num_samples=self.num_samples,
+                        num_steps=sampling_steps,
+                        solver=solver,
+                    )
+                )[:, self.waypoint_index]
             )
         else:
+            if self.num_samples != 1:
+                raise ValueError(
+                    'Deterministic subgoal models only support num_samples=1.'
+                )
             self._predict = jax.jit(
                 lambda current, goal: model.apply(
                     {'params': params}, current, goal
