@@ -39,11 +39,14 @@ done
 
 cd "$OGBENCH_ROOT/impls"
 
-wait_for_rh1_eval() {
+wait_for_gpu() {
   local gpu=$1
-  while pgrep -f '[e]val_ogbench_env_8tasks.py.*rh1_moh_seed42' >/dev/null; do
-    echo "[$(date '+%F %T %Z')] GPU $gpu waits for the epoch10 RH1 evaluation"
-    sleep 30
+  local gpu_uuid
+  gpu_uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader | sed -n "$((gpu + 1))p")
+  while nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader \
+    | grep -Fxq "$gpu_uuid"; do
+    echo "[$(date '+%F %T %Z')] GPU $gpu is occupied; waiting"
+    sleep 60
   done
 }
 
@@ -79,26 +82,24 @@ train_task() {
 
 run_worker() {
   local gpu=$1
-  local wait_for_eval=$2
-  shift 2
+  shift
   local task_indices=("$@")
-  if [[ "$wait_for_eval" == 1 ]]; then
-    wait_for_rh1_eval "$gpu"
-  fi
   for task_index in "${task_indices[@]}"; do
     for seed in "${policy_seeds[@]}"; do
+      wait_for_gpu "$gpu"
       train_task "$gpu" "$task_index" "$seed"
     done
   done
 }
 
 pids=()
-run_worker 1 0 0 6 & pids+=("$!")
-run_worker 5 0 1 7 & pids+=("$!")
-run_worker 2 1 2 & pids+=("$!")
-run_worker 3 1 3 & pids+=("$!")
-run_worker 6 1 4 & pids+=("$!")
-run_worker 7 1 5 & pids+=("$!")
+run_worker 1 0 7 & pids+=("$!")
+run_worker 2 1 & pids+=("$!")
+run_worker 3 2 & pids+=("$!")
+run_worker 4 3 & pids+=("$!")
+run_worker 5 4 & pids+=("$!")
+run_worker 6 5 & pids+=("$!")
+run_worker 7 6 & pids+=("$!")
 
 status=0
 for pid in "${pids[@]}"; do
