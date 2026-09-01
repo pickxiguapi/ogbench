@@ -41,7 +41,7 @@ for task_index in "${task_indices[@]}"; do
 done
 
 lewm_checkpoints=()
-for i in "${!envs[@]}"; do
+for i in "${task_indices[@]}"; do
   checkpoint="$LEWM_RUN_ROOT/lewm_ogbench8_${tags[$i]}_e${LEWM_EPOCHS}_bs${LEWM_BATCH_SIZE}_s${LEWM_SEED}/weights_epoch_${LEWM_EPOCH}.msgpack"
   dataset="$OGBENCH_DATA_DIR/${envs[$i]}.npz"
   if [[ ! -s "$checkpoint" ]]; then
@@ -52,7 +52,7 @@ for i in "${!envs[@]}"; do
     echo "OGBench dataset not found: $dataset" >&2
     exit 2
   fi
-  lewm_checkpoints+=("$checkpoint")
+  lewm_checkpoints[$i]="$checkpoint"
 done
 
 wait_for_gpu_memory() {
