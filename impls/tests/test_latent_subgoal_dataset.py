@@ -34,6 +34,34 @@ def test_hiql_future_sampling_and_k10_targets():
     np.testing.assert_array_equal(target[g - t <= 10], g[g - t <= 10])
 
 
+def test_future_sampling_aligns_goal_distance_to_stride():
+    valid_t = np.asarray([0, 1, 7], dtype=np.int32)
+    final_t = np.asarray([30, 30, 30], dtype=np.int32)
+    t, g, target = sample_future_pairs(
+        valid_t,
+        final_t,
+        10_000,
+        subgoal_steps=10,
+        seed=5,
+        goal_stride=5,
+    )
+    assert np.all(g > t)
+    assert np.all(g <= 30)
+    assert np.all((g - t) % 5 == 0)
+    np.testing.assert_array_equal(target, np.minimum(t + 10, g))
+
+
+def test_valid_transitions_can_require_one_full_goal_stride():
+    current, final = build_valid_transitions(
+        np.asarray([0]),
+        np.asarray([8]),
+        [0],
+        min_future_steps=5,
+    )
+    np.testing.assert_array_equal(current, [0, 1, 2])
+    np.testing.assert_array_equal(final, [7, 7, 7])
+
+
 def test_three_frame_histories_repeat_pad_without_crossing_episodes():
     offsets = np.asarray([0, 4, 7])
     current = np.asarray([0, 1, 2, 3, 7, 8, 10], dtype=np.int32)

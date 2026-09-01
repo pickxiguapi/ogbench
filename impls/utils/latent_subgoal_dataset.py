@@ -66,19 +66,24 @@ def split_episodes(num_episodes, train_fraction=0.95, seed=0):
     return permutation[:train_count], permutation[train_count:]
 
 
-def build_valid_transitions(offsets, lengths, episode_indices):
-    """Return every non-final t and its episode-final row for selected episodes."""
+def build_valid_transitions(
+    offsets, lengths, episode_indices, min_future_steps=1
+):
+    """Return each t with enough future steps and its episode-final row."""
     offsets = np.asarray(offsets, dtype=np.int64)
     lengths = np.asarray(lengths, dtype=np.int64)
+    if int(min_future_steps) <= 0:
+        raise ValueError('min_future_steps must be positive.')
     current_rows = []
     final_rows = []
     for episode in np.asarray(episode_indices, dtype=np.int64):
         offset = int(offsets[episode])
         length = int(lengths[episode])
-        if length < 2:
+        if length <= int(min_future_steps):
             continue
-        current_rows.append(np.arange(offset, offset + length - 1, dtype=np.int32))
-        final_rows.append(np.full(length - 1, offset + length - 1, dtype=np.int32))
+        count = length - int(min_future_steps)
+        current_rows.append(np.arange(offset, offset + count, dtype=np.int32))
+        final_rows.append(np.full(count, offset + length - 1, dtype=np.int32))
     if not current_rows:
         raise ValueError('Selected episodes contain no valid transitions.')
     return np.concatenate(current_rows), np.concatenate(final_rows)
@@ -106,20 +111,30 @@ def build_history_indices(current_rows, episode_offsets, history_size):
     return history.astype(np.int32)
 
 
-def sample_future_pairs(valid_t, final_t, num_pairs, subgoal_steps, seed):
-    """Create fixed HIQL-style future-goal pairs for validation."""
+def sample_future_pairs(
+    valid_t,
+    final_t,
+    num_pairs,
+    subgoal_steps,
+    seed,
+    goal_stride=1,
+):
+    """Create fixed same-trajectory future-goal pairs for validation."""
     valid_t = np.asarray(valid_t, dtype=np.int32)
     final_t = np.asarray(final_t, dtype=np.int32)
     if valid_t.shape != final_t.shape or valid_t.ndim != 1:
         raise ValueError('valid_t and final_t must be same-shape one-dimensional arrays.')
-    if num_pairs <= 0 or subgoal_steps <= 0:
-        raise ValueError('num_pairs and subgoal_steps must be positive.')
+    if num_pairs <= 0 or subgoal_steps <= 0 or goal_stride <= 0:
+        raise ValueError('num_pairs, subgoal_steps, and goal_stride must be positive.')
     rng = np.random.default_rng(seed)
     positions = rng.integers(len(valid_t), size=num_pairs)
     t = valid_t[positions]
     episode_end = final_t[positions]
     distances = rng.random(num_pairs)
-    future_counts = episode_end - t
-    g = t + 1 + np.floor(distances * future_counts).astype(np.int32)
+    future_counts = (episode_end - t) // int(goal_stride)
+    if np.any(future_counts <= 0):
+        raise ValueError('Every sampled current row must have one aligned future goal.')
+    goal_blocks = 1 + np.floor(distances * future_counts).astype(np.int32)
+    g = t + goal_blocks * int(goal_stride)
     target = np.minimum(t + int(subgoal_steps), g).astype(np.int32)
     return t, g, target

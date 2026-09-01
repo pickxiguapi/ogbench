@@ -233,10 +233,11 @@ def make_train_step(
         history_idxs = valid_history[positions]
         final_idxs = final_t[positions]
         distances = jax.random.uniform(goal_key, (batch_size,))
-        future_counts = final_idxs - current_idxs
-        goal_idxs = current_idxs + 1 + jnp.floor(
+        future_counts = (final_idxs - current_idxs) // action_block
+        goal_blocks = 1 + jnp.floor(
             distances * future_counts
         ).astype(jnp.int32)
+        goal_idxs = current_idxs + goal_blocks * action_block
         if path_flow_matching:
             target_idxs = jnp.stack(
                 [jnp.minimum(current_idxs + step, goal_idxs) for step in waypoint_steps],
@@ -472,10 +473,16 @@ def main():
         len(cache.episode_offsets), args.train_fraction, args.split_seed
     )
     train_t, train_final = build_valid_transitions(
-        cache.episode_offsets, cache.episode_lengths, train_episodes
+        cache.episode_offsets,
+        cache.episode_lengths,
+        train_episodes,
+        min_future_steps=args.action_block,
     )
     val_t, val_final = build_valid_transitions(
-        cache.episode_offsets, cache.episode_lengths, val_episodes
+        cache.episode_offsets,
+        cache.episode_lengths,
+        val_episodes,
+        min_future_steps=args.action_block,
     )
     fixed_val = sample_future_pairs(
         val_t,
@@ -483,6 +490,7 @@ def main():
         args.validation_pairs,
         args.subgoal_steps,
         seed=args.split_seed + 1,
+        goal_stride=args.action_block,
     )
     train_history = build_history_indices(
         train_t, cache.episode_offsets, args.history_size
@@ -560,7 +568,9 @@ def main():
         'num_val_transitions': len(val_t),
         'lewm_checkpoint_sha256': cache.metadata.get('checkpoint_sha256'),
         'architecture': architecture,
-        'goal_sampling': 'hiql_uniform_future_same_trajectory',
+        'goal_sampling': (
+            f'uniform_aligned_future_same_trajectory_stride_{args.action_block}'
+        ),
         'loss': (
             'conditional_path_flow_matching_mse'
             if path_flow_matching
