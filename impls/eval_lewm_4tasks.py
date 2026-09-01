@@ -45,6 +45,11 @@ def parse_args():
     parser.add_argument('--guidance-temperature', type=float, default=1.0)
     parser.add_argument('--guidance-elite-size', type=int, default=8)
     parser.add_argument('--guidance-first-block-std', type=float)
+    parser.add_argument(
+        '--guidance-goal-mode',
+        choices=('subgoal', 'final'),
+        default='subgoal',
+    )
     parser.add_argument('--use-subgoal', action='store_true')
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--lewm-checkpoint')
@@ -171,6 +176,7 @@ def main():
                 guidance_temperature=args.guidance_temperature,
                 guidance_elite_size=args.guidance_elite_size,
                 guidance_first_block_std=args.guidance_first_block_std,
+                guidance_goal_mode=args.guidance_goal_mode,
                 paired_plan_keys=True,
             )
             local_policy = JAXLeWMCEMPolicy(
@@ -214,6 +220,7 @@ def main():
             'temperature': args.guidance_temperature,
             'elite_size': args.guidance_elite_size,
             'first_block_std': args.guidance_first_block_std,
+            'goal_mode': args.guidance_goal_mode,
             'uses_q': False,
             'uses_v': False,
         },

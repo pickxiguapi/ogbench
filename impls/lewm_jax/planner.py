@@ -55,6 +55,7 @@ class JAXLeWMCEMPolicy:
         guidance_temperature=1.0,
         guidance_elite_size=8,
         guidance_first_block_std=None,
+        guidance_goal_mode='subgoal',
         guidance_action_space='planner',
         paired_plan_keys=False,
         action_low=None,
@@ -77,6 +78,10 @@ class JAXLeWMCEMPolicy:
         if guidance_action_space not in ('planner', 'environment'):
             raise ValueError(
                 'Guidance action space must be either planner or environment.'
+            )
+        if guidance_goal_mode not in ('subgoal', 'final'):
+            raise ValueError(
+                'Guidance goal mode must be either subgoal or final.'
             )
         population_modes = ('population', 'lewm_select', 'lewm_elite')
         if guidance_mode not in (
@@ -152,6 +157,7 @@ class JAXLeWMCEMPolicy:
             if guidance_first_block_std is None
             else float(guidance_first_block_std)
         )
+        self.guidance_goal_mode = str(guidance_goal_mode)
         self.guidance_action_space = str(guidance_action_space)
         self.paired_plan_keys = bool(paired_plan_keys)
 
@@ -457,7 +463,10 @@ class JAXLeWMCEMPolicy:
         temperature=0.0,
     ):
         observations = np.asarray(pixels[-1:])
-        if self.subgoal_generator is None:
+        if (
+            self.subgoal_generator is None
+            or self.guidance_goal_mode == 'final'
+        ):
             block = np.asarray(
                 self.guidance_policy.sample_actions(
                     observations=observations,
@@ -499,7 +508,10 @@ class JAXLeWMCEMPolicy:
         count = self.guidance_population_size
         sample_key, mode_key = jax.random.split(key)
         observations = np.repeat(np.asarray(pixels[-1:]), count, axis=0)
-        if self.subgoal_generator is None:
+        if (
+            self.subgoal_generator is None
+            or self.guidance_goal_mode == 'final'
+        ):
             blocks = np.asarray(
                 self.guidance_policy.sample_actions(
                     observations=observations,

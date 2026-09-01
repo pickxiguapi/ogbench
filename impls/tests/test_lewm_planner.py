@@ -85,6 +85,7 @@ def guidance_policy():
     policy.block_action_dim = 10
     policy.guidance_policy = FakeChunkAgent()
     policy.subgoal_generator = None
+    policy.guidance_goal_mode = 'subgoal'
     policy.guidance_action_space = 'planner'
     policy.scaler = FakeScaler()
     policy.warm_starts = [np.full((2, 10), -3.0, dtype=np.float32)]
@@ -92,6 +93,21 @@ def guidance_policy():
 
 
 class PlannerTest(unittest.TestCase):
+    def test_subgoal_planner_can_guide_policy_with_final_goal(self):
+        policy = guidance_policy()
+        policy.subgoal_generator = object()
+        policy.guidance_goal_mode = 'final'
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+        block = policy._guidance_block(
+            pixels,
+            pixels,
+            jax.random.PRNGKey(0),
+            target_embedding=np.array([1.0, 2.0, 3.0], dtype=np.float32),
+        )
+
+        np.testing.assert_array_equal(block, np.arange(10, dtype=np.float32))
+
     def test_actor_population_contains_mode_and_stochastic_blocks(self):
         policy = guidance_policy()
         policy.subgoal_generator = object()
