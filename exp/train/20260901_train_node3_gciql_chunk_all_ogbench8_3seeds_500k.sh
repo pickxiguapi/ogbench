@@ -62,6 +62,7 @@ train_task() {
   mkdir -p "$run_dir"
   echo "[$(date '+%F %T %Z')] Start GPU $gpu $exp_name"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
+  MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless \
   PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
   "$PYTHON_BIN" train_gciql_chunk.py \
     --env_name="${envs[$task_index]}" \
