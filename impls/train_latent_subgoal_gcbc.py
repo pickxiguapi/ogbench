@@ -30,9 +30,11 @@ from latent_subgoal import (
     select_latent_path_medoid,
 )
 from utils.latent_subgoal_dataset import (
+    build_distance_balanced_transition_tables,
     build_history_indices,
     build_valid_transitions,
     load_latent_cache,
+    sample_distance_balanced_future_pairs,
     sample_future_pairs,
     split_episodes,
 )
@@ -84,6 +86,7 @@ def parse_args():
     parser.add_argument('--log-interval', type=int, default=1000)
     parser.add_argument('--eval-interval', type=int, default=5000)
     parser.add_argument('--checkpoint-interval', type=int, default=25_000)
+    parser.add_argument('--max-goal-steps', type=int)
     parser.add_argument('--resume', action='store_true')
     return parser.parse_args()
 
@@ -137,6 +140,13 @@ def validate_args(args):
             raise ValueError('hidden_dim must be divisible by num_heads.')
         if args.time_dim % 2:
             raise ValueError('time_dim must be even.')
+    if args.max_goal_steps is not None:
+        if args.max_goal_steps <= 0:
+            raise ValueError('max_goal_steps must be positive when provided.')
+        if args.goal_sampling != 'aligned_future':
+            raise ValueError('max_goal_steps requires goal_sampling=aligned_future.')
+        if args.max_goal_steps % args.action_block:
+            raise ValueError('max_goal_steps must be divisible by action_block.')
 
 
 class FlowTrainState(train_state.TrainState):
@@ -221,6 +231,7 @@ def make_train_step(
     path_flow_matching=False,
     action_block=5,
     goal_stride=1,
+    goal_steps=(),
     history_size=1,
     ema_decay=0.0,
 ):
@@ -229,21 +240,36 @@ def make_train_step(
         if path_flow_matching
         else ()
     )
+    goal_steps = jnp.asarray(goal_steps, dtype=jnp.int32)
+    distance_balanced = bool(len(goal_steps))
+
     @jax.jit
     def train_step(state, rng, z, valid_t, valid_history, final_t):
         rng, index_key, goal_key, noise_key, time_key = jax.random.split(rng, 5)
-        positions = jax.random.randint(
-            index_key, (batch_size,), minval=0, maxval=len(valid_t)
-        )
-        current_idxs = valid_t[positions]
-        history_idxs = valid_history[positions]
-        final_idxs = final_t[positions]
-        distances = jax.random.uniform(goal_key, (batch_size,))
-        future_counts = (final_idxs - current_idxs) // goal_stride
-        goal_blocks = 1 + jnp.floor(
-            distances * future_counts
-        ).astype(jnp.int32)
-        goal_idxs = current_idxs + goal_blocks * goal_stride
+        if distance_balanced:
+            distance_idxs = jax.random.randint(
+                goal_key, (batch_size,), minval=0, maxval=len(goal_steps)
+            )
+            candidate_counts = final_t[distance_idxs]
+            positions = jnp.floor(
+                jax.random.uniform(index_key, (batch_size,)) * candidate_counts
+            ).astype(jnp.int32)
+            current_idxs = valid_t[distance_idxs, positions]
+            history_idxs = valid_history[distance_idxs, positions]
+            goal_idxs = current_idxs + goal_steps[distance_idxs]
+        else:
+            positions = jax.random.randint(
+                index_key, (batch_size,), minval=0, maxval=len(valid_t)
+            )
+            current_idxs = valid_t[positions]
+            history_idxs = valid_history[positions]
+            final_idxs = final_t[positions]
+            distances = jax.random.uniform(goal_key, (batch_size,))
+            future_counts = (final_idxs - current_idxs) // goal_stride
+            goal_blocks = 1 + jnp.floor(
+                distances * future_counts
+            ).astype(jnp.int32)
+            goal_idxs = current_idxs + goal_blocks * goal_stride
         if path_flow_matching:
             target_idxs = jnp.stack(
                 [jnp.minimum(current_idxs + step, goal_idxs) for step in waypoint_steps],
@@ -491,17 +517,47 @@ def main():
         val_episodes,
         min_future_steps=goal_stride,
     )
-    fixed_val = sample_future_pairs(
-        val_t,
-        val_final,
-        args.validation_pairs,
-        args.subgoal_steps,
-        seed=args.split_seed + 1,
-        goal_stride=goal_stride,
-    )
-    train_history = build_history_indices(
-        train_t, cache.episode_offsets, args.history_size
-    )
+    goal_steps = ()
+    if args.max_goal_steps is not None:
+        goal_steps = tuple(
+            range(goal_stride, args.max_goal_steps + 1, goal_stride)
+        )
+        train_t_table, train_history_table, train_counts = (
+            build_distance_balanced_transition_tables(
+                cache.episode_offsets,
+                cache.episode_lengths,
+                train_episodes,
+                goal_steps,
+                args.history_size,
+            )
+        )
+        val_t_table, _, val_counts = build_distance_balanced_transition_tables(
+            cache.episode_offsets,
+            cache.episode_lengths,
+            val_episodes,
+            goal_steps,
+            args.history_size,
+        )
+        fixed_val = sample_distance_balanced_future_pairs(
+            val_t_table,
+            val_counts,
+            goal_steps,
+            args.validation_pairs,
+            args.subgoal_steps,
+            seed=args.split_seed + 1,
+        )
+    else:
+        fixed_val = sample_future_pairs(
+            val_t,
+            val_final,
+            args.validation_pairs,
+            args.subgoal_steps,
+            seed=args.split_seed + 1,
+            goal_stride=goal_stride,
+        )
+        train_history = build_history_indices(
+            train_t, cache.episode_offsets, args.history_size
+        )
     fixed_val_history = build_history_indices(
         fixed_val[0], cache.episode_offsets, args.history_size
     )
@@ -576,7 +632,10 @@ def main():
         'lewm_checkpoint_sha256': cache.metadata.get('checkpoint_sha256'),
         'architecture': architecture,
         'goal_sampling': (
-            'hiql_uniform_future_same_trajectory'
+            f'uniform_distance_first_aligned_future_same_trajectory_'
+            f'stride_{goal_stride}_max_{args.max_goal_steps}'
+            if args.max_goal_steps is not None
+            else 'hiql_uniform_future_same_trajectory'
             if args.goal_sampling == 'uniform_future'
             else f'uniform_aligned_future_same_trajectory_stride_{goal_stride}'
         ),
@@ -610,9 +669,14 @@ def main():
     print(f'JAX backend={jax.default_backend()} devices={jax.devices()}', flush=True)
 
     z_device = jax.device_put(cache.z)
-    train_t_device = jax.device_put(train_t)
-    train_history_device = jax.device_put(train_history)
-    train_final_device = jax.device_put(train_final)
+    if args.max_goal_steps is not None:
+        train_t_device = jax.device_put(train_t_table)
+        train_history_device = jax.device_put(train_history_table)
+        train_final_device = jax.device_put(train_counts)
+    else:
+        train_t_device = jax.device_put(train_t)
+        train_history_device = jax.device_put(train_history)
+        train_final_device = jax.device_put(train_final)
     if path_flow_matching:
         model = LatentPathFlow(
             embed_dim=embed_dim,
@@ -708,6 +772,7 @@ def main():
         path_flow_matching=path_flow_matching,
         action_block=args.action_block,
         goal_stride=goal_stride,
+        goal_steps=goal_steps,
         history_size=args.history_size,
         ema_decay=args.ema_decay,
     )

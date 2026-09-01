@@ -111,6 +111,84 @@ def build_history_indices(current_rows, episode_offsets, history_size):
     return history.astype(np.int32)
 
 
+def build_distance_balanced_transition_tables(
+    offsets,
+    lengths,
+    episode_indices,
+    goal_steps,
+    history_size,
+):
+    """Build padded per-distance transition tables for distance-first sampling."""
+    goal_steps = np.asarray(goal_steps, dtype=np.int32)
+    if goal_steps.ndim != 1 or not len(goal_steps) or np.any(goal_steps <= 0):
+        raise ValueError('goal_steps must be a non-empty vector of positive steps.')
+    if len(np.unique(goal_steps)) != len(goal_steps):
+        raise ValueError('goal_steps must not contain duplicates.')
+
+    current_groups = []
+    history_groups = []
+    for goal_step in goal_steps:
+        current, _ = build_valid_transitions(
+            offsets,
+            lengths,
+            episode_indices,
+            min_future_steps=int(goal_step),
+        )
+        current_groups.append(current)
+        history_groups.append(
+            build_history_indices(current, offsets, history_size)
+        )
+
+    counts = np.asarray([len(group) for group in current_groups], dtype=np.int32)
+    max_count = int(counts.max())
+    current_table = np.empty((len(goal_steps), max_count), dtype=np.int32)
+    history_table = np.empty(
+        (len(goal_steps), max_count, history_size), dtype=np.int32
+    )
+    for index, (current, history) in enumerate(
+        zip(current_groups, history_groups, strict=True)
+    ):
+        count = len(current)
+        current_table[index, :count] = current
+        history_table[index, :count] = history
+        current_table[index, count:] = current[0]
+        history_table[index, count:] = history[0]
+    return current_table, history_table, counts
+
+
+def sample_distance_balanced_future_pairs(
+    current_table,
+    counts,
+    goal_steps,
+    num_pairs,
+    subgoal_steps,
+    seed,
+):
+    """Sample nearly equal validation counts for every configured goal distance."""
+    current_table = np.asarray(current_table, dtype=np.int32)
+    counts = np.asarray(counts, dtype=np.int32)
+    goal_steps = np.asarray(goal_steps, dtype=np.int32)
+    if current_table.ndim != 2:
+        raise ValueError('current_table must be two-dimensional.')
+    if counts.shape != (len(current_table),) or goal_steps.shape != counts.shape:
+        raise ValueError('counts and goal_steps must match current_table rows.')
+    if np.any(counts <= 0) or np.any(counts > current_table.shape[1]):
+        raise ValueError('counts must identify non-empty rows within current_table.')
+    if num_pairs <= 0 or subgoal_steps <= 0:
+        raise ValueError('num_pairs and subgoal_steps must be positive.')
+
+    rng = np.random.default_rng(seed)
+    distance_indices = np.arange(num_pairs, dtype=np.int32) % len(goal_steps)
+    rng.shuffle(distance_indices)
+    positions = np.floor(
+        rng.random(num_pairs) * counts[distance_indices]
+    ).astype(np.int32)
+    t = current_table[distance_indices, positions]
+    g = t + goal_steps[distance_indices]
+    target = np.minimum(t + int(subgoal_steps), g).astype(np.int32)
+    return t, g, target
+
+
 def sample_future_pairs(
     valid_t,
     final_t,

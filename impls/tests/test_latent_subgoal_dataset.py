@@ -1,8 +1,10 @@
 import numpy as np
 
 from utils.latent_subgoal_dataset import (
+    build_distance_balanced_transition_tables,
     build_history_indices,
     build_valid_transitions,
+    sample_distance_balanced_future_pairs,
     sample_future_pairs,
     split_episodes,
     validate_trajectory_layout,
@@ -88,3 +90,36 @@ def test_future_goal_sampling_is_uniform_including_endpoints():
     )
     counts = np.bincount(goals, minlength=5)[1:]
     assert np.max(np.abs(counts - counts.mean())) < 0.02 * counts.mean()
+
+
+def test_distance_first_sampling_balances_aligned_goals_up_to_25():
+    offsets = np.asarray([0, 31, 67])
+    lengths = np.asarray([31, 36])
+    goal_steps = np.asarray([5, 10, 15, 20, 25])
+    current, history, counts = build_distance_balanced_transition_tables(
+        offsets,
+        lengths,
+        [0, 1],
+        goal_steps,
+        history_size=3,
+    )
+    assert current.shape[0] == len(goal_steps)
+    assert history.shape == (*current.shape, 3)
+    np.testing.assert_array_equal(counts, [57, 47, 37, 27, 17])
+
+    t, g, target = sample_distance_balanced_future_pairs(
+        current,
+        counts,
+        goal_steps,
+        num_pairs=10_000,
+        subgoal_steps=10,
+        seed=17,
+    )
+    distances = g - t
+    np.testing.assert_array_equal(np.unique(distances), goal_steps)
+    np.testing.assert_array_equal(
+        [np.count_nonzero(distances == step) for step in goal_steps],
+        np.full(len(goal_steps), 2_000),
+    )
+    np.testing.assert_array_equal(target, np.minimum(t + 10, g))
+    np.testing.assert_array_equal(target[distances == 5], g[distances == 5])
