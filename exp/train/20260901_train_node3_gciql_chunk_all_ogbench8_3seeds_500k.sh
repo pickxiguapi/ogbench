@@ -42,9 +42,13 @@ cd "$OGBENCH_ROOT/impls"
 wait_for_gpu() {
   local gpu=$1
   local gpu_uuid
+  local active_gpu_uuids
   gpu_uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader | sed -n "$((gpu + 1))p")
-  while nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader \
-    | grep -Fxq "$gpu_uuid"; do
+  while true; do
+    active_gpu_uuids=$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader)
+    if ! grep -Fxq "$gpu_uuid" <<<"$active_gpu_uuids"; then
+      break
+    fi
     echo "[$(date '+%F %T %Z')] GPU $gpu is occupied; waiting"
     sleep 60
   done
