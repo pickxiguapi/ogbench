@@ -43,6 +43,18 @@ def _sample_batches(dataset, indices, *, batch_size, num_batches, rng):
     ]
 
 
+def _contiguous_batches(dataset, indices, *, batch_size, num_batches):
+    sample_count = batch_size * num_batches
+    if sample_count > len(indices):
+        raise ValueError(
+            f'Requested {sample_count} samples, but the split has only {len(indices)}.'
+        )
+    return [
+        dataset.get_batch(indices[offset : offset + batch_size])
+        for offset in range(0, sample_count, batch_size)
+    ]
+
+
 def _geometry_metrics(embedding_batches, sigreg_step, sigreg_key, prediction_losses):
     embeddings = np.concatenate(embedding_batches, axis=0).astype(np.float64)
     flat = embeddings.reshape(-1, embeddings.shape[-1])
@@ -183,6 +195,18 @@ def main():
         num_batches=args.sample_batches,
         rng=rng,
     )
+    contiguous_train_batches = _contiguous_batches(
+        dataset,
+        dataset.train_indices,
+        batch_size=args.batch_size,
+        num_batches=args.sample_batches,
+    )
+    contiguous_validation_batches = _contiguous_batches(
+        dataset,
+        dataset.val_indices,
+        batch_size=args.batch_size,
+        num_batches=args.sample_batches,
+    )
 
     @jax.jit
     def inference_step(params, batch_stats, pixels, actions):
@@ -265,6 +289,26 @@ def main():
         'current_batch_validation': evaluate(
             validation_batches, original_batch_stats, use_current_batch_stats=True
         ),
+        'original_running_contiguous_train': evaluate(
+            contiguous_train_batches,
+            original_batch_stats,
+            use_current_batch_stats=False,
+        ),
+        'original_running_contiguous_validation': evaluate(
+            contiguous_validation_batches,
+            original_batch_stats,
+            use_current_batch_stats=False,
+        ),
+        'current_batch_contiguous_train': evaluate(
+            contiguous_train_batches,
+            original_batch_stats,
+            use_current_batch_stats=True,
+        ),
+        'current_batch_contiguous_validation': evaluate(
+            contiguous_validation_batches,
+            original_batch_stats,
+            use_current_batch_stats=True,
+        ),
     }
 
     calibrated_batch_stats = original_batch_stats
@@ -295,6 +339,11 @@ def main():
     )
     results['calibrated_running_validation'] = evaluate(
         validation_batches, calibrated_batch_stats, use_current_batch_stats=False
+    )
+    results['calibrated_running_contiguous_validation'] = evaluate(
+        contiguous_validation_batches,
+        calibrated_batch_stats,
+        use_current_batch_stats=False,
     )
     batch_stats_delta = _batch_stats_delta(
         original_batch_stats, calibrated_batch_stats
