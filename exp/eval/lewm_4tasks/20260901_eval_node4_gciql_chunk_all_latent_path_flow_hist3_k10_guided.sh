@@ -23,6 +23,7 @@ GUIDANCE_TEMPERATURE=${GUIDANCE_TEMPERATURE:-1.0}
 GUIDANCE_ELITE_SIZE=${GUIDANCE_ELITE_SIZE:-8}
 GUIDANCE_FIRST_BLOCK_STD=${GUIDANCE_FIRST_BLOCK_STD:-}
 CEM_ITERATIONS=${CEM_ITERATIONS:-30}
+CEM_COST_MODE=${CEM_COST_MODE:-moh}
 POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10
@@ -33,7 +34,7 @@ if [[ -n "$FINAL_GOAL_SWITCH_STEPS" ]]; then
   STAGE_TAG="_switch${FINAL_GOAL_SWITCH_STEPS}_to_final_h5"
   stage_args+=(--final-goal-switch-steps="$FINAL_GOAL_SWITCH_STEPS")
 fi
-OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260901_gciql_chunk_all_sd${POLICY_SEED}_latent_path_flow_hist3_k10_ns${NUM_SAMPLES}_guided${STAGE_TAG}_moh_cem300x${CEM_ITERATIONS}_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}_seed${EVAL_SEED}}
+OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260901_gciql_chunk_all_sd${POLICY_SEED}_latent_path_flow_hist3_k10_ns${NUM_SAMPLES}_guided${STAGE_TAG}_${CEM_COST_MODE}_cem300x${CEM_ITERATIONS}_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}_seed${EVAL_SEED}}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-k10-subgoal-guided}
 
 guidance_args=(
@@ -92,7 +93,7 @@ for i in "${!tasks[@]}"; do
     --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
     --cem-horizon=5 --cem-receding-horizon=1 --action-block=5 \
     --cem-num-samples=300 --cem-iterations="$CEM_ITERATIONS" --cem-topk=30 --cem-var-scale=1.0 \
-    --cem-cost-mode=moh \
+    --cem-cost-mode="$CEM_COST_MODE" \
     --output="$output_dir/result.json" >"$output_dir/eval.log" 2>&1 &
   pids+=("$!")
 done

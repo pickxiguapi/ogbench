@@ -72,6 +72,7 @@ class LatentSubgoalGenerator:
         self.embed_dim = int(config['embed_dim'])
         self.waypoint_step = int(config['subgoal_steps'])
         self.waypoint_index = None
+        self.path_length = 1
         self.history_size = 1
         self.sample_selection = 'deterministic'
         self._requires_rng = False
@@ -107,6 +108,7 @@ class LatentSubgoalGenerator:
             waypoint_steps = latent_path_waypoint_steps(
                 self.waypoint_step, trained_action_block
             )
+            self.path_length = len(waypoint_steps)
             self.waypoint_index = waypoint_steps.index(self.waypoint_step)
             self.sample_selection = (
                 'single_sample' if self.num_samples == 1 else 'path_medoid'
@@ -124,7 +126,7 @@ class LatentSubgoalGenerator:
                         num_steps=sampling_steps,
                         solver=solver,
                     )
-                )[:, self.waypoint_index]
+                )
             )
         else:
             if self.num_samples != 1:
@@ -147,7 +149,7 @@ class LatentSubgoalGenerator:
     def observe(self, env_index, pixels):
         self.histories[env_index].append(np.asarray(pixels))
 
-    def predict(self, env_index, goal_pixels):
+    def predict_path(self, env_index, goal_pixels):
         history = list(self.histories[env_index])
         if not history:
             raise ValueError('A current observation is required before subgoal prediction.')
@@ -173,9 +175,17 @@ class LatentSubgoalGenerator:
             prediction = self._predict(jnp.asarray(current), jnp.asarray(goal))
 
         prediction = np.asarray(prediction)[0].astype(np.float32)
-        if prediction.shape != (self.embed_dim,) or not np.isfinite(prediction).all():
+        if prediction.ndim == 1:
+            prediction = prediction[None]
+        expected_shape = (getattr(self, 'path_length', 1), self.embed_dim)
+        if prediction.shape != expected_shape or not np.isfinite(prediction).all():
             raise FloatingPointError(
-                f'Invalid predicted latent subgoal shape/value: {prediction.shape}.'
+                'Invalid predicted latent subgoal path shape/value: '
+                f'{prediction.shape}; expected {expected_shape}.'
             )
         self.generation_counts[env_index] += 1
         return prediction
+
+    def predict(self, env_index, goal_pixels):
+        """Generate one path and return its terminal subgoal for legacy callers."""
+        return self.predict_path(env_index, goal_pixels)[-1]

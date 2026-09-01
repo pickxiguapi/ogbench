@@ -27,6 +27,8 @@ def reduce_rollout_costs(distances, mode):
         return distances[..., -1]
     if mode == 'moh':
         return jnp.min(distances, axis=-1)
+    if mode == 'path_mean':
+        return jnp.mean(distances, axis=-1)
     raise ValueError(f'Unsupported CEM cost mode: {mode!r}.')
 
 
@@ -70,7 +72,7 @@ class JAXLeWMCEMPolicy:
             raise ValueError('CEM topk must be in [2, num_samples].')
         if var_scale <= 0:
             raise ValueError('CEM variance scale must be positive.')
-        if cost_mode not in ('last', 'moh'):
+        if cost_mode not in ('last', 'moh', 'path_mean'):
             raise ValueError(f'Unsupported CEM cost mode: {cost_mode!r}.')
         if guidance_action_space not in ('planner', 'environment'):
             raise ValueError(
@@ -171,6 +173,8 @@ class JAXLeWMCEMPolicy:
                 num_samples=latent_subgoal_num_samples,
                 lewm_checkpoint=self.lewm_checkpoint,
             )
+        if self.cost_mode == 'path_mean' and self.subgoal_generator is None:
+            raise ValueError('path_mean cost requires a latent subgoal path.')
 
         self.requested_horizon = int(horizon)
         if self.subgoal_generator is None:
@@ -179,6 +183,14 @@ class JAXLeWMCEMPolicy:
             self.horizon = subgoal_planning_horizon(
                 self.subgoal_generator.waypoint_step,
                 self.action_block,
+            )
+        if (
+            self.cost_mode == 'path_mean'
+            and self.subgoal_generator.path_length != self.horizon
+        ):
+            raise ValueError(
+                'path_mean requires one predicted waypoint per CEM action block: '
+                f'{self.subgoal_generator.path_length} != {self.horizon}.'
             )
         if self.receding_horizon > self.horizon:
             raise ValueError('CEM receding horizon cannot exceed the planning horizon.')
@@ -342,11 +354,14 @@ class JAXLeWMCEMPolicy:
                     candidates[None],
                     method=model._rollout_predictions,
                 )
-                target = (
-                    target_embedding[None, None, None]
-                    if use_subgoal
-                    else goal_embeddings[:, None, None]
-                )
+                if use_subgoal:
+                    target = (
+                        target_embedding[None, None]
+                        if cost_mode == 'path_mean'
+                        else target_embedding[None, None, None]
+                    )
+                else:
+                    target = goal_embeddings[:, None, None]
                 distances = jnp.sum((predictions - target) ** 2, axis=-1)[0]
                 costs = reduce_rollout_costs(distances, cost_mode)
                 _, elite_indices = jax.lax.top_k(-costs, topk)
@@ -379,11 +394,14 @@ class JAXLeWMCEMPolicy:
                 plans[None],
                 method=model._rollout_predictions,
             )
-            target = (
-                target_embedding[None, None, None]
-                if use_subgoal
-                else goal_embeddings[:, None, None]
-            )
+            if use_subgoal:
+                target = (
+                    target_embedding[None, None]
+                    if cost_mode == 'path_mean'
+                    else target_embedding[None, None, None]
+                )
+            else:
+                target = goal_embeddings[:, None, None]
             distances = jnp.sum((predictions - target) ** 2, axis=-1)
             return reduce_rollout_costs(distances, cost_mode)[0]
 
@@ -453,10 +471,13 @@ class JAXLeWMCEMPolicy:
                 raise ValueError(
                     'Subgoal-guided policy initialization requires a latent target.'
                 )
+            latent_goal = np.asarray(target_embedding)
+            if latent_goal.ndim == 2:
+                latent_goal = latent_goal[-1]
             block = np.asarray(
                 self.guidance_policy.sample_actions_with_latent_goal(
                     observations=observations,
-                    latent_goals=np.asarray(target_embedding)[None],
+                    latent_goals=latent_goal[None],
                     seed=key,
                     temperature=temperature,
                 )
@@ -488,11 +509,14 @@ class JAXLeWMCEMPolicy:
                 )
             )
         else:
+            latent_goal = np.asarray(target_embedding)
+            if latent_goal.ndim == 2:
+                latent_goal = latent_goal[-1]
             blocks = np.asarray(
                 self.guidance_policy.sample_actions_with_latent_goal(
                     observations=observations,
                     latent_goals=np.repeat(
-                        np.asarray(target_embedding)[None], count, axis=0
+                        latent_goal[None], count, axis=0
                     ),
                     seed=sample_key,
                     temperature=self.guidance_temperature,
@@ -559,9 +583,14 @@ class JAXLeWMCEMPolicy:
                     int(self.lewm_config['embed_dim']), dtype=np.float32
                 )
             else:
-                target_embedding = self.subgoal_generator.predict(
-                    env_index, np.asarray(goals[env_index, -1])
-                )
+                if self.cost_mode == 'path_mean':
+                    target_embedding = self.subgoal_generator.predict_path(
+                        env_index, np.asarray(goals[env_index, -1])
+                    )
+                else:
+                    target_embedding = self.subgoal_generator.predict(
+                        env_index, np.asarray(goals[env_index, -1])
+                    )
             if self.guidance_mode in (
                 'population',
                 'lewm_select',

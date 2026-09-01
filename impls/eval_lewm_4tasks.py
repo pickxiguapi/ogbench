@@ -66,7 +66,7 @@ def parse_args():
     parser.add_argument('--final-goal-switch-steps', type=int)
     parser.add_argument(
         '--cem-cost-mode',
-        choices=('last', 'moh'),
+        choices=('last', 'moh', 'path_mean'),
         default='moh',
     )
     parser.add_argument('--video-dir')

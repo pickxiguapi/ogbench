@@ -143,6 +143,9 @@ class PlannerTest(unittest.TestCase):
         np.testing.assert_array_equal(
             reduce_rollout_costs(distances, 'moh'), [1.0, 2.0]
         )
+        np.testing.assert_allclose(
+            reduce_rollout_costs(distances, 'path_mean'), [10.0 / 3.0, 11.0 / 3.0]
+        )
 
     def test_subgoal_runtime_uses_three_encoded_history_frames(self):
         generator = object.__new__(LatentSubgoalGenerator)
@@ -230,6 +233,28 @@ class PlannerTest(unittest.TestCase):
             latent_target[None],
         )
         np.testing.assert_array_equal(initial[0], np.arange(10, dtype=np.float32))
+
+    def test_path_guidance_uses_the_terminal_latent_target(self):
+        policy = guidance_policy()
+        policy.subgoal_generator = object()
+        policy.guidance_policy = FakeLatentGoalChunkAgent()
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+        latent_path = np.array(
+            [[-1.0, -2.0, -3.0], [1.0, 2.0, 3.0]], dtype=np.float32
+        )
+
+        policy._initial_mean(
+            0,
+            pixels,
+            pixels,
+            jax.random.PRNGKey(0),
+            target_embedding=latent_path,
+        )
+
+        np.testing.assert_array_equal(
+            policy.guidance_policy.latent_goals,
+            latent_path[-1:]
+        )
 
     def test_environment_action_guidance_is_standardized(self):
         policy = guidance_policy()
