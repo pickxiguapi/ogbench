@@ -191,6 +191,7 @@ def main():
             var_scale=args.cem_var_scale,
             cost_mode=args.cem_cost_mode,
             guidance_policy=policy_agent,
+            guidance_mode=args.policy_guidance,
             guidance_action_space=args.policy_action_space,
             paired_plan_keys=True,
             action_low=env.action_space.low,

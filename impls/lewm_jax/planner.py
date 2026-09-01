@@ -48,6 +48,10 @@ class JAXLeWMCEMPolicy:
         var_scale,
         cost_mode='last',
         guidance_policy=None,
+        guidance_mode='none',
+        guidance_population_size=0,
+        guidance_temperature=1.0,
+        guidance_first_block_std=None,
         guidance_action_space='planner',
         paired_plan_keys=False,
         action_low=None,
@@ -71,6 +75,24 @@ class JAXLeWMCEMPolicy:
             raise ValueError(
                 'Guidance action space must be either planner or environment.'
             )
+        if guidance_mode not in ('none', 'mode', 'mode_anchor', 'population'):
+            raise ValueError(f'Unsupported policy guidance mode: {guidance_mode!r}.')
+        if (guidance_policy is None) != (guidance_mode == 'none'):
+            raise ValueError(
+                'Policy guidance mode must be none exactly when no policy is provided.'
+            )
+        if not 0 <= int(guidance_population_size) <= int(num_samples):
+            raise ValueError('Guidance population size must be in [0, CEM samples].')
+        if guidance_mode == 'population' and int(guidance_population_size) < 2:
+            raise ValueError('Population guidance requires at least two proposals.')
+        if guidance_mode != 'population' and int(guidance_population_size) != 0:
+            raise ValueError(
+                'Guidance population size only applies to population guidance.'
+            )
+        if float(guidance_temperature) < 0:
+            raise ValueError('Guidance temperature must be non-negative.')
+        if guidance_first_block_std is not None and float(guidance_first_block_std) <= 0:
+            raise ValueError('Guidance first-block std must be positive.')
         if guidance_action_space == 'environment' and not hasattr(
             scaler, 'transform'
         ):
@@ -105,6 +127,14 @@ class JAXLeWMCEMPolicy:
         self.var_scale = float(var_scale)
         self.cost_mode = str(cost_mode)
         self.guidance_policy = guidance_policy
+        self.guidance_mode = str(guidance_mode)
+        self.guidance_population_size = int(guidance_population_size)
+        self.guidance_temperature = float(guidance_temperature)
+        self.guidance_first_block_std = (
+            None
+            if guidance_first_block_std is None
+            else float(guidance_first_block_std)
+        )
         self.guidance_action_space = str(guidance_action_space)
         self.paired_plan_keys = bool(paired_plan_keys)
 
@@ -222,6 +252,9 @@ class JAXLeWMCEMPolicy:
         var_scale = self.var_scale
         cost_mode = self.cost_mode
         use_subgoal = self.subgoal_generator is not None
+        guidance_mode = self.guidance_mode
+        guidance_population_size = self.guidance_population_size
+        guidance_first_block_std = self.guidance_first_block_std
         planner_action_low = (
             None
             if self.planner_action_low is None
@@ -233,10 +266,19 @@ class JAXLeWMCEMPolicy:
             else jnp.asarray(self.planner_action_high, dtype=jnp.float32)
         )
 
-        def plan_one(key, pixels, goals, target_embedding, initial_mean):
+        def plan_one(
+            key,
+            pixels,
+            goals,
+            target_embedding,
+            initial_mean,
+            guidance_blocks,
+        ):
             initial_std = jnp.full_like(initial_mean, var_scale)
+            if guidance_first_block_std is not None:
+                initial_std = initial_std.at[0].set(guidance_first_block_std)
 
-            def optimizer_step(_, carry):
+            def optimizer_step(iteration, carry):
                 key, mean, std = carry
                 key, sample_key = jax.random.split(key)
                 candidates = (
@@ -249,6 +291,23 @@ class JAXLeWMCEMPolicy:
                     + mean[None]
                 )
                 candidates = candidates.at[0].set(mean)
+                if guidance_mode == 'mode_anchor':
+                    candidates = candidates.at[1].set(initial_mean)
+                if guidance_population_size:
+                    candidates = jax.lax.cond(
+                        iteration == 0,
+                        lambda value: value.at[
+                            :guidance_population_size, 0
+                        ].set(guidance_blocks),
+                        lambda value: value,
+                        candidates,
+                    )
+                    candidates = jax.lax.cond(
+                        iteration == 0,
+                        lambda value: value.at[0].set(initial_mean),
+                        lambda value: value,
+                        candidates,
+                    )
                 if planner_action_low is not None:
                     candidates = jnp.clip(
                         candidates,
@@ -327,7 +386,14 @@ class JAXLeWMCEMPolicy:
         self.rng, guidance_key, plan_key = jax.random.split(self.rng, 3)
         return guidance_key, plan_key
 
-    def _guidance_block(self, pixels, goals, key, target_embedding=None):
+    def _guidance_block(
+        self,
+        pixels,
+        goals,
+        key,
+        target_embedding=None,
+        temperature=0.0,
+    ):
         observations = np.asarray(pixels[-1:])
         if self.subgoal_generator is None:
             block = np.asarray(
@@ -335,7 +401,7 @@ class JAXLeWMCEMPolicy:
                     observations=observations,
                     goals=np.asarray(goals[-1:]),
                     seed=key,
-                    temperature=0.0,
+                    temperature=temperature,
                 )
             )
         else:
@@ -348,7 +414,7 @@ class JAXLeWMCEMPolicy:
                     observations=observations,
                     latent_goals=np.asarray(target_embedding)[None],
                     seed=key,
-                    temperature=0.0,
+                    temperature=temperature,
                 )
             )
         if block.shape != (1, self.block_action_dim):
@@ -362,6 +428,50 @@ class JAXLeWMCEMPolicy:
         atomic = block.reshape(-1, self.atomic_action_dim)
         return self.scaler.transform(atomic).reshape(-1)
 
+    def _guidance_population(
+        self, pixels, goals, key, target_embedding=None
+    ):
+        count = self.guidance_population_size
+        sample_key, mode_key = jax.random.split(key)
+        observations = np.repeat(np.asarray(pixels[-1:]), count, axis=0)
+        if self.subgoal_generator is None:
+            blocks = np.asarray(
+                self.guidance_policy.sample_actions(
+                    observations=observations,
+                    goals=np.repeat(np.asarray(goals[-1:]), count, axis=0),
+                    seed=sample_key,
+                    temperature=self.guidance_temperature,
+                )
+            )
+        else:
+            blocks = np.asarray(
+                self.guidance_policy.sample_actions_with_latent_goal(
+                    observations=observations,
+                    latent_goals=np.repeat(
+                        np.asarray(target_embedding)[None], count, axis=0
+                    ),
+                    seed=sample_key,
+                    temperature=self.guidance_temperature,
+                )
+            )
+        if blocks.shape != (count, self.block_action_dim):
+            raise ValueError(
+                f'Guidance population returned {blocks.shape}; expected '
+                f'({count}, {self.block_action_dim}).'
+            )
+        if self.guidance_action_space == 'environment':
+            atomic = blocks.reshape(-1, self.atomic_action_dim)
+            blocks = self.scaler.transform(atomic).reshape(blocks.shape)
+        blocks = blocks.copy()
+        blocks[0] = self._guidance_block(
+            pixels,
+            goals,
+            mode_key,
+            target_embedding=target_embedding,
+            temperature=0.0,
+        )
+        return blocks
+
     def _initial_mean(
         self,
         env_index,
@@ -369,6 +479,7 @@ class JAXLeWMCEMPolicy:
         goals,
         guidance_key,
         target_embedding=None,
+        guidance_block=None,
     ):
         initial = np.zeros(
             (self.horizon, self.block_action_dim), dtype=np.float32
@@ -377,11 +488,15 @@ class JAXLeWMCEMPolicy:
         if warm is not None:
             initial[: len(warm)] = warm
         if self.guidance_policy is not None:
-            initial[0] = self._guidance_block(
-                pixels,
-                goals,
-                guidance_key,
-                target_embedding=target_embedding,
+            initial[0] = (
+                guidance_block
+                if guidance_block is not None
+                else self._guidance_block(
+                    pixels,
+                    goals,
+                    guidance_key,
+                    target_embedding=target_embedding,
+                )
             )
         return initial
 
@@ -403,12 +518,27 @@ class JAXLeWMCEMPolicy:
                 target_embedding = self.subgoal_generator.predict(
                     env_index, np.asarray(goals[env_index, -1])
                 )
+            if self.guidance_mode == 'population':
+                guidance_blocks = self._guidance_population(
+                    pixels[env_index],
+                    goals[env_index],
+                    guidance_key,
+                    target_embedding=target_embedding,
+                )
+                guidance_block = guidance_blocks[0]
+            else:
+                guidance_blocks = np.zeros(
+                    (max(self.guidance_population_size, 1), self.block_action_dim),
+                    dtype=np.float32,
+                )
+                guidance_block = None
             initial_mean = self._initial_mean(
                 env_index,
                 pixels[env_index],
                 goals[env_index],
                 guidance_key,
                 target_embedding=target_embedding,
+                guidance_block=guidance_block,
             )
             normalized_blocks, _ = self._plan_one(
                 plan_key,
@@ -416,6 +546,7 @@ class JAXLeWMCEMPolicy:
                 jnp.asarray(goals[env_index]),
                 jnp.asarray(target_embedding),
                 jnp.asarray(initial_mean),
+                jnp.asarray(guidance_blocks),
             )
             normalized_blocks = np.asarray(normalized_blocks)
             keep = normalized_blocks[: self.receding_horizon]

@@ -41,6 +41,16 @@ class FakeLatentGoalChunkAgent(FakeChunkAgent):
         return jnp.arange(10, dtype=jnp.float32)[None]
 
 
+class FakeLatentPopulationAgent(FakeChunkAgent):
+    def sample_actions_with_latent_goal(
+        self, observations, latent_goals, seed, temperature
+    ):
+        assert observations.shape[0] == latent_goals.shape[0]
+        return jnp.full(
+            (observations.shape[0], 10), temperature, dtype=jnp.float32
+        )
+
+
 class FakeScaler:
     action_dim = 2
     mean = np.array([1.0, -2.0], dtype=np.float32)
@@ -82,6 +92,25 @@ def guidance_policy():
 
 
 class PlannerTest(unittest.TestCase):
+    def test_actor_population_contains_mode_and_stochastic_blocks(self):
+        policy = guidance_policy()
+        policy.subgoal_generator = object()
+        policy.guidance_policy = FakeLatentPopulationAgent()
+        policy.guidance_population_size = 4
+        policy.guidance_temperature = 0.3
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+        latent_target = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+
+        blocks = policy._guidance_population(
+            pixels,
+            pixels,
+            jax.random.PRNGKey(0),
+            target_embedding=latent_target,
+        )
+
+        np.testing.assert_array_equal(blocks[0], np.zeros(10, dtype=np.float32))
+        np.testing.assert_allclose(blocks[1:], 0.3)
+
     def test_staged_planner_switches_on_an_action_block_boundary(self):
         local = FakePlanner(1.0, use_subgoal=True)
         final = FakePlanner(2.0, use_subgoal=False)

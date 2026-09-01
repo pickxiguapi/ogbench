@@ -17,6 +17,10 @@ GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-25}
 EVAL_BUDGET=${EVAL_BUDGET:-50}
 NUM_SAMPLES=${NUM_SAMPLES:-1}
 FINAL_GOAL_SWITCH_STEPS=${FINAL_GOAL_SWITCH_STEPS:-}
+POLICY_GUIDANCE=${POLICY_GUIDANCE:-mode}
+GUIDANCE_POPULATION_SIZE=${GUIDANCE_POPULATION_SIZE:-0}
+GUIDANCE_TEMPERATURE=${GUIDANCE_TEMPERATURE:-1.0}
+GUIDANCE_FIRST_BLOCK_STD=${GUIDANCE_FIRST_BLOCK_STD:-}
 POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10
@@ -28,7 +32,15 @@ if [[ -n "$FINAL_GOAL_SWITCH_STEPS" ]]; then
   stage_args+=(--final-goal-switch-steps="$FINAL_GOAL_SWITCH_STEPS")
 fi
 OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260901_gciql_chunk_all_sd${POLICY_SEED}_latent_path_flow_hist3_k10_ns${NUM_SAMPLES}_guided${STAGE_TAG}_moh_cem300x30_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}_seed${EVAL_SEED}}
-TMP_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-k10-subgoal-guided
+TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/gciql-chunk-all-k10-subgoal-guided}
+
+guidance_args=(
+  --guidance-population-size="$GUIDANCE_POPULATION_SIZE"
+  --guidance-temperature="$GUIDANCE_TEMPERATURE"
+)
+if [[ -n "$GUIDANCE_FIRST_BLOCK_STD" ]]; then
+  guidance_args+=(--guidance-first-block-std="$GUIDANCE_FIRST_BLOCK_STD")
+fi
 
 tasks=(cube pusht reacher tworoom)
 read -r -a gpus <<< "$GPU_IDS"
@@ -65,7 +77,8 @@ for i in "${!tasks[@]}"; do
   LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
   PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
   "$PYTHON_BIN" eval_lewm_4tasks.py \
-    --task="$task" --controller=lewm_cem --policy-guidance=mode --use-subgoal \
+    --task="$task" --controller=lewm_cem --policy-guidance="$POLICY_GUIDANCE" --use-subgoal \
+    "${guidance_args[@]}" \
     --data-root="$LEWM_DATA_ROOT" \
     --lewm-checkpoint="${lewm_checkpoints[$i]}" \
     --policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS" \

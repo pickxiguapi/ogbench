@@ -30,8 +30,13 @@ def parse_args():
         '--controller', choices=('direct_policy', 'lewm_cem'), required=True
     )
     parser.add_argument(
-        '--policy-guidance', choices=('none', 'mode'), default='none'
+        '--policy-guidance',
+        choices=('none', 'mode', 'mode_anchor', 'population'),
+        default='none',
     )
+    parser.add_argument('--guidance-population-size', type=int, default=0)
+    parser.add_argument('--guidance-temperature', type=float, default=1.0)
+    parser.add_argument('--guidance-first-block-std', type=float)
     parser.add_argument('--use-subgoal', action='store_true')
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--lewm-checkpoint')
@@ -87,6 +92,15 @@ def main():
             )
         if args.final_goal_switch_steps < 0:
             raise ValueError('--final-goal-switch-steps must be non-negative.')
+    if args.guidance_population_size < 0:
+        raise ValueError('--guidance-population-size must be non-negative.')
+    if args.guidance_temperature < 0:
+        raise ValueError('--guidance-temperature must be non-negative.')
+    if (
+        args.guidance_first_block_std is not None
+        and args.guidance_first_block_std <= 0
+    ):
+        raise ValueError('--guidance-first-block-std must be positive.')
 
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
@@ -142,6 +156,10 @@ def main():
                 var_scale=args.cem_var_scale,
                 cost_mode=args.cem_cost_mode,
                 guidance_policy=policy_agent,
+                guidance_mode=args.policy_guidance,
+                guidance_population_size=args.guidance_population_size,
+                guidance_temperature=args.guidance_temperature,
+                guidance_first_block_std=args.guidance_first_block_std,
                 paired_plan_keys=True,
             )
             local_policy = JAXLeWMCEMPolicy(
@@ -180,6 +198,13 @@ def main():
         'task': args.task,
         'controller': args.controller,
         'policy_guidance': args.policy_guidance,
+        'policy_guidance_config': {
+            'population_size': args.guidance_population_size,
+            'temperature': args.guidance_temperature,
+            'first_block_std': args.guidance_first_block_std,
+            'uses_q': False,
+            'uses_v': False,
+        },
         'use_subgoal': args.use_subgoal,
         'representation_mode': representation_mode,
         'lewm_checkpoint': args.lewm_checkpoint,
