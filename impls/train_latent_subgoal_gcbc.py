@@ -64,6 +64,11 @@ def parse_args():
     parser.add_argument('--num-samples', type=int, default=8)
     parser.add_argument('--ema-decay', type=float, default=0.9999)
     parser.add_argument('--action-block', type=int, default=5)
+    parser.add_argument(
+        '--goal-sampling',
+        choices=('uniform_future', 'aligned_future'),
+        default='uniform_future',
+    )
     parser.add_argument('--hidden-dim', type=int, default=512)
     parser.add_argument('--depth', type=int, default=4)
     parser.add_argument('--ff-dim', type=int, default=2048)
@@ -215,6 +220,7 @@ def make_train_step(
     flow_matching=False,
     path_flow_matching=False,
     action_block=5,
+    goal_stride=1,
     history_size=1,
     ema_decay=0.0,
 ):
@@ -233,11 +239,11 @@ def make_train_step(
         history_idxs = valid_history[positions]
         final_idxs = final_t[positions]
         distances = jax.random.uniform(goal_key, (batch_size,))
-        future_counts = (final_idxs - current_idxs) // action_block
+        future_counts = (final_idxs - current_idxs) // goal_stride
         goal_blocks = 1 + jnp.floor(
             distances * future_counts
         ).astype(jnp.int32)
-        goal_idxs = current_idxs + goal_blocks * action_block
+        goal_idxs = current_idxs + goal_blocks * goal_stride
         if path_flow_matching:
             target_idxs = jnp.stack(
                 [jnp.minimum(current_idxs + step, goal_idxs) for step in waypoint_steps],
@@ -469,6 +475,7 @@ def main():
     print(f'Loading complete latent cache: {args.latent_dataset}', flush=True)
     cache = load_latent_cache(args.latent_dataset)
     embed_dim = int(cache.z.shape[1])
+    goal_stride = args.action_block if args.goal_sampling == 'aligned_future' else 1
     train_episodes, val_episodes = split_episodes(
         len(cache.episode_offsets), args.train_fraction, args.split_seed
     )
@@ -476,13 +483,13 @@ def main():
         cache.episode_offsets,
         cache.episode_lengths,
         train_episodes,
-        min_future_steps=args.action_block,
+        min_future_steps=goal_stride,
     )
     val_t, val_final = build_valid_transitions(
         cache.episode_offsets,
         cache.episode_lengths,
         val_episodes,
-        min_future_steps=args.action_block,
+        min_future_steps=goal_stride,
     )
     fixed_val = sample_future_pairs(
         val_t,
@@ -490,7 +497,7 @@ def main():
         args.validation_pairs,
         args.subgoal_steps,
         seed=args.split_seed + 1,
-        goal_stride=args.action_block,
+        goal_stride=goal_stride,
     )
     train_history = build_history_indices(
         train_t, cache.episode_offsets, args.history_size
@@ -569,7 +576,9 @@ def main():
         'lewm_checkpoint_sha256': cache.metadata.get('checkpoint_sha256'),
         'architecture': architecture,
         'goal_sampling': (
-            f'uniform_aligned_future_same_trajectory_stride_{args.action_block}'
+            'hiql_uniform_future_same_trajectory'
+            if args.goal_sampling == 'uniform_future'
+            else f'uniform_aligned_future_same_trajectory_stride_{goal_stride}'
         ),
         'loss': (
             'conditional_path_flow_matching_mse'
@@ -698,6 +707,7 @@ def main():
         flow_matching=flow_matching,
         path_flow_matching=path_flow_matching,
         action_block=args.action_block,
+        goal_stride=goal_stride,
         history_size=args.history_size,
         ema_decay=args.ema_decay,
     )
