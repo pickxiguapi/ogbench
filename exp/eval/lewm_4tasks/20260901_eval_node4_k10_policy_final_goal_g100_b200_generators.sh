@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # A800 node4：100/200 下比较 goalmax25 与 uniform-full hist3 K10。
-# 两组均由 seed777 Policy Mode 使用 final z_g，CEM cost 使用 predicted
+# 两组均由 seed777 Policy Mode 引导，Policy goal 可通过
+# GUIDANCE_GOAL_MODE=final|subgoal 切换；CEM cost 始终使用 predicted
 # z_{t+10}。MoH、自动 H2、RH1、J5、300/top-30、action_block=5、
 # single-sample subgoal、50 episodes、seed42；Q/V 不参与。
 CLIENT_ID=node4
@@ -13,12 +14,18 @@ source "$OGBENCH_ROOT/scripts/client_env.sh"
 NUM_EVAL=${NUM_EVAL:-50}
 EVAL_SEED=${EVAL_SEED:-42}
 POLICY_SEED=${POLICY_SEED:-777}
+GUIDANCE_GOAL_MODE=${GUIDANCE_GOAL_MODE:-final}
+case "$GUIDANCE_GOAL_MODE" in
+  final) GUIDANCE_TAG=finalgoal ;;
+  subgoal) GUIDANCE_TAG=subgoal ;;
+  *) echo "GUIDANCE_GOAL_MODE must be final or subgoal" >&2; exit 2 ;;
+esac
 POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 GOALMAX_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10-goalmax25
 UNIFORM_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10
 EVAL_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks
-TMP_ROOT=/data-training/yyf/ogbench-lewm-policy-runs/tmp/k10-policy-final-goal-g100-b200
+TMP_ROOT="/data-training/yyf/ogbench-lewm-policy-runs/tmp/k10-policy-${GUIDANCE_TAG}-g100-b200"
 
 tasks=(cube pusht reacher tworoom)
 lewm_checkpoints=(
@@ -45,7 +52,7 @@ run_generator() {
   local generator_tag=$2
   local checkpoint_array_name=$3
   local -n checkpoints=$checkpoint_array_name
-  local output_root="$EVAL_ROOT/20260901_k10_${generator_tag}_ns1_actor_cem_mode_finalgoal_sd${POLICY_SEED}_moh_cem300x5_h2_rh1_g100_b200_ep${NUM_EVAL}_seed${EVAL_SEED}"
+  local output_root="$EVAL_ROOT/20260901_k10_${generator_tag}_ns1_actor_cem_mode_${GUIDANCE_TAG}_sd${POLICY_SEED}_moh_cem300x5_h2_rh1_g100_b200_ep${NUM_EVAL}_seed${EVAL_SEED}"
   local -a gpus
   read -r -a gpus <<< "$gpu_ids"
 
@@ -66,7 +73,7 @@ run_generator() {
       PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
       "$PYTHON_BIN" eval_lewm_4tasks.py \
         --task="$task" --controller=lewm_cem --policy-guidance=mode --use-subgoal \
-        --guidance-goal-mode=final \
+        --guidance-goal-mode="$GUIDANCE_GOAL_MODE" \
         --guidance-population-size=0 --guidance-temperature=1.0 --guidance-elite-size=8 \
         --data-root="$LEWM_DATA_ROOT" \
         --lewm-checkpoint="${lewm_checkpoints[$i]}" \
