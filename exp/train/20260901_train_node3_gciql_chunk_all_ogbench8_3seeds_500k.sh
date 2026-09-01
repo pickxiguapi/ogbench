@@ -73,6 +73,7 @@ train_task() {
   PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
   "$PYTHON_BIN" train_gciql_chunk.py \
     --env_name="${envs[$task_index]}" \
+    --dataset_path="$OGBENCH_DATA_DIR/${envs[$task_index]}.npz" \
     --save_dir="$run_dir" \
     --representation_mode=all \
     --lewm_checkpoint="${lewm_checkpoints[$task_index]}" \
