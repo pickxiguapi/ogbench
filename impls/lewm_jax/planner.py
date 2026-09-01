@@ -51,6 +51,7 @@ class JAXLeWMCEMPolicy:
         guidance_mode='none',
         guidance_population_size=0,
         guidance_temperature=1.0,
+        guidance_elite_size=8,
         guidance_first_block_std=None,
         guidance_action_space='planner',
         paired_plan_keys=False,
@@ -75,7 +76,13 @@ class JAXLeWMCEMPolicy:
             raise ValueError(
                 'Guidance action space must be either planner or environment.'
             )
-        if guidance_mode not in ('none', 'mode', 'mode_anchor', 'population'):
+        population_modes = ('population', 'lewm_select', 'lewm_elite')
+        if guidance_mode not in (
+            'none',
+            'mode',
+            'mode_anchor',
+            *population_modes,
+        ):
             raise ValueError(f'Unsupported policy guidance mode: {guidance_mode!r}.')
         if (guidance_policy is None) != (guidance_mode == 'none'):
             raise ValueError(
@@ -83,12 +90,19 @@ class JAXLeWMCEMPolicy:
             )
         if not 0 <= int(guidance_population_size) <= int(num_samples):
             raise ValueError('Guidance population size must be in [0, CEM samples].')
-        if guidance_mode == 'population' and int(guidance_population_size) < 2:
-            raise ValueError('Population guidance requires at least two proposals.')
-        if guidance_mode != 'population' and int(guidance_population_size) != 0:
+        if guidance_mode in population_modes and int(guidance_population_size) < 2:
+            raise ValueError('Population-based guidance requires at least two proposals.')
+        if guidance_mode not in population_modes and int(guidance_population_size) != 0:
             raise ValueError(
-                'Guidance population size only applies to population guidance.'
+                'Guidance population size only applies to population-based guidance.'
             )
+        if int(guidance_elite_size) <= 0:
+            raise ValueError('Guidance elite size must be positive.')
+        if (
+            guidance_mode == 'lewm_elite'
+            and int(guidance_elite_size) > int(guidance_population_size)
+        ):
+            raise ValueError('Guidance elite size must fit inside the population.')
         if float(guidance_temperature) < 0:
             raise ValueError('Guidance temperature must be non-negative.')
         if guidance_first_block_std is not None and float(guidance_first_block_std) <= 0:
@@ -130,6 +144,7 @@ class JAXLeWMCEMPolicy:
         self.guidance_mode = str(guidance_mode)
         self.guidance_population_size = int(guidance_population_size)
         self.guidance_temperature = float(guidance_temperature)
+        self.guidance_elite_size = int(guidance_elite_size)
         self.guidance_first_block_std = (
             None
             if guidance_first_block_std is None
@@ -191,6 +206,7 @@ class JAXLeWMCEMPolicy:
             ).astype(np.float32)
 
         self._plan_one = jax.jit(self._build_plan_one())
+        self._score_guidance_plans = jax.jit(self._build_guidance_scorer())
 
     def encode_pixels(self, pixels):
         return np.asarray(self._encode_pixels(jnp.asarray(pixels)))
@@ -253,7 +269,11 @@ class JAXLeWMCEMPolicy:
         cost_mode = self.cost_mode
         use_subgoal = self.subgoal_generator is not None
         guidance_mode = self.guidance_mode
-        guidance_population_size = self.guidance_population_size
+        guidance_population_size = (
+            self.guidance_population_size
+            if self.guidance_mode == 'population'
+            else 0
+        )
         guidance_first_block_std = self.guidance_first_block_std
         planner_action_low = (
             None
@@ -344,6 +364,30 @@ class JAXLeWMCEMPolicy:
             return mean, std
 
         return plan_one
+
+    def _build_guidance_scorer(self):
+        model = self.model
+        variables = self.variables
+        cost_mode = self.cost_mode
+        use_subgoal = self.subgoal_generator is not None
+
+        def score(pixels, goals, target_embedding, plans):
+            goal_embeddings, predictions = model.apply(
+                variables,
+                pixels[None, None],
+                goals[None, None],
+                plans[None],
+                method=model._rollout_predictions,
+            )
+            target = (
+                target_embedding[None, None, None]
+                if use_subgoal
+                else goal_embeddings[:, None, None]
+            )
+            distances = jnp.sum((predictions - target) ** 2, axis=-1)
+            return reduce_rollout_costs(distances, cost_mode)[0]
+
+        return score
 
     def reset(self, action_space, num_envs):
         action_dim = int(np.prod(action_space.shape))
@@ -518,7 +562,11 @@ class JAXLeWMCEMPolicy:
                 target_embedding = self.subgoal_generator.predict(
                     env_index, np.asarray(goals[env_index, -1])
                 )
-            if self.guidance_mode == 'population':
+            if self.guidance_mode in (
+                'population',
+                'lewm_select',
+                'lewm_elite',
+            ):
                 guidance_blocks = self._guidance_population(
                     pixels[env_index],
                     goals[env_index],
@@ -526,6 +574,39 @@ class JAXLeWMCEMPolicy:
                     target_embedding=target_embedding,
                 )
                 guidance_block = guidance_blocks[0]
+                if self.guidance_mode in ('lewm_select', 'lewm_elite'):
+                    proposal_plans = np.repeat(
+                        self._initial_mean(
+                            env_index,
+                            pixels[env_index],
+                            goals[env_index],
+                            guidance_key,
+                            target_embedding=target_embedding,
+                            guidance_block=guidance_block,
+                        )[None],
+                        self.guidance_population_size,
+                        axis=0,
+                    )
+                    proposal_plans[:, 0] = guidance_blocks
+                    proposal_costs = np.asarray(
+                        self._score_guidance_plans(
+                            jnp.asarray(pixels[env_index]),
+                            jnp.asarray(goals[env_index]),
+                            jnp.asarray(target_embedding),
+                            jnp.asarray(proposal_plans),
+                        )
+                    )
+                    if self.guidance_mode == 'lewm_select':
+                        guidance_block = guidance_blocks[
+                            int(np.argmin(proposal_costs))
+                        ]
+                    else:
+                        elite_indices = np.argsort(proposal_costs)[
+                            : self.guidance_elite_size
+                        ]
+                        guidance_block = guidance_blocks[elite_indices].mean(
+                            axis=0
+                        )
             else:
                 guidance_blocks = np.zeros(
                     (max(self.guidance_population_size, 1), self.block_action_dim),

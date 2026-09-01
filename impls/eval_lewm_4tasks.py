@@ -31,11 +31,19 @@ def parse_args():
     )
     parser.add_argument(
         '--policy-guidance',
-        choices=('none', 'mode', 'mode_anchor', 'population'),
+        choices=(
+            'none',
+            'mode',
+            'mode_anchor',
+            'population',
+            'lewm_select',
+            'lewm_elite',
+        ),
         default='none',
     )
     parser.add_argument('--guidance-population-size', type=int, default=0)
     parser.add_argument('--guidance-temperature', type=float, default=1.0)
+    parser.add_argument('--guidance-elite-size', type=int, default=8)
     parser.add_argument('--guidance-first-block-std', type=float)
     parser.add_argument('--use-subgoal', action='store_true')
     parser.add_argument('--data-root', required=True)
@@ -96,6 +104,8 @@ def main():
         raise ValueError('--guidance-population-size must be non-negative.')
     if args.guidance_temperature < 0:
         raise ValueError('--guidance-temperature must be non-negative.')
+    if args.guidance_elite_size <= 0:
+        raise ValueError('--guidance-elite-size must be positive.')
     if (
         args.guidance_first_block_std is not None
         and args.guidance_first_block_std <= 0
@@ -159,6 +169,7 @@ def main():
                 guidance_mode=args.policy_guidance,
                 guidance_population_size=args.guidance_population_size,
                 guidance_temperature=args.guidance_temperature,
+                guidance_elite_size=args.guidance_elite_size,
                 guidance_first_block_std=args.guidance_first_block_std,
                 paired_plan_keys=True,
             )
@@ -201,6 +212,7 @@ def main():
         'policy_guidance_config': {
             'population_size': args.guidance_population_size,
             'temperature': args.guidance_temperature,
+            'elite_size': args.guidance_elite_size,
             'first_block_std': args.guidance_first_block_std,
             'uses_q': False,
             'uses_v': False,
