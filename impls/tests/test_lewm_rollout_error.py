@@ -43,3 +43,6 @@ def test_relative_error_is_ratio_of_means():
     persistence = np.asarray([[2.0, 2.0], [6.0, 6.0]])
     summary = bootstrap_summary(values, persistence, samples=100, seed=0)
     np.testing.assert_allclose(summary['relative_mean'], [0.5, 1.5])
+    np.testing.assert_allclose(summary['amplification_mean'], [1.0, 3.0])
+    np.testing.assert_allclose(summary['amplification_ci_low'][0], 1.0)
+    np.testing.assert_allclose(summary['amplification_ci_high'][0], 1.0)

@@ -166,7 +166,7 @@ def make_rollout_function(model, variables, history_size):
 
 
 def bootstrap_summary(values, persistence, *, samples, seed):
-    """Return mean, SE, percentile CI, and ratio-of-means summaries."""
+    """Return mean, CI, persistence-relative, and first-step-relative summaries."""
     values = np.asarray(values, dtype=np.float64)
     persistence = np.asarray(persistence, dtype=np.float64)
     if values.shape != persistence.shape or values.ndim != 2:
@@ -176,8 +176,10 @@ def bootstrap_summary(values, persistence, *, samples, seed):
     value_means = values[indices].mean(axis=1)
     persistence_means = persistence[indices].mean(axis=1)
     ratios = value_means / np.maximum(persistence_means, 1e-12)
+    amplification = value_means / np.maximum(value_means[:, :1], 1e-12)
+    mean = values.mean(axis=0)
     return {
-        'mean': values.mean(axis=0),
+        'mean': mean,
         'se': values.std(axis=0, ddof=1) / np.sqrt(len(values)),
         'ci_low': np.percentile(value_means, 2.5, axis=0),
         'ci_high': np.percentile(value_means, 97.5, axis=0),
@@ -186,6 +188,9 @@ def bootstrap_summary(values, persistence, *, samples, seed):
         'relative_ci_low': np.percentile(ratios, 2.5, axis=0),
         'relative_ci_high': np.percentile(ratios, 97.5, axis=0),
         'persistence_mean': persistence.mean(axis=0),
+        'amplification_mean': mean / max(mean[0], 1e-12),
+        'amplification_ci_low': np.percentile(amplification, 2.5, axis=0),
+        'amplification_ci_high': np.percentile(amplification, 97.5, axis=0),
     }
 
 
@@ -362,6 +367,9 @@ def write_outputs(results, output_dir, *, local_horizon, args):
             'relative_mse',
             'relative_mse_ci_low',
             'relative_mse_ci_high',
+            'error_amplification_vs_5step',
+            'error_amplification_ci_low',
+            'error_amplification_ci_high',
             'cosine_error_mean',
             'cosine_error_se',
             'cosine_error_ci_low',
@@ -392,6 +400,15 @@ def write_outputs(results, output_dir, *, local_horizon, args):
                         'relative_mse_ci_high': float(
                             summary['relative_ci_high'][index]
                         ),
+                        'error_amplification_vs_5step': float(
+                            summary['amplification_mean'][index]
+                        ),
+                        'error_amplification_ci_low': float(
+                            summary['amplification_ci_low'][index]
+                        ),
+                        'error_amplification_ci_high': float(
+                            summary['amplification_ci_high'][index]
+                        ),
                         'cosine_error_mean': float(cosine['mean'][index]),
                         'cosine_error_se': float(cosine['se'][index]),
                         'cosine_error_ci_low': float(cosine['ci_low'][index]),
@@ -402,7 +419,8 @@ def write_outputs(results, output_dir, *, local_horizon, args):
     metadata = {
         'protocol': {
             'metric': 'open-loop autoregressive latent MSE',
-            'normalization': 'ratio of mean LeWM MSE to mean z_t persistence MSE',
+            'primary_plot_normalization': 'mean latent MSE divided by mean 5-step latent MSE',
+            'supplementary_normalization': 'ratio of mean LeWM MSE to mean z_t persistence MSE',
             'planner_match': 'single observed z_t followed by frozen predictor autoregression',
             'local_horizon': local_horizon,
             'max_horizon': args.max_horizon,
@@ -439,7 +457,7 @@ def plot_results(results, output_dir, *, local_horizon):
         }
     )
     figure, axis = plt.subplots(figsize=(6.4, 4.0), constrained_layout=True)
-    relative_curves = []
+    amplification_curves = []
     for result in results:
         task = result['task']
         horizons = result['horizons']
@@ -447,7 +465,7 @@ def plot_results(results, output_dir, *, local_horizon):
         color = TASK_COLORS.get(task)
         axis.plot(
             horizons,
-            summary['relative_mean'],
+            summary['amplification_mean'],
             marker='o',
             markersize=3.5,
             linewidth=1.6,
@@ -456,14 +474,14 @@ def plot_results(results, output_dir, *, local_horizon):
         )
         axis.fill_between(
             horizons,
-            summary['relative_ci_low'],
-            summary['relative_ci_high'],
+            summary['amplification_ci_low'],
+            summary['amplification_ci_high'],
             color=color,
             alpha=0.12,
             linewidth=0,
         )
-        relative_curves.append(summary['relative_mean'])
-    macro = np.mean(np.stack(relative_curves), axis=0)
+        amplification_curves.append(summary['amplification_mean'])
+    macro = np.mean(np.stack(amplification_curves), axis=0)
     axis.plot(
         results[0]['horizons'],
         macro,
@@ -472,24 +490,25 @@ def plot_results(results, output_dir, *, local_horizon):
         label='Task mean',
         zorder=10,
     )
-    axis.axhline(1.0, color='#777777', linestyle='--', linewidth=1.0, label='Persistence')
+    axis.axhline(1.0, color='#777777', linestyle='--', linewidth=1.0, label='5-step error')
+    axis.axvspan(0, local_horizon, color='#7A3E9D', alpha=0.055, linewidth=0)
     axis.axvline(local_horizon, color='#7A3E9D', linestyle='--', linewidth=1.5)
-    axis.annotate(
+    axis.text(
+        local_horizon + 0.6,
+        0.98,
         f'LeWM++ local horizon $k={local_horizon}$',
-        xy=(local_horizon, 1.0),
-        xytext=(6, 8),
-        textcoords='offset points',
+        transform=axis.get_xaxis_transform(),
         color='#7A3E9D',
         rotation=90,
-        va='bottom',
+        va='top',
         ha='left',
     )
     axis.set_xlabel('Open-loop horizon (environment steps)')
-    axis.set_ylabel('Relative latent MSE (LeWM / persistence)')
-    axis.set_title('Frozen LeWM rollout error grows with horizon')
+    axis.set_ylabel(r'Rollout error amplification ($\times$ 5-step MSE)')
+    axis.set_title('Frozen LeWM error compounds under open-loop rollout')
     axis.grid(axis='both', color='#DDDDDD', linewidth=0.6, alpha=0.8)
     axis.spines[['top', 'right']].set_visible(False)
-    axis.set_xlim(0, int(results[0]['horizons'][-1]) + 1)
+    axis.set_xlim(int(results[0]['horizons'][0]) - 1, int(results[0]['horizons'][-1]) + 1)
     axis.set_ylim(bottom=0)
     axis.legend(ncol=2, frameon=False, loc='upper left')
     output_dir = Path(output_dir)
@@ -525,9 +544,9 @@ def main():
         )
         results.append(result)
         print(
-            f'[{task}] relative MSE at k={args.local_horizon}: '
-            f'{result["summary"]["relative_mean"][args.local_horizon // args.action_block - 1]:.4f}; '
-            f'at H={args.max_horizon}: {result["summary"]["relative_mean"][-1]:.4f}'
+            f'[{task}] error amplification at k={args.local_horizon}: '
+            f'{result["summary"]["amplification_mean"][args.local_horizon // args.action_block - 1]:.2f}x; '
+            f'at H={args.max_horizon}: {result["summary"]["amplification_mean"][-1]:.2f}x'
         )
     raw_path, summary_path = write_outputs(
         results, args.output_dir, local_horizon=args.local_horizon, args=args
