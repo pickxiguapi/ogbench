@@ -105,8 +105,12 @@ def main():
     axis.set_xlabel('Open-loop rollout horizon (environment steps)')
     axis.set_ylabel('Latent prediction MSE')
     axis.set_title('PushT: frozen LeWM rollout error grows with horizon')
-    axis.set_xticks(steps)
-    axis.set_xlim(steps[0] - 1, steps[-1] + 1)
+    if steps[-1] > 50:
+        axis.set_xticks(np.arange(0, steps[-1] + 1, 10))
+        axis.set_xlim(0, steps[-1] + 1)
+    else:
+        axis.set_xticks(steps)
+        axis.set_xlim(steps[0] - 1, steps[-1] + 1)
     axis.set_ylim(bottom=0)
     axis.grid(color='#DDDDDD', linewidth=0.6, alpha=0.85)
     axis.spines[['top', 'right']].set_visible(False)
