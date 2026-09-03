@@ -12,6 +12,8 @@ import numpy as np
 
 from latent_subgoal import (
     FLOW_TRANSFORMER_ARCHITECTURE,
+    HISTORY_MLP_ARCHITECTURE,
+    LATENT_ENDPOINT_FLOW_ARCHITECTURE,
     LATENT_PATH_FLOW_ARCHITECTURE,
     latent_path_waypoint_steps,
     load_latent_subgoal_checkpoint,
@@ -56,7 +58,7 @@ class LatentSubgoalGenerator:
                     'Latent subgoal generator and controller/policy must use the '
                     'same frozen LeWM checkpoint.'
                 )
-        trained_action_block = int(config['action_block'])
+        trained_action_block = int(config.get('action_block', action_block))
         if trained_action_block != int(action_block):
             raise ValueError(
                 'Latent subgoal and controller action blocks must match: '
@@ -99,14 +101,21 @@ class LatentSubgoalGenerator:
                     )
                 )
             )
-        elif architecture == LATENT_PATH_FLOW_ARCHITECTURE:
+        elif architecture in (
+            LATENT_ENDPOINT_FLOW_ARCHITECTURE,
+            LATENT_PATH_FLOW_ARCHITECTURE,
+        ):
             sampling_steps = int(config['flow_sampling_steps'])
             solver = str(config['flow_solver'])
             self.history_size = int(config.get('history_size', 1))
             if self.history_size <= 0:
                 raise ValueError('Latent subgoal history size must be positive.')
-            waypoint_steps = latent_path_waypoint_steps(
-                self.waypoint_step, trained_action_block
+            waypoint_steps = (
+                (self.waypoint_step,)
+                if architecture == LATENT_ENDPOINT_FLOW_ARCHITECTURE
+                else latent_path_waypoint_steps(
+                    self.waypoint_step, trained_action_block
+                )
             )
             self.path_length = len(waypoint_steps)
             self.waypoint_index = waypoint_steps.index(self.waypoint_step)
@@ -133,6 +142,8 @@ class LatentSubgoalGenerator:
                 raise ValueError(
                     'Deterministic subgoal models only support num_samples=1.'
                 )
+            if architecture == HISTORY_MLP_ARCHITECTURE:
+                self.history_size = int(config['history_size'])
             self._predict = jax.jit(
                 lambda current, goal: model.apply(
                     {'params': params}, current, goal

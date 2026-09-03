@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,8 @@ from flax.training import train_state
 from latent_subgoal import (
     DIRECT_MLP_ARCHITECTURE,
     FLOW_TRANSFORMER_ARCHITECTURE,
+    HISTORY_MLP_ARCHITECTURE,
+    LATENT_ENDPOINT_FLOW_ARCHITECTURE,
     LATENT_PATH_FLOW_ARCHITECTURE,
     LatentPathFlow,
     LatentSubgoalFlowTransformer,
@@ -53,7 +56,13 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=1024)
     parser.add_argument(
         '--architecture',
-        choices=('direct_mlp', 'transformer_flow', 'latent_path_flow'),
+        choices=(
+            'direct_mlp',
+            'history_mlp',
+            'transformer_flow',
+            'endpoint_flow',
+            'latent_path_flow',
+        ),
         default='direct_mlp',
     )
     parser.add_argument('--hidden-dims', type=int, nargs='+', default=(512, 512, 512))
@@ -82,6 +91,7 @@ def parse_args():
     parser.add_argument('--weight-decay', type=float, default=1e-4)
     parser.add_argument('--gradient-clip', type=float, default=1.0)
     parser.add_argument('--validation-pairs', type=int, default=50_000)
+    parser.add_argument('--validation-manifest')
     parser.add_argument('--eval-batch-size', type=int, default=5000)
     parser.add_argument('--log-interval', type=int, default=1000)
     parser.add_argument('--eval-interval', type=int, default=5000)
@@ -134,7 +144,7 @@ def validate_args(args):
         raise ValueError('model_dim must be even for sinusoidal flow-time embeddings.')
     if not 0.0 <= args.ema_decay < 1.0:
         raise ValueError('ema_decay must be in [0, 1).')
-    if args.architecture == 'latent_path_flow':
+    if args.architecture in ('endpoint_flow', 'latent_path_flow'):
         latent_path_waypoint_steps(args.subgoal_steps, args.action_block)
         if args.hidden_dim % args.num_heads:
             raise ValueError('hidden_dim must be divisible by num_heads.')
@@ -147,6 +157,8 @@ def validate_args(args):
             raise ValueError('max_goal_steps requires goal_sampling=aligned_future.')
         if args.max_goal_steps % args.action_block:
             raise ValueError('max_goal_steps must be divisible by action_block.')
+    if args.architecture == 'history_mlp' and args.history_size <= 1:
+        raise ValueError('history_mlp requires --history-size greater than one.')
 
 
 class FlowTrainState(train_state.TrainState):
@@ -179,6 +191,117 @@ def append_jsonl(path, value):
     with Path(path).open('a') as file:
         file.write(json.dumps(json_safe(value), sort_keys=True) + '\n')
         file.flush()
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as file:
+        for chunk in iter(lambda: file.read(8 * 1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_validation_manifest(path, cache, val_episodes, args):
+    """Load and validate a shared fixed-offset validation manifest."""
+    path = Path(path).expanduser().resolve()
+    with np.load(path, allow_pickle=False) as manifest:
+        metadata = json.loads(str(manifest['metadata_json'].item()))
+        arrays = {
+            name: np.asarray(manifest[name], dtype=np.int32)
+            for name in (
+                'episode_ids',
+                'current_indices',
+                'history_indices',
+                'goal_indices',
+                'waypoint_steps',
+                'waypoint_target_indices',
+                'endpoint_target_indices',
+            )
+        }
+    expected = {
+        'format': 'lewm_latent_subgoal_validation_manifest',
+        'lewm_checkpoint_sha256': str(
+            cache.metadata.get('checkpoint_sha256', '')
+        ),
+        'num_rows': len(cache.z),
+        'num_episodes': len(cache.episode_offsets),
+        'split_seed': args.split_seed,
+        'train_fraction': args.train_fraction,
+        'num_pairs': args.validation_pairs,
+        'history_size': args.history_size,
+        'subgoal_steps': args.subgoal_steps,
+        'action_block': args.action_block,
+    }
+    for name, value in expected.items():
+        if metadata.get(name) != value:
+            raise ValueError(
+                f'Validation manifest {name} mismatch: '
+                f'{metadata.get(name)!r} != {value!r}'
+            )
+    count = args.validation_pairs
+    if arrays['current_indices'].shape != (count,):
+        raise ValueError('Validation manifest current_indices has wrong shape.')
+    if arrays['history_indices'].shape != (count, args.history_size):
+        raise ValueError('Validation manifest history_indices has wrong shape.')
+    if arrays['goal_indices'].shape != (count,):
+        raise ValueError('Validation manifest goal_indices has wrong shape.')
+    if arrays['endpoint_target_indices'].shape != (count,):
+        raise ValueError('Validation manifest endpoint targets have wrong shape.')
+    if arrays['waypoint_target_indices'].shape[0] != count:
+        raise ValueError('Validation manifest waypoint targets have wrong shape.')
+    expected_waypoint_steps = np.arange(
+        args.action_block,
+        args.subgoal_steps + 1,
+        args.action_block,
+        dtype=np.int32,
+    )
+    if not np.array_equal(arrays['waypoint_steps'], expected_waypoint_steps):
+        raise ValueError('Validation manifest waypoint steps do not match the run.')
+    if arrays['waypoint_target_indices'].shape != (
+        count,
+        len(expected_waypoint_steps),
+    ):
+        raise ValueError('Validation manifest waypoint target shape is inconsistent.')
+    if not set(np.unique(arrays['episode_ids'])).issubset(set(val_episodes)):
+        raise ValueError('Validation manifest contains non-validation episodes.')
+    index_arrays = (
+        arrays['current_indices'],
+        arrays['history_indices'],
+        arrays['goal_indices'],
+        arrays['waypoint_target_indices'],
+        arrays['endpoint_target_indices'],
+    )
+    if any(
+        np.any(values < 0) or np.any(values >= len(cache.z))
+        for values in index_arrays
+    ):
+        raise ValueError('Validation manifest contains out-of-range row indices.')
+    goal_offset = int(metadata.get('goal_offset', 0))
+    if goal_offset < args.subgoal_steps or not np.all(
+        arrays['goal_indices'] - arrays['current_indices'] == goal_offset
+    ):
+        raise ValueError('Validation manifest does not use one exact valid goal offset.')
+    expected_waypoint_targets = (
+        arrays['current_indices'][:, None] + expected_waypoint_steps[None]
+    )
+    if not np.array_equal(
+        arrays['waypoint_target_indices'], expected_waypoint_targets
+    ):
+        raise ValueError('Validation manifest waypoint targets are not exact offsets.')
+    if not np.array_equal(
+        arrays['endpoint_target_indices'], expected_waypoint_targets[:, -1]
+    ):
+        raise ValueError('Validation manifest endpoint is not the last waypoint.')
+    expected_history = build_history_indices(
+        arrays['current_indices'], cache.episode_offsets, args.history_size
+    )
+    if not np.array_equal(arrays['history_indices'], expected_history):
+        raise ValueError('Validation manifest history indices are not episode-safe.')
+    if not np.array_equal(
+        arrays['endpoint_target_indices'], arrays['waypoint_target_indices'][:, -1]
+    ):
+        raise ValueError('Validation manifest endpoint does not match final waypoint.')
+    return arrays, metadata, sha256_file(path)
 
 
 def checkpoint_path(output_dir, step):
@@ -229,17 +352,22 @@ def make_train_step(
     *,
     flow_matching=False,
     path_flow_matching=False,
+    ema_tracking=False,
+    use_history=False,
     action_block=5,
+    waypoint_steps=None,
     goal_stride=1,
     goal_steps=(),
     history_size=1,
     ema_decay=0.0,
 ):
-    waypoint_steps = (
-        latent_path_waypoint_steps(subgoal_steps, action_block)
-        if path_flow_matching
-        else ()
-    )
+    if waypoint_steps is None:
+        waypoint_steps = (
+            latent_path_waypoint_steps(subgoal_steps, action_block)
+            if path_flow_matching
+            else ()
+        )
+    waypoint_steps = tuple(int(step) for step in waypoint_steps)
     goal_steps = jnp.asarray(goal_steps, dtype=jnp.int32)
     distance_balanced = bool(len(goal_steps))
 
@@ -279,7 +407,7 @@ def make_train_step(
             target_idxs = jnp.minimum(current_idxs + subgoal_steps, goal_idxs)
         current_latents = (
             z[history_idxs]
-            if path_flow_matching and history_size > 1
+            if use_history and history_size > 1
             else z[current_idxs]
         )
         goal_latents = z[goal_idxs]
@@ -352,7 +480,7 @@ def make_train_step(
 
         (_, metrics), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
         state = state.apply_gradients(grads=grads)
-        if flow_matching or path_flow_matching:
+        if ema_tracking:
             ema_params = jax.tree_util.tree_map(
                 lambda ema, value: ema_decay * ema + (1.0 - ema_decay) * value,
                 state.ema_params,
@@ -371,6 +499,7 @@ def make_predict_indices(
     *,
     flow_matching=False,
     path_flow_matching=False,
+    use_history=False,
     history_size=1,
     flow_sampling_steps=16,
     flow_solver='heun',
@@ -407,7 +536,12 @@ def make_predict_indices(
                     solver=flow_solver,
                 )
             )
-        return model.apply({'params': params}, z[current_idxs], z[goal_idxs])
+        current_latents = (
+            z[history_idxs]
+            if use_history and history_size > 1
+            else z[current_idxs]
+        )
+        return model.apply({'params': params}, current_latents, z[goal_idxs])
 
     return predict_indices
 
@@ -517,6 +651,20 @@ def main():
         val_episodes,
         min_future_steps=goal_stride,
     )
+    flow_matching = args.architecture == 'transformer_flow'
+    endpoint_flow_matching = args.architecture == 'endpoint_flow'
+    path_flow_matching = args.architecture == 'latent_path_flow'
+    waypoint_flow_matching = endpoint_flow_matching or path_flow_matching
+    history_mlp = args.architecture == 'history_mlp'
+    use_history = waypoint_flow_matching or history_mlp
+    ema_tracking = flow_matching or waypoint_flow_matching or history_mlp
+    waypoint_steps = (
+        (args.subgoal_steps,)
+        if endpoint_flow_matching
+        else latent_path_waypoint_steps(args.subgoal_steps, args.action_block)
+        if path_flow_matching
+        else ()
+    )
     goal_steps = ()
     if args.max_goal_steps is not None:
         goal_steps = tuple(
@@ -561,23 +709,39 @@ def main():
     fixed_val_history = build_history_indices(
         fixed_val[0], cache.episode_offsets, args.history_size
     )
-
-    flow_matching = args.architecture == 'transformer_flow'
-    path_flow_matching = args.architecture == 'latent_path_flow'
-    waypoint_steps = latent_path_waypoint_steps(
-        args.subgoal_steps, args.action_block
-    ) if path_flow_matching else ()
-    if path_flow_matching:
+    validation_manifest_sha256 = None
+    validation_manifest_metadata = None
+    manifest_arrays = None
+    if args.validation_manifest is not None:
+        manifest_arrays, validation_manifest_metadata, validation_manifest_sha256 = (
+            load_validation_manifest(args.validation_manifest, cache, val_episodes, args)
+        )
         fixed_val = (
-            fixed_val[0],
-            fixed_val[1],
-            np.stack(
+            manifest_arrays['current_indices'],
+            manifest_arrays['goal_indices'],
+            manifest_arrays['endpoint_target_indices'],
+        )
+        fixed_val_history = manifest_arrays['history_indices']
+
+    if waypoint_flow_matching:
+        if manifest_arrays is not None:
+            target_indices = (
+                manifest_arrays['endpoint_target_indices'][:, None]
+                if endpoint_flow_matching
+                else manifest_arrays['waypoint_target_indices']
+            )
+        else:
+            target_indices = np.stack(
                 [
                     np.minimum(fixed_val[0] + step, fixed_val[1]).astype(np.int32)
                     for step in waypoint_steps
                 ],
                 axis=1,
-            ),
+            )
+        fixed_val = (
+            fixed_val[0],
+            fixed_val[1],
+            target_indices,
         )
     config_args = dict(vars(args))
     if flow_matching:
@@ -591,8 +755,23 @@ def main():
             'history_size',
         ):
             config_args.pop(name)
-    elif path_flow_matching:
+    elif waypoint_flow_matching:
         for name in ('hidden_dims', 'model_dim', 'num_layers', 'mlp_dim'):
+            config_args.pop(name)
+    elif history_mlp:
+        for name in (
+            'model_dim',
+            'num_layers',
+            'num_heads',
+            'mlp_dim',
+            'flow_sampling_steps',
+            'flow_solver',
+            'num_samples',
+            'hidden_dim',
+            'depth',
+            'ff_dim',
+            'time_dim',
+        ):
             config_args.pop(name)
     else:
         for name in (
@@ -614,6 +793,10 @@ def main():
             config_args.pop(name)
     if path_flow_matching:
         architecture = LATENT_PATH_FLOW_ARCHITECTURE
+    elif endpoint_flow_matching:
+        architecture = LATENT_ENDPOINT_FLOW_ARCHITECTURE
+    elif history_mlp:
+        architecture = HISTORY_MLP_ARCHITECTURE
     elif flow_matching:
         architecture = FLOW_TRANSFORMER_ARCHITECTURE
     else:
@@ -642,16 +825,26 @@ def main():
         'loss': (
             'conditional_path_flow_matching_mse'
             if path_flow_matching
+            else 'conditional_endpoint_flow_matching_mse'
+            if endpoint_flow_matching
             else 'conditional_flow_matching_mse'
             if flow_matching
             else 'raw_latent_mse'
         ),
     }
-    if path_flow_matching:
+    if waypoint_flow_matching:
         if args.history_size > 1:
             config['conditioning'] = 'history_goal_time_adaln'
-    if not flow_matching and not path_flow_matching:
+    elif history_mlp:
+        config['conditioning'] = 'history_goal'
+    if not flow_matching and not waypoint_flow_matching:
         config['hidden_dims'] = list(args.hidden_dims)
+    if args.validation_manifest is not None:
+        config['validation_manifest'] = str(
+            Path(args.validation_manifest).expanduser().resolve()
+        )
+        config['validation_manifest_sha256'] = validation_manifest_sha256
+        config['validation_manifest_metadata'] = validation_manifest_metadata
     config_path = output_dir / 'config.json'
     if config_path.exists():
         existing_config = json.loads(config_path.read_text())
@@ -677,7 +870,7 @@ def main():
         train_t_device = jax.device_put(train_t)
         train_history_device = jax.device_put(train_history)
         train_final_device = jax.device_put(train_final)
-    if path_flow_matching:
+    if waypoint_flow_matching:
         model = LatentPathFlow(
             embed_dim=embed_dim,
             num_waypoints=len(waypoint_steps),
@@ -702,7 +895,7 @@ def main():
         )
     init_rng, train_rng = jax.random.split(jax.random.PRNGKey(args.seed))
     empty_latents = jnp.zeros((1, embed_dim), dtype=jnp.float32)
-    if path_flow_matching:
+    if waypoint_flow_matching:
         empty_current_latents = (
             jnp.zeros((1, args.history_size, embed_dim), dtype=jnp.float32)
             if args.history_size > 1
@@ -724,7 +917,12 @@ def main():
             jnp.zeros((1,), dtype=jnp.float32),
         )
     else:
-        variables = model.init(init_rng, empty_latents, empty_latents)
+        empty_current_latents = (
+            jnp.zeros((1, args.history_size, embed_dim), dtype=jnp.float32)
+            if history_mlp
+            else empty_latents
+        )
+        variables = model.init(init_rng, empty_current_latents, empty_latents)
     learning_rate_schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=args.learning_rate,
@@ -741,7 +939,7 @@ def main():
             mask=decay_mask,
         ),
     )
-    if flow_matching or path_flow_matching:
+    if ema_tracking:
         state = FlowTrainState.create(
             apply_fn=model.apply,
             params=variables['params'],
@@ -769,8 +967,11 @@ def main():
         args.batch_size,
         args.subgoal_steps,
         flow_matching=flow_matching,
-        path_flow_matching=path_flow_matching,
+        path_flow_matching=waypoint_flow_matching,
+        ema_tracking=ema_tracking,
+        use_history=use_history,
         action_block=args.action_block,
+        waypoint_steps=waypoint_steps,
         goal_stride=goal_stride,
         goal_steps=goal_steps,
         history_size=args.history_size,
@@ -779,7 +980,8 @@ def main():
     predict_indices = make_predict_indices(
         model,
         flow_matching=flow_matching,
-        path_flow_matching=path_flow_matching,
+        path_flow_matching=waypoint_flow_matching,
+        use_history=use_history,
         history_size=args.history_size,
         flow_sampling_steps=args.flow_sampling_steps,
         flow_solver=args.flow_solver,
@@ -793,7 +995,7 @@ def main():
 
     started = time.monotonic()
     val_metrics = evaluate_validation(
-        state.ema_params if (flow_matching or path_flow_matching) else state.params,
+        state.ema_params if ema_tracking else state.params,
         z_device=z_device,
         z_host=cache.z,
         current_idxs=fixed_val[0],
@@ -835,7 +1037,7 @@ def main():
 
         if current_step % args.eval_interval == 0 or current_step == args.train_steps:
             val_metrics = evaluate_validation(
-                state.ema_params if (flow_matching or path_flow_matching) else state.params,
+                state.ema_params if ema_tracking else state.params,
                 z_device=z_device,
                 z_host=cache.z,
                 current_idxs=fixed_val[0],

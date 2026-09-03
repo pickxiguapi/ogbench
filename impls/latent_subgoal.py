@@ -12,7 +12,9 @@ import jax.numpy as jnp
 
 
 DIRECT_MLP_ARCHITECTURE = 'direct_latent_mlp_512x3'
+HISTORY_MLP_ARCHITECTURE = 'history_latent_mlp'
 FLOW_TRANSFORMER_ARCHITECTURE = 'latent_flow_transformer_encoder'
+LATENT_ENDPOINT_FLOW_ARCHITECTURE = 'latent_endpoint_flow_transformer_encoder'
 LATENT_PATH_FLOW_ARCHITECTURE = 'latent_path_flow_transformer_encoder'
 
 
@@ -33,6 +35,7 @@ class LatentSubgoalMLP(nn.Module):
 
     @nn.compact
     def __call__(self, current_latents, goal_latents):
+        current_latents = current_latents.reshape(current_latents.shape[0], -1)
         x = jnp.concatenate((current_latents, goal_latents), axis=-1)
         for hidden_dim in self.hidden_dims:
             x = nn.Dense(hidden_dim)(x)
@@ -497,11 +500,18 @@ def load_latent_subgoal_checkpoint(path):
     config = json.loads(config_path.read_text())
     architecture = config.get('architecture')
     embed_dim = int(config['embed_dim'])
-    if architecture == DIRECT_MLP_ARCHITECTURE:
+    if architecture in (DIRECT_MLP_ARCHITECTURE, HISTORY_MLP_ARCHITECTURE):
         if config.get('loss') != 'raw_latent_mse':
             raise ValueError(
                 f'Unsupported latent subgoal loss: {config.get("loss")!r}.'
             )
+        if architecture == HISTORY_MLP_ARCHITECTURE:
+            if int(config.get('history_size', 0)) <= 1:
+                raise ValueError('History-conditioned MLP requires history_size > 1.')
+            if config.get('conditioning') != 'history_goal':
+                raise ValueError(
+                    'History-conditioned MLP requires conditioning="history_goal".'
+                )
         hidden_dims = tuple(int(value) for value in config['hidden_dims'])
         model = LatentSubgoalMLP(embed_dim=embed_dim, hidden_dims=hidden_dims)
     elif architecture == FLOW_TRANSFORMER_ARCHITECTURE:
@@ -516,10 +526,18 @@ def load_latent_subgoal_checkpoint(path):
             num_heads=int(config['num_heads']),
             mlp_dim=int(config['mlp_dim']),
         )
-    elif architecture == LATENT_PATH_FLOW_ARCHITECTURE:
-        if config.get('loss') != 'conditional_path_flow_matching_mse':
+    elif architecture in (
+        LATENT_ENDPOINT_FLOW_ARCHITECTURE,
+        LATENT_PATH_FLOW_ARCHITECTURE,
+    ):
+        expected_loss = (
+            'conditional_endpoint_flow_matching_mse'
+            if architecture == LATENT_ENDPOINT_FLOW_ARCHITECTURE
+            else 'conditional_path_flow_matching_mse'
+        )
+        if config.get('loss') != expected_loss:
             raise ValueError(
-                f'Unsupported latent path flow loss: {config.get("loss")!r}.'
+                f'Unsupported latent waypoint flow loss: {config.get("loss")!r}.'
             )
         history_size = int(config.get('history_size', 1))
         if (
@@ -530,8 +548,12 @@ def load_latent_subgoal_checkpoint(path):
                 'History-conditioned latent path flow requires '
                 'conditioning="history_goal_time_adaln".'
             )
-        waypoint_steps = latent_path_waypoint_steps(
-            config['subgoal_steps'], config['action_block']
+        waypoint_steps = (
+            (int(config['subgoal_steps']),)
+            if architecture == LATENT_ENDPOINT_FLOW_ARCHITECTURE
+            else latent_path_waypoint_steps(
+                config['subgoal_steps'], config['action_block']
+            )
         )
         model = LatentPathFlow(
             embed_dim=embed_dim,

@@ -1,6 +1,7 @@
 import numpy as np
 
 from utils.latent_subgoal_dataset import (
+    build_fixed_offset_validation_manifest,
     build_distance_balanced_transition_tables,
     build_history_indices,
     build_valid_transitions,
@@ -123,3 +124,33 @@ def test_distance_first_sampling_balances_aligned_goals_up_to_25():
     )
     np.testing.assert_array_equal(target, np.minimum(t + 10, g))
     np.testing.assert_array_equal(target[distances == 5], g[distances == 5])
+
+
+def test_fixed_offset_manifest_is_deterministic_and_episode_safe():
+    offsets = np.asarray([0, 61, 132])
+    lengths = np.asarray([61, 71, 81])
+    kwargs = dict(
+        num_pairs=100,
+        history_size=3,
+        goal_offset=50,
+        subgoal_steps=10,
+        action_block=5,
+        seed=9,
+    )
+    first = build_fixed_offset_validation_manifest(
+        offsets, lengths, [1, 2], **kwargs
+    )
+    repeated = build_fixed_offset_validation_manifest(
+        offsets, lengths, [1, 2], **kwargs
+    )
+    for name in first:
+        np.testing.assert_array_equal(first[name], repeated[name])
+    np.testing.assert_array_equal(
+        first['goal_indices'] - first['current_indices'], 50
+    )
+    np.testing.assert_array_equal(first['waypoint_steps'], [5, 10])
+    np.testing.assert_array_equal(
+        first['waypoint_target_indices'],
+        first['current_indices'][:, None] + np.asarray([5, 10]),
+    )
+    assert set(np.unique(first['episode_ids'])) <= {1, 2}

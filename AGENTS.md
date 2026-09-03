@@ -233,6 +233,9 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/latent_subgoal/20260831_run_node3_reacher_latent_path_flow_k10_s0.sh` | node3 训练 Reacher K5/K10 LeFlow-style LatentPathFlow seed0 |
 | `exp/train/latent_subgoal/20260831_run_node4_tworoom_latent_path_flow_k10_s0.sh` | node4 训练 TwoRoom K5/K10 LeFlow-style LatentPathFlow seed0 |
 | `exp/train/latent_subgoal/20260831_run_node4_4tasks_latent_path_flow_k10_s0.sh` | node4 GPU0–3 并行训练四任务 K5/K10 LeFlow-style LatentPathFlow；可用 `TASKS` 选择子集 |
+| `exp/train/latent_subgoal/20260904_train_node4_h50_predictor_ablation.sh` | node4 训练 H50 predictor 消融：参数匹配的 history3 MLP、单 K10 EndpointFlow、K5/K10 LatentPathFlow × 四任务 × seeds 0/1/42，共用固定 H50 validation manifest |
+| `exp/eval/lewm_4tasks/20260904_eval_node4_h50_predictor_ablation.sh` | node4 评测 H50 predictor 消融：仅使用 K10 subgoal，纯 LeWM-CEM、ns1、MoH、H2/RH1/J5、CEM300x30、evaluation seeds 0/1/42 |
+| `exp/train/latent_subgoal/20260904_run_node4_h50_predictor_ablation_pipeline.sh` | node4 顺序执行 H50 predictor 消融的 36 个训练和 108 个四任务评测 |
 
 ## Frozen LeWM latent 数据集
 

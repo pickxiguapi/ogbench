@@ -146,7 +146,7 @@ def build_distance_balanced_transition_tables(
         (len(goal_steps), max_count, history_size), dtype=np.int32
     )
     for index, (current, history) in enumerate(
-        zip(current_groups, history_groups, strict=True)
+        zip(current_groups, history_groups)
     ):
         count = len(current)
         current_table[index, :count] = current
@@ -216,3 +216,54 @@ def sample_future_pairs(
     g = t + goal_blocks * int(goal_stride)
     target = np.minimum(t + int(subgoal_steps), g).astype(np.int32)
     return t, g, target
+
+
+def build_fixed_offset_validation_manifest(
+    offsets,
+    lengths,
+    episode_indices,
+    *,
+    num_pairs,
+    history_size,
+    goal_offset,
+    subgoal_steps,
+    action_block,
+    seed,
+):
+    """Build a deterministic held-out manifest with an exact goal offset."""
+    if num_pairs <= 0 or history_size <= 0:
+        raise ValueError('num_pairs and history_size must be positive.')
+    if goal_offset < subgoal_steps or subgoal_steps <= 0 or action_block <= 0:
+        raise ValueError(
+            'goal_offset must cover positive subgoal_steps and action_block.'
+        )
+    if subgoal_steps % action_block:
+        raise ValueError('subgoal_steps must be divisible by action_block.')
+
+    valid_t, _ = build_valid_transitions(
+        offsets,
+        lengths,
+        episode_indices,
+        min_future_steps=goal_offset,
+    )
+    rng = np.random.default_rng(seed)
+    positions = rng.integers(len(valid_t), size=num_pairs)
+    current = valid_t[positions].astype(np.int32)
+    history = build_history_indices(current, offsets, history_size)
+    goal = (current + int(goal_offset)).astype(np.int32)
+    waypoint_steps = np.arange(
+        action_block, subgoal_steps + 1, action_block, dtype=np.int32
+    )
+    waypoint_targets = current[:, None] + waypoint_steps[None]
+    episode_ids = (
+        np.searchsorted(np.asarray(offsets), current, side='right') - 1
+    ).astype(np.int32)
+    return {
+        'episode_ids': episode_ids,
+        'current_indices': current,
+        'history_indices': history.astype(np.int32),
+        'goal_indices': goal,
+        'waypoint_steps': waypoint_steps,
+        'waypoint_target_indices': waypoint_targets.astype(np.int32),
+        'endpoint_target_indices': waypoint_targets[:, -1].astype(np.int32),
+    }

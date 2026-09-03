@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 from latent_subgoal import (
     LatentPathFlow,
+    LatentSubgoalMLP,
     LatentSubgoalFlowTransformer,
     latent_path_waypoint_steps,
     sample_conditional_flow,
@@ -18,6 +19,49 @@ from latent_subgoal import (
 
 
 class LatentSubgoalFlowTest(unittest.TestCase):
+    def test_parameter_matched_history_mlp_and_endpoint_flow(self):
+        history = jnp.zeros((1, 3, 192), dtype=jnp.float32)
+        goal = jnp.zeros((1, 192), dtype=jnp.float32)
+        flow_time = jnp.zeros((1,), dtype=jnp.float32)
+        key = jax.random.PRNGKey(0)
+
+        mlp = LatentSubgoalMLP(
+            embed_dim=192, hidden_dims=(2048, 2048, 2048, 2048, 2048)
+        )
+        mlp_variables = mlp.init(key, history, goal)
+        endpoint_flow = LatentPathFlow(
+            embed_dim=192,
+            num_waypoints=1,
+            hidden_dim=512,
+            depth=4,
+            num_heads=8,
+            ff_dim=2048,
+            time_dim=64,
+            history_size=3,
+        )
+        endpoint_variables = endpoint_flow.init(
+            key,
+            jnp.zeros((1, 1, 192), dtype=jnp.float32),
+            history,
+            goal,
+            flow_time,
+        )
+        path_flow = LatentPathFlow(embed_dim=192, history_size=3)
+        path_variables = path_flow.init(
+            key,
+            jnp.zeros((1, 2, 192), dtype=jnp.float32),
+            history,
+            goal,
+            flow_time,
+        )
+
+        counts = [
+            sum(value.size for value in jax.tree_util.tree_leaves(tree['params']))
+            for tree in (mlp_variables, endpoint_variables, path_variables)
+        ]
+        self.assertEqual(counts, [18_774_208, 18_742_464, 18_742_976])
+        self.assertLess((max(counts) - min(counts)) / max(counts), 0.01)
+
     def test_waypoints_are_derived_from_subgoal_steps_and_action_block(self):
         self.assertEqual(latent_path_waypoint_steps(10, 5), (5, 10))
         self.assertEqual(latent_path_waypoint_steps(15, 5), (5, 10, 15))
