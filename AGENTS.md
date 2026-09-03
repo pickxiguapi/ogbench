@@ -220,6 +220,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/preprocess/lewm_latents/20260830_precompute_node2_cube_lewm_s3072_z192.sh` | node2 生成 Cube seed3072 frozen LeWM z192 数据集 |
 | `exp/preprocess/lewm_latents/20260830_precompute_node3_reacher_lewm_s3072_z192.sh` | node3 生成 Reacher seed3072 frozen LeWM z192 数据集 |
 | `exp/preprocess/lewm_latents/20260830_precompute_node4_tworoom_lewm_s3072_z192.sh` | node4 生成 TwoRoom seed3072 frozen LeWM z192 数据集 |
+| `exp/preprocess/lewm_latents/20260904_precompute_node4_ogbench8_node3_lewm_z192.sh` | node4 使用 node3 已评测的八个 seed3072/epoch10 LeWM，将 OGBench 8 Tasks 官方 train NPZ 编码为各自 checkpoint-bound z192 cache |
 | `exp/train/latent_subgoal/20260830_run_yb_pusht_latent_gcbc_k10_s0.sh` | 英博云生成 PushT cache 并训练 K10 latent subgoal GCBC seed0 |
 | `exp/train/latent_subgoal/20260830_run_node2_cube_latent_gcbc_k10_s0.sh` | node2 生成 Cube cache 并训练 K10 latent subgoal GCBC seed0 |
 | `exp/train/latent_subgoal/20260830_run_node3_reacher_latent_gcbc_k10_s0.sh` | node3 生成 Reacher cache 并训练 K10 latent subgoal GCBC seed0 |
@@ -236,6 +237,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/train/latent_subgoal/20260904_train_node4_h50_predictor_ablation.sh` | node4 训练 H50 predictor 消融：参数匹配的 history3 MLP、单 K10 EndpointFlow、K5/K10 LatentPathFlow × 四任务 × seeds 0/1/42，共用固定 H50 validation manifest |
 | `exp/eval/lewm_4tasks/20260904_eval_node4_h50_predictor_ablation.sh` | node4 评测 H50 predictor 消融：仅使用 K10 subgoal，纯 LeWM-CEM、ns1、MoH、H2/RH1/J5、CEM300x30、evaluation seeds 0/1/42 |
 | `exp/train/latent_subgoal/20260904_run_node4_h50_predictor_ablation_pipeline.sh` | node4 顺序执行 H50 predictor 消融的 36 个训练和 108 个四任务评测 |
+| `exp/train/latent_subgoal/20260904_train_node4_ogbench8_latent_path_flow_main_s0.sh` | node4 为 OGBench 8 Tasks 分别训练主 LatentPathFlow generator：history3、K5/K10、uniform-future、200k、bs1024、Euler16、ns1、seed0 |
 
 ## Frozen LeWM latent 数据集
 
@@ -246,6 +248,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 - 英博云输出根目录为 `/root/data/yyf/lewm-latent-datasets/`；A800 node2、node3、node4 输出根目录为 `/data-training/yyf/datasets/lewm-latents/`。
 - 正式文件名分别为 `pusht_expert_train__lewm_s666_e10_z192.h5`、`cube_single_expert__lewm_s3072_e10_z192.h5`、`reacher__lewm_s3072_e10_z192.h5`、`tworoom__lewm_s3072_e10_z192.h5`。
 - 转换中间文件以 `.incomplete` 结尾并通过 `encoded_rows` 断点续跑；只有所有 z 通过 finite 检查并写入统计量后才原子改名为正式 `.h5`。
+- OGBench 8 Tasks 的 frozen latent 由 `impls/precompute_lewm_npz_latents.py` 从官方 train NPZ 生成，八个 cache 分别绑定 node3 已评测的 seed3072/epoch10 LeWM checkpoint；不得跨 dataset 共用 latent 坐标系。
 
 ## Latent Subgoal GCBC（K=10）
 
