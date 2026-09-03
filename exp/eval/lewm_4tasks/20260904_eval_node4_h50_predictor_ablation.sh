@@ -36,10 +36,11 @@ read -r -a gpu_ids <<< "$GPU_IDS"
 read -r -a architectures <<< "$ARCHITECTURES"
 read -r -a train_seeds <<< "$TRAIN_SEEDS"
 read -r -a eval_seeds <<< "$EVAL_SEEDS"
-if (( ${#gpu_ids[@]} != 8 )); then
-  echo "GPU_IDS must contain exactly eight whitespace-separated GPU IDs." >&2
+if (( ${#gpu_ids[@]} != 4 && ${#gpu_ids[@]} != 8 )); then
+  echo "GPU_IDS must contain exactly four or eight GPU IDs." >&2
   exit 2
 fi
+settings_per_batch=$((${#gpu_ids[@]} / 4))
 
 variant_architectures=()
 variant_train_seeds=()
@@ -106,21 +107,17 @@ run_setting() {
 }
 
 failed=0
-for (( base=0; base<${#variant_architectures[@]}; base+=2 )); do
+for (( base=0; base<${#variant_architectures[@]}; base+=settings_per_batch )); do
   batch_pids=()
-  run_setting "${gpu_ids[*]:0:4}" \
-    "${variant_architectures[$base]}" \
-    "${variant_train_seeds[$base]}" \
-    "${variant_eval_seeds[$base]}" &
-  batch_pids+=("$!")
-
-  if (( base + 1 < ${#variant_architectures[@]} )); then
-    run_setting "${gpu_ids[*]:4:4}" \
-      "${variant_architectures[$((base + 1))]}" \
-      "${variant_train_seeds[$((base + 1))]}" \
-      "${variant_eval_seeds[$((base + 1))]}" &
+  for (( slot=0; slot<settings_per_batch && base+slot<${#variant_architectures[@]}; slot++ )); do
+    index=$((base + slot))
+    gpu_start=$((slot * 4))
+    run_setting "${gpu_ids[*]:gpu_start:4}" \
+      "${variant_architectures[$index]}" \
+      "${variant_train_seeds[$index]}" \
+      "${variant_eval_seeds[$index]}" &
     batch_pids+=("$!")
-  fi
+  done
 
   for pid in "${batch_pids[@]}"; do
     if ! wait "$pid"; then failed=1; fi
