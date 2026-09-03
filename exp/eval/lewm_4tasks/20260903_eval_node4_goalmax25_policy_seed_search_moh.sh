@@ -43,10 +43,11 @@ subgoal_checkpoints=(
 read -r -a policy_seeds <<< "$POLICY_SEEDS"
 read -r -a num_samples_values <<< "$NUM_SAMPLES_LIST"
 read -r -a all_gpus <<< "$GPU_IDS"
-if (( ${#all_gpus[@]} != 8 )); then
-  echo "GPU_IDS must contain exactly eight whitespace-separated GPU IDs." >&2
+if (( ${#all_gpus[@]} != 4 && ${#all_gpus[@]} != 8 )); then
+  echo "GPU_IDS must contain exactly four or eight whitespace-separated GPU IDs." >&2
   exit 2
 fi
+variants_per_batch=$((${#all_gpus[@]} / 4))
 
 variant_seeds=()
 variant_samples=()
@@ -102,17 +103,15 @@ run_variant() {
 }
 
 failed=0
-for (( base=0; base<${#variant_seeds[@]}; base+=2 )); do
+for (( base=0; base<${#variant_seeds[@]}; base+=variants_per_batch )); do
   batch_pids=()
-  run_variant "${variant_seeds[$base]}" "${variant_samples[$base]}" \
-    "${all_gpus[@]:0:4}" &
-  batch_pids+=("$!")
-
-  if (( base + 1 < ${#variant_seeds[@]} )); then
-    run_variant "${variant_seeds[$((base + 1))]}" "${variant_samples[$((base + 1))]}" \
-      "${all_gpus[@]:4:4}" &
+  for (( slot=0; slot<variants_per_batch && base+slot<${#variant_seeds[@]}; slot++ )); do
+    variant=$((base + slot))
+    gpu_offset=$((slot * 4))
+    run_variant "${variant_seeds[$variant]}" "${variant_samples[$variant]}" \
+      "${all_gpus[@]:gpu_offset:4}" &
     batch_pids+=("$!")
-  fi
+  done
 
   for pid in "${batch_pids[@]}"; do
     if ! wait "$pid"; then failed=1; fi
