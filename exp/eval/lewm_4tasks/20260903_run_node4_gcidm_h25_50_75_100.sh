@@ -11,6 +11,9 @@ NUM_EVAL=${NUM_EVAL:-50}
 EVAL_SEED=${EVAL_SEED:-42}
 GCIDM_COMMIT=${GCIDM_COMMIT:-48c45b1cb2b34dd2c1c61d222c8309de567fde55}
 REMOTE_SCRIPT=${REMOTE_SCRIPT:-/data-training/yyf/experiments/gcidm/20260903_run_node4_gcidm_h25_50_75_100.sh}
+WORKSPACE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
+LOCAL_SOURCE_CACHE=${LOCAL_SOURCE_CACHE:-$WORKSPACE_ROOT/.aris/cache/gcidm-${GCIDM_COMMIT:0:8}}
+EVAL_REPO=${EVAL_REPO:-/data-training/yyf/src/gcidm-eval-${GCIDM_COMMIT:0:8}}
 
 for value in "$NUM_EVAL" "$EVAL_SEED"; do
   [[ "$value" =~ ^[0-9]+$ ]] || { echo "NUM_EVAL and EVAL_SEED must be non-negative integers" >&2; exit 2; }
@@ -19,24 +22,37 @@ done
 
 if [[ ${1:-} != "--remote" ]]; then
   script_dir=$(dirname "$REMOTE_SCRIPT")
-  ssh "$REMOTE_HOST" "mkdir -p '$script_dir'"
+  if ssh "$REMOTE_HOST" "screen -list 2>/dev/null | grep -q '[.]${SESSION_NAME}[[:space:]]'"; then
+    echo "screen session $SESSION_NAME is already running" >&2
+    exit 3
+  fi
+
+  mkdir -p "$(dirname "$LOCAL_SOURCE_CACHE")"
+  if [[ ! -d "$LOCAL_SOURCE_CACHE/.git" ]]; then
+    git clone https://github.com/hdnndh/Latent-Geometry-Beyond-Search-Amortizing-Planning-in-World-Models.git "$LOCAL_SOURCE_CACHE"
+  fi
+  git -C "$LOCAL_SOURCE_CACHE" fetch origin master
+  remote_commit=$(git -C "$LOCAL_SOURCE_CACHE" rev-parse origin/master)
+  if [[ "$remote_commit" != "$GCIDM_COMMIT" ]]; then
+    echo "official origin/master moved: expected $GCIDM_COMMIT, found $remote_commit" >&2
+    exit 4
+  fi
+  git -C "$LOCAL_SOURCE_CACHE" checkout --detach "$GCIDM_COMMIT"
+  [[ -z $(git -C "$LOCAL_SOURCE_CACHE" status --short) ]] || { echo "local source cache is dirty" >&2; exit 5; }
+
+  ssh "$REMOTE_HOST" "mkdir -p '$script_dir' '$EVAL_REPO'"
   rsync -a "$0" "$REMOTE_HOST:$REMOTE_SCRIPT"
+  rsync -a --delete "$LOCAL_SOURCE_CACHE/" "$REMOTE_HOST:$EVAL_REPO/"
   ssh "$REMOTE_HOST" "
     set -euo pipefail
-    if screen -list | grep -q '[.]${SESSION_NAME}[[:space:]]'; then
-      echo 'screen session ${SESSION_NAME} is already running' >&2
-      exit 3
-    fi
     screen -dmS '${SESSION_NAME}' env \
-      NUM_EVAL='${NUM_EVAL}' EVAL_SEED='${EVAL_SEED}' GCIDM_COMMIT='${GCIDM_COMMIT}' \
+      NUM_EVAL='${NUM_EVAL}' EVAL_SEED='${EVAL_SEED}' GCIDM_COMMIT='${GCIDM_COMMIT}' EVAL_REPO='${EVAL_REPO}' \
       bash '$REMOTE_SCRIPT' --remote
     echo 'launched screen session ${SESSION_NAME}'
   "
   exit 0
 fi
 
-SOURCE_REPO=/data-training/yyf/src/Latent-Geometry-Beyond-Search-Amortizing-Planning-in-World-Models
-EVAL_REPO="/data-training/yyf/src/gcidm-eval-${GCIDM_COMMIT:0:8}"
 PYTHON=/data-training/yyf/envs/latent-geometry/bin/python
 STABLEWM_HOME=/data-training/yyf/latent-geometry
 OUTPUT_ROOT="/data-training/yyf/outputs/latent-geometry/eval-long-horizon/gcidm_official_${GCIDM_COMMIT:0:8}_ep${NUM_EVAL}_seed${EVAL_SEED}_budget2h"
@@ -51,18 +67,8 @@ echo "num_eval=$NUM_EVAL"
 echo "eval_seed=$EVAL_SEED"
 echo "protocol=goal_offset_H,eval_budget_2H"
 
-git -C "$SOURCE_REPO" fetch origin master
-remote_commit=$(git -C "$SOURCE_REPO" rev-parse origin/master)
-if [[ "$remote_commit" != "$GCIDM_COMMIT" ]]; then
-  echo "official origin/master moved: expected $GCIDM_COMMIT, found $remote_commit" >&2
-  exit 4
-fi
-
-if [[ ! -d "$EVAL_REPO/.git" && ! -f "$EVAL_REPO/.git" ]]; then
-  git -C "$SOURCE_REPO" worktree add --detach "$EVAL_REPO" "$GCIDM_COMMIT"
-fi
 [[ $(git -C "$EVAL_REPO" rev-parse HEAD) == "$GCIDM_COMMIT" ]]
-[[ -z $(git -C "$EVAL_REPO" status --short) ]] || { echo "clean evaluation worktree is dirty" >&2; exit 5; }
+[[ -z $(git -C "$EVAL_REPO" status --short) ]] || { echo "rsynced evaluation checkout is dirty" >&2; exit 5; }
 
 declare -A idm_paths=(
   [tworoom]=/data-training/yyf/outputs/latent-geometry/tworoom/tworoom_gcidm.pt
