@@ -13,7 +13,7 @@ GCIDM_COMMIT=${GCIDM_COMMIT:-48c45b1cb2b34dd2c1c61d222c8309de567fde55}
 REMOTE_SCRIPT=${REMOTE_SCRIPT:-/data-training/yyf/experiments/gcidm/20260903_run_node4_gcidm_h25_50_75_100.sh}
 WORKSPACE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
 LOCAL_SOURCE_CACHE=${LOCAL_SOURCE_CACHE:-$WORKSPACE_ROOT/.aris/cache/gcidm-${GCIDM_COMMIT:0:8}}
-EVAL_REPO=${EVAL_REPO:-/data-training/yyf/src/gcidm-eval-${GCIDM_COMMIT:0:8}}
+EVAL_REPO=${EVAL_REPO:-/data-training/yyf/experiments/gcidm/source-${GCIDM_COMMIT:0:8}}
 
 for value in "$NUM_EVAL" "$EVAL_SEED"; do
   [[ "$value" =~ ^[0-9]+$ ]] || { echo "NUM_EVAL and EVAL_SEED must be non-negative integers" >&2; exit 2; }
