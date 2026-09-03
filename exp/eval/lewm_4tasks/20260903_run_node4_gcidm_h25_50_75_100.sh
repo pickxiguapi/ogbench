@@ -9,6 +9,7 @@ REMOTE_HOST=${REMOTE_HOST:-a800-node4}
 SESSION_NAME=${SESSION_NAME:-gcidm_h25_50_75_100}
 NUM_EVAL=${NUM_EVAL:-50}
 EVAL_SEED=${EVAL_SEED:-42}
+SOURCE_REFRESH=${SOURCE_REFRESH:-1}
 GCIDM_COMMIT=${GCIDM_COMMIT:-48c45b1cb2b34dd2c1c61d222c8309de567fde55}
 REMOTE_SCRIPT=${REMOTE_SCRIPT:-/data-training/yyf/experiments/gcidm/20260903_run_node4_gcidm_h25_50_75_100.sh}
 WORKSPACE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
@@ -19,6 +20,7 @@ for value in "$NUM_EVAL" "$EVAL_SEED"; do
   [[ "$value" =~ ^[0-9]+$ ]] || { echo "NUM_EVAL and EVAL_SEED must be non-negative integers" >&2; exit 2; }
 done
 [[ "$GCIDM_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "GCIDM_COMMIT must be a full 40-character SHA" >&2; exit 2; }
+[[ "$SOURCE_REFRESH" =~ ^[01]$ ]] || { echo "SOURCE_REFRESH must be 0 or 1" >&2; exit 2; }
 
 if [[ ${1:-} != "--remote" ]]; then
   script_dir=$(dirname "$REMOTE_SCRIPT")
@@ -31,7 +33,11 @@ if [[ ${1:-} != "--remote" ]]; then
   if [[ ! -d "$LOCAL_SOURCE_CACHE/.git" ]]; then
     git clone https://github.com/hdnndh/Latent-Geometry-Beyond-Search-Amortizing-Planning-in-World-Models.git "$LOCAL_SOURCE_CACHE"
   fi
-  git -C "$LOCAL_SOURCE_CACHE" fetch origin master
+  if (( SOURCE_REFRESH == 1 )); then
+    git -C "$LOCAL_SOURCE_CACHE" fetch origin master
+  else
+    echo "SOURCE_REFRESH=0: reusing the previously fetched clean source cache"
+  fi
   remote_commit=$(git -C "$LOCAL_SOURCE_CACHE" rev-parse origin/master)
   if [[ "$remote_commit" != "$GCIDM_COMMIT" ]]; then
     echo "official origin/master moved: expected $GCIDM_COMMIT, found $remote_commit" >&2
