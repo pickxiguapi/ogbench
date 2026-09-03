@@ -5,8 +5,9 @@ set -euo pipefail
 # （1）原生 LeWM-CEM，仅用 CEM 直接规划到 final goal；（2）Guided w/o
 # Subgoal，保留 shared-all AWR seed777 policy mode 初始化，但 CEM 仍直接规划
 # 到 final goal。Cube/Reacher/TwoRoom 固定 LeWM seed3072，PushT 固定 seed666；
-# 统一 MoH、H5/RH1/J5、CEM300x5、budget=2H、50 episodes，覆盖
-# H25/H50/H75/H100 与 evaluation seeds 0/1/42；每批用 8 卡并行两个四任务设置。
+# 统一 MoH、H5/RH1/J5、budget=2H、50 episodes；原生 LeWM-CEM 恢复论文
+# 基线的 CEM300x30，Guided w/o Subgoal 使用当前 Guided 协议的 CEM300x5。
+# 覆盖 H25/H50/H75/H100 与 evaluation seeds 0/1/42；每批用 8 卡并行两个四任务设置。
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -64,7 +65,11 @@ run_setting() {
   local eval_seed=$3
   local goal_offset=$4
   local eval_budget=$((goal_offset * 2))
-  local output_root="$EVAL_ROOT/20260904_${method}_mixed_lewm_moh_cem300x5_h5_rh1_g${goal_offset}_b${eval_budget}_ep${NUM_EVAL}_seed${eval_seed}"
+  local cem_tag=cem300x5
+  if [[ "$method" == lewm_cem ]]; then
+    cem_tag=cem300x30
+  fi
+  local output_root="$EVAL_ROOT/20260904_${method}_mixed_lewm_moh_${cem_tag}_h5_rh1_g${goal_offset}_b${eval_budget}_ep${NUM_EVAL}_seed${eval_seed}"
   local -a gpus
   local -a pids=()
   read -r -a gpus <<< "$gpu_ids"
@@ -91,7 +96,7 @@ run_setting() {
           --num-eval="$NUM_EVAL" --seed="$eval_seed" \
           --goal-offset-steps="$goal_offset" --eval-budget="$eval_budget" \
           --cem-horizon=5 --cem-receding-horizon=1 --action-block=5 \
-          --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 --cem-var-scale=1.0 \
+          --cem-num-samples=300 --cem-iterations=30 --cem-topk=30 --cem-var-scale=1.0 \
           --cem-cost-mode=moh \
           --output="$output_dir/result.json" >"$output_dir/eval.log" 2>&1
       ) &
