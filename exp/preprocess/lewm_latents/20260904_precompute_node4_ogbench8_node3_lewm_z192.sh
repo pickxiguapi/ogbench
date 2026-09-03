@@ -13,6 +13,7 @@ GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
 DATASET_INDICES=${DATASET_INDICES:-"0 1 2 3 4 5 6 7"}
 BATCH_SIZE=${BATCH_SIZE:-512}
 SMOKE_ROWS=${SMOKE_ROWS:-0}
+JAX_PLATFORM=${JAX_PLATFORM:-cuda}
 LEWM_RUN_ROOT=${LEWM_RUN_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-ogbench8-node3-evaluated-mirror}
 LEWM_LATENT_ROOT=${LEWM_LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents-ogbench8-node3-e10}
 
@@ -62,7 +63,7 @@ run_cache() {
   (
     cd "$OGBENCH_ROOT/impls"
     CUDA_VISIBLE_DEVICES="$gpu_id" XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    JAX_PLATFORMS=cuda PYTHONUNBUFFERED=1 \
+    JAX_PLATFORMS="$JAX_PLATFORM" PYTHONUNBUFFERED=1 \
     PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
     "$PYTHON_BIN" precompute_lewm_npz_latents.py \
       --env-name="$env_name" \
