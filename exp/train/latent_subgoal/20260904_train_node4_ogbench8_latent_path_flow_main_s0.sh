@@ -11,6 +11,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
+DATASET_INDICES=${DATASET_INDICES:-"0 1 2 3 4 5 6 7"}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 TRAIN_SEED=${TRAIN_SEED:-0}
@@ -34,19 +35,31 @@ envs=(
 )
 tags=(cs_play cd_play ct_play scene_play cs_noisy cd_noisy ct_noisy scene_noisy)
 
-GPU_IDS="$GPU_IDS" LEWM_RUN_ROOT="$LEWM_RUN_ROOT" \
+GPU_IDS="$GPU_IDS" DATASET_INDICES="$DATASET_INDICES" LEWM_RUN_ROOT="$LEWM_RUN_ROOT" \
 LEWM_LATENT_ROOT="$LEWM_LATENT_ROOT" \
   bash "$OGBENCH_ROOT/exp/preprocess/lewm_latents/20260904_precompute_node4_ogbench8_node3_lewm_z192.sh"
 
 read -r -a gpu_ids <<< "$GPU_IDS"
+read -r -a dataset_indices <<< "$DATASET_INDICES"
 if (( ${#gpu_ids[@]} == 0 || ${#gpu_ids[@]} > 8 )); then
   echo "GPU_IDS must contain between one and eight GPU IDs." >&2
   exit 2
 fi
+if (( ${#dataset_indices[@]} == 0 )); then
+  echo "DATASET_INDICES must contain at least one dataset index." >&2
+  exit 2
+fi
+for index in "${dataset_indices[@]}"; do
+  if (( index < 0 || index >= ${#tags[@]} )); then
+    echo "Invalid DATASET_INDICES entry: $index" >&2
+    exit 2
+  fi
+done
 gpu_count=${#gpu_ids[@]}
 mkdir -p "$MANIFEST_ROOT"
 
-for tag in "${tags[@]}"; do
+for index in "${dataset_indices[@]}"; do
+  tag=${tags[$index]}
   latent_dataset="$LEWM_LATENT_ROOT/ogbench8_${tag}__node3_lewm_s3072_e10_z192.h5"
   (
     cd "$OGBENCH_ROOT/impls"
@@ -95,10 +108,10 @@ run_generator() {
 }
 
 failed=0
-for (( base=0; base<${#tags[@]}; base+=gpu_count )); do
+for (( base=0; base<${#dataset_indices[@]}; base+=gpu_count )); do
   pids=()
-  for (( slot=0; slot<gpu_count && base+slot<${#tags[@]}; slot++ )); do
-    run_generator "${gpu_ids[$slot]}" "$((base + slot))" &
+  for (( slot=0; slot<gpu_count && base+slot<${#dataset_indices[@]}; slot++ )); do
+    run_generator "${gpu_ids[$slot]}" "${dataset_indices[$((base + slot))]}" &
     pids+=("$!")
   done
   for pid in "${pids[@]}"; do
