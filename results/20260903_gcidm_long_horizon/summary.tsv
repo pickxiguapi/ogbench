@@ -1,0 +1,17 @@
+task	horizon	eval_budget	success_rate	successes	num_eval
+tworoom	25	50	100.0	50	50
+tworoom	50	100	100.0	50	50
+tworoom	75	150	100.0	50	50
+tworoom	100	200	100.0	50	50
+reacher	25	50	100.0	50	50
+reacher	50	100	100.0	50	50
+reacher	75	150	98.0	49	50
+reacher	100	200	100.0	50	50
+pusht	25	50	92.0	46	50
+pusht	50	100	68.0	34	50
+pusht	75	150	28.0	14	50
+pusht	100	200	40.0	20	50
+cube	25	50	100.0	50	50
+cube	50	100	98.0	49	50
+cube	75	150	86.0	43	50
+cube	100	200	84.0	42	50
