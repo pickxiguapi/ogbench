@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 from torchvision.utils import make_grid, save_image
 
-from lewm_visual_decoder import CLSDecoder
+from lewm_visual_decoder import CLSDecoder, ConvDecoder
 
 
 def parse_args():
@@ -42,6 +42,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=3072)
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--smoke-batches', type=int, default=0)
+    parser.add_argument('--decoder-type', choices=('conv', 'cls'), default='conv')
     return parser.parse_args()
 
 
@@ -139,18 +140,30 @@ def main():
     )
     embed_dim = int(source.h5['z'].shape[1])
     checkpoint_sha256 = str(source.h5.attrs['checkpoint_sha256'])
-    config = {
-        'cls_dim': embed_dim,
-        'hidden_dim': 256,
-        'depth': 4,
-        'heads': 8,
-        'dim_head': 64,
-        'mlp_dim': 512,
-        'dropout': 0.1,
-        'image_size': 224,
-        'patch_size': 16,
-    }
-    model = CLSDecoder(**config).to(device)
+    if args.decoder_type == 'conv':
+        config = {
+            'cls_dim': embed_dim,
+            'base_dim': 512,
+            'init_size': 7,
+            'image_size': 224,
+            'ch_mult': (1, 2, 4, 8, 16),
+        }
+        model = ConvDecoder(**config).to(device)
+        checkpoint_type = 'lewm_conv_visual_decoder_v1'
+    else:
+        config = {
+            'cls_dim': embed_dim,
+            'hidden_dim': 256,
+            'depth': 4,
+            'heads': 8,
+            'dim_head': 64,
+            'mlp_dim': 512,
+            'dropout': 0.1,
+            'image_size': 224,
+            'patch_size': 16,
+        }
+        model = CLSDecoder(**config).to(device)
+        checkpoint_type = 'lewm_cls_visual_decoder_v1'
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     steps_per_epoch = math.ceil(len(train_indices) / args.batch_size)
     if args.smoke_batches:
@@ -172,6 +185,7 @@ def main():
         'train_rows_selected': len(train_indices),
         'val_rows_selected': len(val_indices),
         'protocol': 'frozen encoder latent to same-frame JPEG RGB; decoder-only MSE',
+        'decoder_type': args.decoder_type,
     }
     (output_dir / 'run_manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True))
     best = float('inf')
@@ -204,7 +218,7 @@ def main():
                 output_dir / f'preview_epoch_{epoch:03d}.png',
             )
             payload = {
-                'type': 'lewm_cls_visual_decoder_v1',
+                'type': checkpoint_type,
                 'model': model.state_dict(),
                 'model_config': config,
                 'epoch': epoch,

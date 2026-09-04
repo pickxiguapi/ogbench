@@ -99,10 +99,66 @@ class CLSDecoder(nn.Module):
         return torch.tanh(image)
 
 
+class ConvDecoder(nn.Module):
+    """Official LeWM convolutional decoder from a CLS latent to RGB."""
+
+    def __init__(
+        self,
+        cls_dim=192,
+        base_dim=512,
+        init_size=7,
+        image_size=224,
+        ch_mult=(1, 2, 4, 8, 16),
+    ):
+        super().__init__()
+        self.image_size = int(image_size)
+        self.init_size = int(init_size)
+        size = self.init_size
+        num_upsamples = 0
+        while size < self.image_size:
+            size *= 2
+            num_upsamples += 1
+        if size != self.image_size:
+            raise ValueError('image_size must equal init_size times a power of two.')
+        if len(ch_mult) < num_upsamples:
+            raise ValueError(f'Need at least {num_upsamples} channel multipliers.')
+
+        self.base_dim = int(base_dim)
+        self.projection = nn.Linear(cls_dim, self.base_dim * self.init_size**2)
+        channels = [max(self.base_dim // int(mult), 32) for mult in ch_mult[:num_upsamples]]
+        layers = []
+        input_channels = self.base_dim
+        for output_channels in channels:
+            layers.extend(
+                [
+                    nn.Upsample(scale_factor=2, mode='nearest'),
+                    nn.Conv2d(input_channels, output_channels, 3, padding=1),
+                    nn.GroupNorm(min(32, output_channels), output_channels),
+                    nn.SiLU(),
+                    nn.Conv2d(output_channels, output_channels, 3, padding=1),
+                    nn.GroupNorm(min(32, output_channels), output_channels),
+                    nn.SiLU(),
+                ]
+            )
+            input_channels = output_channels
+        self.upsampler = nn.Sequential(*layers)
+        self.to_rgb = nn.Conv2d(input_channels, 3, 3, padding=1)
+
+    def forward(self, cls_embedding):
+        feature = self.projection(cls_embedding).reshape(
+            cls_embedding.shape[0], self.base_dim, self.init_size, self.init_size
+        )
+        return torch.tanh(self.to_rgb(self.upsampler(feature)))
+
+
 def load_decoder(path, device='cpu'):
     checkpoint = torch.load(path, map_location='cpu', weights_only=False)
-    if checkpoint.get('type') != 'lewm_cls_visual_decoder_v1':
+    decoder_types = {
+        'lewm_cls_visual_decoder_v1': CLSDecoder,
+        'lewm_conv_visual_decoder_v1': ConvDecoder,
+    }
+    if checkpoint.get('type') not in decoder_types:
         raise ValueError(f'Unsupported visual decoder checkpoint: {path}')
-    model = CLSDecoder(**checkpoint['model_config'])
+    model = decoder_types[checkpoint['type']](**checkpoint['model_config'])
     model.load_state_dict(checkpoint['model'], strict=True)
     return model.to(device).eval(), checkpoint

@@ -10,7 +10,8 @@ PYTHON_BIN=${PYTHON_BIN:-/data-training/yyf/envs/latent-geometry/bin/python}
 DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/latent-geometry}
 LATENT_ROOT=${LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 RUN_ROOT=${RUN_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder}
-RUN_NAME=${RUN_NAME:-20260904_mixed666_3072_official_cls_decoder}
+DECODER_TYPE=${DECODER_TYPE:-conv}
+RUN_NAME=${RUN_NAME:-20260904_mixed666_3072_official_conv_decoder}
 MODE=${MODE:-launch}
 EPOCHS=${EPOCHS:-50}
 TRAIN_ROWS=${TRAIN_ROWS:-200000}
@@ -49,6 +50,7 @@ run_task() {
     --output-dir="$RUN_ROOT/$RUN_NAME/$task" --epochs="$EPOCHS" \
     --train-rows="$TRAIN_ROWS" --val-rows="$VAL_ROWS" \
     --batch-size="$BATCH_SIZE" --decode-workers="$DECODE_WORKERS" \
+    --decoder-type="$DECODER_TYPE" \
     --seed=3072 ${SMOKE_BATCHES:+--smoke-batches="$SMOKE_BATCHES"} \
     2>&1 | tee -a "$RUN_ROOT/$RUN_NAME/logs/$task.log"
 }
