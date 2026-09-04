@@ -3,9 +3,10 @@ set -euo pipefail
 
 # A800 node4：评测 H50 subgoal predictor 消融。比较 history3 MLP、单 K10
 # EndpointFlow 与 K5/K10 LatentPathFlow 的 3 个训练 seed；统一只取 K10 作为
-# online subgoal，固定 mixed LeWM（PushT seed666，其余 seed3072）、纯
-# LeWM-CEM、无 policy guidance、ns1、MoH、H2/RH1/J5、CEM300x30、
-# budget100、50 episodes 和 evaluation seeds 0/1/42。每批 8 卡并行两个设置。
+# online subgoal，固定 mixed LeWM（PushT seed666，其余 seed3072）、ns1、
+# MoH、H2/RH1/J5、CEM300x30、budget100、50 episodes 和 evaluation seeds
+# 0/1/42。默认是纯 LeWM-CEM；设置 POLICY_GUIDANCE=mode 时使用 shared-all
+# GCIQL-Chunk seed777 对 predicted subgoal 做 policy guidance。
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -17,6 +18,10 @@ EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 NUM_EVAL=${NUM_EVAL:-50}
+POLICY_GUIDANCE=${POLICY_GUIDANCE:-none}
+POLICY_SEED=${POLICY_SEED:-777}
+POLICY_STEPS=${POLICY_STEPS:-100000}
+POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 RUNS_ROOT=${RUNS_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-predictor-h50-ablation}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260904-h50-predictor-ablation}
@@ -38,6 +43,10 @@ read -r -a train_seeds <<< "$TRAIN_SEEDS"
 read -r -a eval_seeds <<< "$EVAL_SEEDS"
 if (( ${#gpu_ids[@]} != 4 && ${#gpu_ids[@]} != 8 )); then
   echo "GPU_IDS must contain exactly four or eight GPU IDs." >&2
+  exit 2
+fi
+if [[ "$POLICY_GUIDANCE" != none && "$POLICY_GUIDANCE" != mode && "$POLICY_GUIDANCE" != mode_anchor ]]; then
+  echo "POLICY_GUIDANCE must be none, mode, or mode_anchor." >&2
   exit 2
 fi
 settings_per_batch=$((${#gpu_ids[@]} / 4))
@@ -64,7 +73,11 @@ run_setting() {
   local architecture=$2
   local train_seed=$3
   local eval_seed=$4
-  local output_root="$EVAL_ROOT/20260904_h50_${architecture}_train${train_seed}_eval${eval_seed}_ns1_lewm_cem_moh_cem300x30_h2_rh1_g50_b100_ep${NUM_EVAL}"
+  local guidance_tag=lewm_cem
+  if [[ "$POLICY_GUIDANCE" != none ]]; then
+    guidance_tag="gciql_chunk_all_sd${POLICY_SEED}_${POLICY_GUIDANCE}_guided"
+  fi
+  local output_root="$EVAL_ROOT/20260904_h50_${architecture}_train${train_seed}_eval${eval_seed}_ns1_${guidance_tag}_moh_cem300x30_h2_rh1_g50_b100_ep${NUM_EVAL}"
   local -a gpus
   local -a pids=()
   read -r -a gpus <<< "$setting_gpus"
@@ -73,6 +86,15 @@ run_setting() {
     local task=${tasks[$i]}
     local exp_name="h50_${architecture}_${task}_lewm${lewm_seeds[$i]}_hist3_k10_pmatch18m_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${train_seed}"
     local subgoal_checkpoint="$RUNS_ROOT/$exp_name/checkpoint_${TRAIN_STEPS}.msgpack"
+    local policy_dir="$POLICY_ROOT/gc4_${task}_all_n100000_b256_a0.0_sd${POLICY_SEED}"
+    local -a task_guidance_args=(--policy-guidance="$POLICY_GUIDANCE")
+    if [[ "$POLICY_GUIDANCE" != none ]]; then
+      task_guidance_args+=(
+        --guidance-goal-mode=subgoal
+        --policy-checkpoint-dir="$policy_dir"
+        --policy-checkpoint-step="$POLICY_STEPS"
+      )
+    fi
     local output_dir="$output_root/$task"
     local task_tmp="$TMP_ROOT/${architecture}/train${train_seed}/eval${eval_seed}/$task"
     mkdir -p "$output_dir" "$task_tmp"
@@ -85,7 +107,7 @@ run_setting() {
       LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
       "$PYTHON_BIN" eval_lewm_4tasks.py \
-        --task="$task" --controller=lewm_cem --policy-guidance=none --use-subgoal \
+        --task="$task" --controller=lewm_cem "${task_guidance_args[@]}" --use-subgoal \
         --data-root="$LEWM_DATA_ROOT" \
         --lewm-checkpoint="${lewm_checkpoints[$i]}" \
         --latent-subgoal-checkpoint="$subgoal_checkpoint" --num-samples=1 \
