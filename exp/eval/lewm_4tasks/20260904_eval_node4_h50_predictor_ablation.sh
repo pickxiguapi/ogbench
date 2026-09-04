@@ -5,13 +5,15 @@ set -euo pipefail
 # EndpointFlow 与 K5/K10 LatentPathFlow 的 3 个训练 seed；统一只取 K10 作为
 # online subgoal，固定 mixed LeWM（PushT seed666，其余 seed3072）、ns1、
 # MoH、H2/RH1/J5、CEM300x30、budget100、50 episodes 和 evaluation seeds
-# 0/1/42。默认是纯 LeWM-CEM；设置 POLICY_GUIDANCE=mode 时使用 shared-all
-# GCIQL-Chunk seed777 对 predicted subgoal 做 policy guidance。
+# 0/1/42。默认是纯 LeWM-CEM；也可通过 POLICY_GUIDANCE 与
+# GUIDANCE_GOAL_MODE 接入 shared-all GCIQL-Chunk seed777 guidance。
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
+WAIT_FOR_GPUS=${WAIT_FOR_GPUS:-0}
+GPU_POLL_SECONDS=${GPU_POLL_SECONDS:-30}
 ARCHITECTURES=${ARCHITECTURES:-"history_mlp endpoint_flow latent_path_flow"}
 TRAIN_SEEDS=${TRAIN_SEEDS:-"0 1 42"}
 EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
@@ -19,9 +21,11 @@ TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 NUM_EVAL=${NUM_EVAL:-50}
 POLICY_GUIDANCE=${POLICY_GUIDANCE:-none}
+GUIDANCE_GOAL_MODE=${GUIDANCE_GOAL_MODE:-subgoal}
 POLICY_SEED=${POLICY_SEED:-777}
 POLICY_STEPS=${POLICY_STEPS:-100000}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
+CEM_ITERATIONS=${CEM_ITERATIONS:-30}
 RUNS_ROOT=${RUNS_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-predictor-h50-ablation}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260904-h50-predictor-ablation}
@@ -49,6 +53,31 @@ if [[ "$POLICY_GUIDANCE" != none && "$POLICY_GUIDANCE" != mode && "$POLICY_GUIDA
   echo "POLICY_GUIDANCE must be none, mode, or mode_anchor." >&2
   exit 2
 fi
+if [[ "$GUIDANCE_GOAL_MODE" != subgoal && "$GUIDANCE_GOAL_MODE" != final ]]; then
+  echo "GUIDANCE_GOAL_MODE must be subgoal or final." >&2
+  exit 2
+fi
+if [[ "$WAIT_FOR_GPUS" != 0 && "$WAIT_FOR_GPUS" != 1 ]]; then
+  echo "WAIT_FOR_GPUS must be 0 or 1." >&2
+  exit 2
+fi
+if [[ "$WAIT_FOR_GPUS" == 1 ]]; then
+  while true; do
+    busy_gpus=()
+    for gpu_id in "${gpu_ids[@]}"; do
+      gpu_processes=$(nvidia-smi -i "$gpu_id" --query-compute-apps=pid --format=csv,noheader,nounits)
+      if [[ -n "$gpu_processes" ]]; then
+        busy_gpus+=("$gpu_id")
+      fi
+    done
+    if (( ${#busy_gpus[@]} == 0 )); then
+      break
+    fi
+    echo "[$(date '+%F %T %Z')] waiting for busy GPUs: ${busy_gpus[*]}"
+    sleep "$GPU_POLL_SECONDS"
+  done
+  echo "[$(date '+%F %T %Z')] GPUs ${gpu_ids[*]} are free; starting H50 evaluation"
+fi
 settings_per_batch=$((${#gpu_ids[@]} / 4))
 
 variant_architectures=()
@@ -75,9 +104,9 @@ run_setting() {
   local eval_seed=$4
   local guidance_tag=lewm_cem
   if [[ "$POLICY_GUIDANCE" != none ]]; then
-    guidance_tag="gciql_chunk_all_sd${POLICY_SEED}_${POLICY_GUIDANCE}_guided"
+    guidance_tag="gciql_chunk_all_sd${POLICY_SEED}_${POLICY_GUIDANCE}_${GUIDANCE_GOAL_MODE}goal_guided"
   fi
-  local output_root="$EVAL_ROOT/20260904_h50_${architecture}_train${train_seed}_eval${eval_seed}_ns1_${guidance_tag}_moh_cem300x30_h2_rh1_g50_b100_ep${NUM_EVAL}"
+  local output_root="$EVAL_ROOT/20260904_h50_${architecture}_train${train_seed}_eval${eval_seed}_ns1_${guidance_tag}_moh_cem300x${CEM_ITERATIONS}_h2_rh1_g50_b100_ep${NUM_EVAL}"
   local -a gpus
   local -a pids=()
   read -r -a gpus <<< "$setting_gpus"
@@ -90,7 +119,7 @@ run_setting() {
     local -a task_guidance_args=(--policy-guidance="$POLICY_GUIDANCE")
     if [[ "$POLICY_GUIDANCE" != none ]]; then
       task_guidance_args+=(
-        --guidance-goal-mode=subgoal
+        --guidance-goal-mode="$GUIDANCE_GOAL_MODE"
         --policy-checkpoint-dir="$policy_dir"
         --policy-checkpoint-step="$POLICY_STEPS"
       )
@@ -114,7 +143,7 @@ run_setting() {
         --num-eval="$NUM_EVAL" --seed="$eval_seed" \
         --goal-offset-steps=50 --eval-budget=100 \
         --cem-horizon=2 --cem-receding-horizon=1 --action-block=5 \
-        --cem-num-samples=300 --cem-iterations=30 --cem-topk=30 --cem-var-scale=1.0 \
+        --cem-num-samples=300 --cem-iterations="$CEM_ITERATIONS" --cem-topk=30 --cem-var-scale=1.0 \
         --cem-cost-mode=moh \
         --output="$output_dir/result.json" >"$output_dir/eval.log" 2>&1
     ) &
