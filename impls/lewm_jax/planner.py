@@ -125,6 +125,7 @@ class JAXLeWMCEMPolicy:
         if (
             latent_subgoal_checkpoint is not None
             and guidance_policy is not None
+            and guidance_goal_mode == 'subgoal'
             and not hasattr(guidance_policy, 'sample_actions_with_latent_goal')
         ):
             raise ValueError(

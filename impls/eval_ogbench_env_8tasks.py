@@ -87,6 +87,10 @@ def parse_args():
     parser.add_argument(
         '--policy-guidance', choices=('none', 'mode'), default='none'
     )
+    parser.add_argument(
+        '--guidance-goal-mode', choices=('subgoal', 'final'), default='subgoal'
+    )
+    parser.add_argument('--use-subgoal', action='store_true')
     parser.add_argument('--lewm-checkpoint')
     parser.add_argument('--policy-checkpoint-dir')
     parser.add_argument('--policy-checkpoint-step', type=int, default=500_000)
@@ -101,6 +105,8 @@ def parse_args():
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--cem-cost-mode', choices=('last', 'moh'), default='moh')
+    parser.add_argument('--latent-subgoal-checkpoint')
+    parser.add_argument('--num-samples', type=int, default=1)
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
@@ -153,12 +159,23 @@ def main():
     args = parse_args()
     needs_lewm = args.controller == 'lewm_cem'
     needs_policy = args.controller == 'direct_policy' or args.policy_guidance != 'none'
+    needs_subgoal = args.use_subgoal
     if args.controller == 'direct_policy' and args.policy_guidance != 'none':
         raise ValueError('Policy guidance only applies to the lewm_cem controller.')
     if needs_lewm != (args.lewm_checkpoint is not None):
         raise ValueError('Invalid controller/--lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
         raise ValueError('Invalid controller/guidance policy-checkpoint combination.')
+    if needs_subgoal != (args.latent_subgoal_checkpoint is not None):
+        raise ValueError(
+            'Invalid use-subgoal/--latent-subgoal-checkpoint combination.'
+        )
+    if needs_subgoal and args.controller != 'lewm_cem':
+        raise ValueError('Latent subgoals require the lewm_cem controller.')
+    if args.num_samples <= 0:
+        raise ValueError('--num-samples must be positive.')
+    if not needs_subgoal and args.num_samples != 1:
+        raise ValueError('--num-samples only applies when --use-subgoal is set.')
 
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
@@ -172,7 +189,9 @@ def main():
             args.policy_checkpoint_dir,
             args.policy_checkpoint_step,
         )
-        representation_mode = policy_flags['representation']['mode']
+        representation_mode = policy_flags.get('representation', {}).get(
+            'mode', 'independent'
+        )
     if args.controller == 'direct_policy':
         policy = OGBenchChunkPolicy(
             policy_agent, scaler, args.policy_action_space, args.seed
@@ -192,10 +211,13 @@ def main():
             cost_mode=args.cem_cost_mode,
             guidance_policy=policy_agent,
             guidance_mode=args.policy_guidance,
+            guidance_goal_mode=args.guidance_goal_mode,
             guidance_action_space=args.policy_action_space,
             paired_plan_keys=True,
             action_low=env.action_space.low,
             action_high=env.action_space.high,
+            latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
+            latent_subgoal_num_samples=args.num_samples,
         )
 
     task_infos = env.unwrapped.task_infos
@@ -244,11 +266,34 @@ def main():
         'environment': args.env_name,
         'controller': args.controller,
         'policy_guidance': args.policy_guidance,
+        'guidance_goal_mode': args.guidance_goal_mode,
+        'use_subgoal': args.use_subgoal,
         'representation_mode': representation_mode,
         'lewm_checkpoint': args.lewm_checkpoint,
         'policy_checkpoint_dir': args.policy_checkpoint_dir,
         'policy_checkpoint_step': args.policy_checkpoint_step if needs_policy else None,
         'policy_action_space': args.policy_action_space if needs_policy else None,
+        'latent_subgoal': (
+            None
+            if not needs_subgoal
+            else {
+                'checkpoint': policy.latent_subgoal_checkpoint,
+                'lewm_checkpoint': policy.lewm_checkpoint,
+                'checkpoint_step': policy.latent_subgoal_checkpoint_step,
+                'num_samples': policy.latent_subgoal_num_samples,
+                'sample_selection': policy.latent_subgoal_sample_selection,
+                'training_subgoal_steps': int(
+                    policy.latent_subgoal_config['subgoal_steps']
+                ),
+                'training_action_block': int(
+                    policy.latent_subgoal_config['action_block']
+                ),
+                'selected_waypoint_index': policy.latent_subgoal_waypoint_index,
+                'selected_waypoint_step': policy.latent_subgoal_waypoint_step,
+                'history_size': policy.latent_subgoal_history_size,
+                'generation_counts': policy.latent_subgoal_generation_counts,
+            }
+        ),
         'cem': (
             None
             if args.controller == 'direct_policy'
