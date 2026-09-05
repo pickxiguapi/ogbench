@@ -73,9 +73,11 @@ class LancePixels:
 
     def fetch(self, indices):
         indices = np.asarray(indices, dtype=np.int64)
-        batch = self.rows.__getitems__(indices.tolist())
+        unique, inverse = np.unique(indices, return_inverse=True)
+        batch = self.rows.__getitems__(unique.tolist())
         blobs = batch.column(batch.schema.get_field_index('pixels')).to_pylist()
-        return np.stack(list(self.executor.map(self.decode, blobs)))
+        decoded = np.stack(list(self.executor.map(self.decode, blobs)))
+        return decoded[inverse]
 
     def close(self):
         self.executor.shutdown(wait=True)
