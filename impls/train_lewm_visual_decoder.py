@@ -47,6 +47,12 @@ def parse_args():
     )
     parser.add_argument('--foreground-threshold', type=float, default=0.08)
     parser.add_argument('--foreground-dilation', type=int, default=9)
+    parser.add_argument(
+        '--variation-weight',
+        type=float,
+        default=0.0,
+        help='Weight for batch-centered MSE that prevents mean-image collapse.',
+    )
     parser.add_argument('--seed', type=int, default=3072)
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--smoke-batches', type=int, default=0)
@@ -113,29 +119,39 @@ def reconstruction_losses(
     foreground_weight,
     foreground_threshold,
     foreground_dilation,
+    variation_weight,
 ):
     squared_error = torch.square(reconstruction - target)
     full_mse = squared_error.mean()
-    if foreground_weight <= 0:
-        return full_mse, full_mse, full_mse.new_zeros(()), full_mse.new_zeros(())
-    if foreground_dilation <= 0 or foreground_dilation % 2 != 1:
-        raise ValueError('foreground_dilation must be a positive odd integer.')
-    reference = target.detach().mean(dim=0, keepdim=True)
-    mask = (target.detach() - reference).abs().amax(dim=1, keepdim=True)
-    mask = (mask > foreground_threshold).to(squared_error.dtype)
-    if foreground_dilation > 1:
-        mask = F.max_pool2d(
-            mask,
-            kernel_size=foreground_dilation,
-            stride=1,
-            padding=foreground_dilation // 2,
+    zero = full_mse.new_zeros(())
+    foreground_mse = zero
+    mask_fraction = zero
+    if foreground_weight > 0:
+        if foreground_dilation <= 0 or foreground_dilation % 2 != 1:
+            raise ValueError('foreground_dilation must be a positive odd integer.')
+        reference = target.detach().mean(dim=0, keepdim=True)
+        mask = (target.detach() - reference).abs().amax(dim=1, keepdim=True)
+        mask = (mask > foreground_threshold).to(squared_error.dtype)
+        if foreground_dilation > 1:
+            mask = F.max_pool2d(
+                mask,
+                kernel_size=foreground_dilation,
+                stride=1,
+                padding=foreground_dilation // 2,
+            )
+        mask_fraction = mask.mean()
+        foreground_mse = (squared_error * mask).sum() / (
+            mask.sum().clamp_min(1.0) * squared_error.shape[1]
         )
-    mask_fraction = mask.mean()
-    foreground_mse = (squared_error * mask).sum() / (
-        mask.sum().clamp_min(1.0) * squared_error.shape[1]
+    centered_reconstruction = reconstruction - reconstruction.mean(dim=0, keepdim=True)
+    centered_target = target.detach() - target.detach().mean(dim=0, keepdim=True)
+    variation_mse = torch.square(centered_reconstruction - centered_target).mean()
+    objective = (
+        full_mse
+        + foreground_weight * foreground_mse
+        + variation_weight * variation_mse
     )
-    objective = full_mse + foreground_weight * foreground_mse
-    return objective, full_mse, foreground_mse, mask_fraction
+    return objective, full_mse, foreground_mse, mask_fraction, variation_mse
 
 
 @torch.no_grad()
@@ -151,6 +167,7 @@ def evaluate(
     foreground_weight,
     foreground_threshold,
     foreground_dilation,
+    variation_weight,
 ):
     model.eval()
     total = 0.0
@@ -158,6 +175,7 @@ def evaluate(
     objective_total = 0.0
     foreground_total = 0.0
     mask_fraction_total = 0.0
+    variation_total = 0.0
     preview = None
     for batch_number, start in enumerate(range(0, len(indices), batch_size)):
         if smoke_batches and batch_number >= smoke_batches:
@@ -165,17 +183,19 @@ def evaluate(
         z, target = tensors(*source.fetch(indices[start : start + batch_size]), device)
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
             reconstruction = model(z)
-            objective, full_mse, foreground_mse, mask_fraction = reconstruction_losses(
+            objective, full_mse, foreground_mse, mask_fraction, variation_mse = reconstruction_losses(
                 reconstruction,
                 target,
                 foreground_weight=foreground_weight,
                 foreground_threshold=foreground_threshold,
                 foreground_dilation=foreground_dilation,
+                variation_weight=variation_weight,
             )
         total += float(full_mse.item()) * len(z)
         objective_total += float(objective.item()) * len(z)
         foreground_total += float(foreground_mse.item()) * len(z)
         mask_fraction_total += float(mask_fraction.item()) * len(z)
+        variation_total += float(variation_mse.item()) * len(z)
         count += len(z)
         if preview is None:
             n = min(8, len(z))
@@ -189,6 +209,7 @@ def evaluate(
         'objective': objective_total / max(count, 1),
         'foreground_mse': foreground_total / max(count, 1),
         'mask_fraction': mask_fraction_total / max(count, 1),
+        'variation_mse': variation_total / max(count, 1),
     }
 
 
@@ -261,9 +282,8 @@ def main():
         'protocol': 'frozen encoder latent to same-frame JPEG RGB; decoder-only MSE',
         'decoder_type': args.decoder_type,
         'loss': (
-            'full_mse'
-            if args.foreground_weight <= 0
-            else 'full_mse + foreground_weight * batch_variation_foreground_mse'
+            'full_mse + foreground_weight * batch_variation_foreground_mse '
+            '+ variation_weight * batch_centered_mse'
         ),
     }
     (output_dir / 'run_manifest.json').write_text(json.dumps(manifest, indent=2, sort_keys=True))
@@ -284,12 +304,13 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
                 with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
                     reconstruction = model(z)
-                    objective, full_mse, _, _ = reconstruction_losses(
+                    objective, full_mse, _, _, _ = reconstruction_losses(
                         reconstruction,
                         target,
                         foreground_weight=args.foreground_weight,
                         foreground_threshold=args.foreground_threshold,
                         foreground_dilation=args.foreground_dilation,
+                        variation_weight=args.variation_weight,
                     )
                 objective.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -311,6 +332,7 @@ def main():
                 foreground_weight=args.foreground_weight,
                 foreground_threshold=args.foreground_threshold,
                 foreground_dilation=args.foreground_dilation,
+                variation_weight=args.variation_weight,
             )
             payload = {
                 'type': checkpoint_type,
@@ -331,6 +353,7 @@ def main():
                 f'val_mse={validation["mse"]:.6f} '
                 f'val_foreground_mse={validation["foreground_mse"]:.6f} '
                 f'val_mask_fraction={validation["mask_fraction"]:.4f} '
+                f'val_variation_mse={validation["variation_mse"]:.6f} '
                 f'val_psnr={validation["psnr"]:.3f} '
                 f'seconds={time.time() - started:.1f}',
                 flush=True,

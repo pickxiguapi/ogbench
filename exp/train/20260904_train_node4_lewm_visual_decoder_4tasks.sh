@@ -11,16 +11,17 @@ DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/latent-geometry}
 LATENT_ROOT=${LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 RUN_ROOT=${RUN_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder}
 DECODER_TYPE=${DECODER_TYPE:-conv}
-RUN_NAME=${RUN_NAME:-20260905_mixed666_3072_official_cnn_image_decoder_fg10}
+RUN_NAME=${RUN_NAME:-20260905_mixed666_3072_official_cnn_image_decoder_var10}
 MODE=${MODE:-launch}
 EPOCHS=${EPOCHS:-50}
 TRAIN_ROWS=${TRAIN_ROWS:-200000}
 VAL_ROWS=${VAL_ROWS:-20000}
 BATCH_SIZE=${BATCH_SIZE:-128}
 DECODE_WORKERS=${DECODE_WORKERS:-12}
-FOREGROUND_WEIGHT=${FOREGROUND_WEIGHT:-10}
+FOREGROUND_WEIGHT=${FOREGROUND_WEIGHT:-0}
 FOREGROUND_THRESHOLD=${FOREGROUND_THRESHOLD:-0.08}
 FOREGROUND_DILATION=${FOREGROUND_DILATION:-9}
+VARIATION_WEIGHT=${VARIATION_WEIGHT:-10}
 mkdir -p "$RUN_ROOT/$RUN_NAME/logs"
 
 run_task() {
@@ -57,6 +58,7 @@ run_task() {
     --foreground-weight="$FOREGROUND_WEIGHT" \
     --foreground-threshold="$FOREGROUND_THRESHOLD" \
     --foreground-dilation="$FOREGROUND_DILATION" \
+    --variation-weight="$VARIATION_WEIGHT" \
     --seed=3072 ${SMOKE_BATCHES:+--smoke-batches="$SMOKE_BATCHES"} \
     2>&1 | tee -a "$RUN_ROOT/$RUN_NAME/logs/$task.log"
 }
