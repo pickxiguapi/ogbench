@@ -37,8 +37,8 @@ def parse_args():
     parser.add_argument('--train-rows', type=int, default=200000)
     parser.add_argument('--val-rows', type=int, default=20000)
     parser.add_argument('--decode-workers', type=int, default=12)
-    parser.add_argument('--learning-rate', type=float, default=1e-4)
-    parser.add_argument('--weight-decay', type=float, default=1e-3)
+    parser.add_argument('--learning-rate', type=float, default=1e-3)
+    parser.add_argument('--weight-decay', type=float, default=0.0)
     parser.add_argument('--seed', type=int, default=3072)
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--smoke-batches', type=int, default=0)
@@ -143,13 +143,15 @@ def main():
     if args.decoder_type == 'conv':
         config = {
             'cls_dim': embed_dim,
-            'base_dim': 512,
-            'init_size': 7,
             'image_size': 224,
-            'ch_mult': (1, 2, 4, 8, 16),
+            'out_channels': 3,
+            'base_channels': 512,
+            'min_channels': 32,
+            'start_size': 7,
+            'num_res_blocks': 2,
         }
         model = ConvDecoder(**config).to(device)
-        checkpoint_type = 'lewm_conv_visual_decoder_v1'
+        checkpoint_type = 'lewm_official_conv_visual_decoder_v2'
     else:
         config = {
             'cls_dim': embed_dim,
@@ -164,7 +166,9 @@ def main():
         }
         model = CLSDecoder(**config).to(device)
         checkpoint_type = 'lewm_cls_visual_decoder_v1'
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
+    )
     steps_per_epoch = math.ceil(len(train_indices) / args.batch_size)
     if args.smoke_batches:
         steps_per_epoch = min(steps_per_epoch, args.smoke_batches)
