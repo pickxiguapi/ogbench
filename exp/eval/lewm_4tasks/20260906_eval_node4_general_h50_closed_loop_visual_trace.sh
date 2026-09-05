@@ -5,6 +5,7 @@ set -euo pipefail
 # capture its exact closed-loop subgoal events.  The policy observes real env
 # frames every step, refreshes the general K10 target every five steps, plans
 # two action blocks with CEM, and executes only the first block before replanning.
+CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 source "$OGBENCH_ROOT/scripts/client_env.sh"
