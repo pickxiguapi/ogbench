@@ -75,6 +75,7 @@ def parse_args():
         default='moh',
     )
     parser.add_argument('--video-dir')
+    parser.add_argument('--trace-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
 
@@ -206,6 +207,7 @@ def main():
             eval_budget=args.eval_budget,
             policy=policy,
             video_dir=args.video_dir,
+            trace_dir=args.trace_dir,
         )
     finally:
         dataset.close()
@@ -254,6 +256,7 @@ def main():
         'num_eval': args.num_eval,
         'goal_offset_steps': args.goal_offset_steps,
         'eval_budget': args.eval_budget,
+        'trace_dir': args.trace_dir,
         'cem': (
             None
             if args.controller == 'direct_policy'

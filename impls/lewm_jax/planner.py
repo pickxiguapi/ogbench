@@ -278,6 +278,11 @@ class JAXLeWMCEMPolicy:
             else self.subgoal_generator.generation_counts
         )
 
+    @property
+    def latent_subgoal_trace(self):
+        """Exact subgoal paths emitted at each closed-loop planning event."""
+        return self.subgoal_traces
+
     def _build_plan_one(self):
         model = self.model
         variables = self.variables
@@ -435,6 +440,8 @@ class JAXLeWMCEMPolicy:
         self.buffers = [deque() for _ in range(num_envs)]
         self.warm_starts = [None] * num_envs
         self.plan_counts = np.zeros(num_envs, dtype=np.int64)
+        self.environment_steps = np.zeros(num_envs, dtype=np.int64)
+        self.subgoal_traces = [[] for _ in range(num_envs)]
         if self.subgoal_generator is not None:
             self.subgoal_generator.reset(num_envs)
 
@@ -596,14 +603,20 @@ class JAXLeWMCEMPolicy:
                     int(self.lewm_config['embed_dim']), dtype=np.float32
                 )
             else:
-                if self.cost_mode == 'path_mean':
-                    target_embedding = self.subgoal_generator.predict_path(
-                        env_index, np.asarray(goals[env_index, -1])
-                    )
-                else:
-                    target_embedding = self.subgoal_generator.predict(
-                        env_index, np.asarray(goals[env_index, -1])
-                    )
+                predicted_path = self.subgoal_generator.predict_path(
+                    env_index, np.asarray(goals[env_index, -1])
+                )
+                target_embedding = (
+                    predicted_path
+                    if self.cost_mode == 'path_mean'
+                    else predicted_path[-1]
+                )
+                self.subgoal_traces[env_index].append(
+                    {
+                        'environment_step': int(self.environment_steps[env_index]),
+                        'predicted_path': predicted_path.copy(),
+                    }
+                )
             if self.guidance_mode in (
                 'population',
                 'lewm_select',
@@ -686,6 +699,7 @@ class JAXLeWMCEMPolicy:
         )
         for env_index in np.flatnonzero(alive):
             actions[env_index] = self.buffers[env_index].popleft()
+            self.environment_steps[env_index] += 1
         return actions
 
 
