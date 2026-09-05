@@ -18,6 +18,7 @@ RUN_VARIANTS=${RUN_VARIANTS:-"zero_init policy_mode policy_mode_anchor policy_po
 SKIP_COMPLETED=${SKIP_COMPLETED:-1}
 GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-25}
 EVAL_BUDGET=${EVAL_BUDGET:-50}
+CEM_COST_MODE=${CEM_COST_MODE:-moh}
 
 POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
@@ -174,7 +175,7 @@ run_variant() {
         --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
         --cem-horizon=5 --cem-receding-horizon=1 --action-block=5 \
         --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 \
-        --cem-var-scale=1.0 --cem-cost-mode=moh \
+        --cem-var-scale=1.0 --cem-cost-mode="$CEM_COST_MODE" \
         --output="$result_file" >"$output_dir/eval.log" 2>&1
     ) &
     pids+=("$!")
