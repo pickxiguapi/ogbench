@@ -18,8 +18,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from PIL import Image, ImageDraw
-import torch
-import torch.nn.functional as F
 
 from latent_subgoal import (
     LATENT_PATH_FLOW_ARCHITECTURE,
@@ -28,7 +26,6 @@ from latent_subgoal import (
     sample_conditional_path_flow_candidates,
     select_latent_path_medoid,
 )
-from lewm_visual_decoder import load_decoder
 from utils.latent_subgoal_dataset import (
     build_history_indices,
     build_valid_transitions,
@@ -54,6 +51,8 @@ def parse_args():
     parser.add_argument('--sampling-seed', type=int, default=42)
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--decode-workers', type=int, default=12)
+    parser.add_argument('--phase', choices=('all', 'predict', 'render'), default='all')
+    parser.add_argument('--prediction-file', default=None)
     return parser.parse_args()
 
 
@@ -111,14 +110,16 @@ def predict_paths(model, params, config, histories, goals, args):
     return np.concatenate(outputs)
 
 
-@torch.no_grad()
 def decode_latents(decoder, latents, batch_size, device):
+    import torch
+
     outputs = []
-    for start in range(0, len(latents), batch_size):
-        z = torch.from_numpy(latents[start : start + batch_size]).to(device)
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            prediction = decoder(z)
-        outputs.append(prediction.float().clamp(-1, 1).cpu())
+    with torch.no_grad():
+        for start in range(0, len(latents), batch_size):
+            z = torch.from_numpy(latents[start : start + batch_size]).to(device)
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                prediction = decoder(z)
+            outputs.append(prediction.float().clamp(-1, 1).cpu())
     return torch.cat(outputs).add(1).mul(127.5).round().byte().permute(0, 2, 3, 1).numpy()
 
 
@@ -129,6 +130,9 @@ def cosine_similarity(prediction, target):
 
 
 def pixel_metrics(prediction, target, current):
+    import torch
+    import torch.nn.functional as F
+
     squared = np.square(prediction.astype(np.float32) - target.astype(np.float32))
     mse = squared.mean(axis=(1, 2, 3))
     motion = np.max(np.abs(target.astype(np.int16) - current.astype(np.int16)), axis=-1) > 12
@@ -179,10 +183,13 @@ def make_sheet(path, indices, originals, decoded_true, decoded_pred, latent_mse)
     canvas.save(path)
 
 
-def main():
-    args = parse_args()
+def prediction_file(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    return Path(args.prediction_file) if args.prediction_file else output_dir / 'predictions.npz'
+
+
+def predict_and_save(args):
     cache = load_latent_cache(args.latent_hdf5)
     model, params, config, checkpoint_step = load_latent_subgoal_checkpoint(
         args.subgoal_checkpoint
@@ -228,9 +235,43 @@ def main():
     latent_mse = np.mean(np.square(predictions - targets), axis=-1)
     latent_cosine = cosine_similarity(predictions, targets)
 
+    output = prediction_file(args)
+    temporary = output.with_suffix(output.suffix + '.tmp')
+    with temporary.open('wb') as file:
+        np.savez_compressed(
+            file,
+            current_rows=current_rows,
+            history_rows=history_rows,
+            goal_rows=goal_rows,
+            target_rows=target_rows,
+            predictions=predictions,
+            latent_mse=latent_mse,
+            latent_cosine=latent_cosine,
+            generator_checkpoint_step=np.asarray(checkpoint_step),
+            lewm_checkpoint_sha256=np.asarray(config['lewm_checkpoint_sha256']),
+        )
+    temporary.replace(output)
+    print(f'Saved {len(current_rows)} latent predictions to {output}', flush=True)
+
+
+def render_predictions(args):
+    from lewm_visual_decoder import load_decoder
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cache = load_latent_cache(args.latent_hdf5)
+    with np.load(prediction_file(args), allow_pickle=False) as saved:
+        current_rows = np.asarray(saved['current_rows'], dtype=np.int64)
+        goal_rows = np.asarray(saved['goal_rows'], dtype=np.int64)
+        predictions = np.asarray(saved['predictions'], dtype=np.float32)
+        latent_mse = np.asarray(saved['latent_mse'], dtype=np.float32)
+        latent_cosine = np.asarray(saved['latent_cosine'], dtype=np.float32)
+        checkpoint_step = int(saved['generator_checkpoint_step'])
+        generator_sha = str(saved['lewm_checkpoint_sha256'].item())
+    num_pairs = len(current_rows)
+
     decoder, decoder_payload = load_decoder(args.decoder_checkpoint, args.device)
     decoder_sha = decoder_payload['manifest']['lewm_checkpoint_sha256']
-    generator_sha = config['lewm_checkpoint_sha256']
     if decoder_sha != generator_sha or decoder_sha != cache.metadata['checkpoint_sha256']:
         raise ValueError('Decoder, generator, and latent cache bind different LeWM checkpoints.')
     true_rows = np.stack(
@@ -241,18 +282,18 @@ def main():
         cache.z[true_rows].reshape(-1, cache.z.shape[1]),
         args.decoder_batch_size,
         args.device,
-    ).reshape(args.num_pairs, 4, 224, 224, 3)
+    ).reshape(num_pairs, 4, 224, 224, 3)
     decoded_pred = decode_latents(
         decoder,
         predictions.reshape(-1, cache.z.shape[1]),
         args.decoder_batch_size,
         args.device,
-    ).reshape(args.num_pairs, 2, 224, 224, 3)
+    ).reshape(num_pairs, 2, 224, 224, 3)
 
     pixels = LancePixels(args.lance_path, args.decode_workers)
     try:
         originals = pixels.fetch(true_rows.reshape(-1)).reshape(
-            args.num_pairs, 4, 224, 224, 3
+            num_pairs, 4, 224, 224, 3
         )
     finally:
         pixels.close()
@@ -288,7 +329,7 @@ def main():
     metrics = {
         'task': args.task,
         'protocol': 'held-out episodes; history3; exact t+25 goal; medoid of sampled K5/K10 paths',
-        'num_pairs': args.num_pairs,
+        'num_pairs': num_pairs,
         'num_samples': args.num_samples,
         'generator_checkpoint_step': checkpoint_step,
         'decoder_checkpoint_epoch': int(decoder_payload['epoch']),
@@ -312,6 +353,14 @@ def main():
     }
     (output_dir / 'metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True))
     print(json.dumps(metrics, indent=2, sort_keys=True), flush=True)
+
+
+def main():
+    args = parse_args()
+    if args.phase in ('all', 'predict'):
+        predict_and_save(args)
+    if args.phase in ('all', 'render'):
+        render_predictions(args)
 
 
 if __name__ == '__main__':

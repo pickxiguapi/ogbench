@@ -6,7 +6,8 @@ set -euo pipefail
 # medoid-of-8；同时输出固定分位代表样本与明确标注的 best-case 样本。
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
-PYTHON_BIN=${PYTHON_BIN:-/data-training/yyf/envs/latent-geometry/bin/python}
+JAX_PYTHON_BIN=${JAX_PYTHON_BIN:-/data-training/yyf/ogbench/.venv/bin/python}
+TORCH_PYTHON_BIN=${TORCH_PYTHON_BIN:-/data-training/yyf/envs/latent-geometry/bin/python}
 DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/latent-geometry}
 LATENT_ROOT=${LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 DECODER_RUN_ROOT=${DECODER_RUN_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder}
@@ -53,7 +54,7 @@ run_task() {
   cd "$OGBENCH_ROOT/impls"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
   JAX_PLATFORMS=cuda PYTHONUNBUFFERED=1 \
-  "$PYTHON_BIN" eval_lewm_visual_decoder.py \
+  "$JAX_PYTHON_BIN" eval_lewm_visual_decoder.py \
     --task="$task" \
     --latent-hdf5="$latent" \
     --lance-path="$lance" \
@@ -63,7 +64,21 @@ run_task() {
     --num-pairs="$NUM_PAIRS" \
     --num-samples="$NUM_SAMPLES" \
     --goal-offset=25 --split-seed=0 --sampling-seed=42 \
+    --phase=predict \
     2>&1 | tee "$OUTPUT_ROOT/$EVAL_NAME/logs/$task.log"
+  CUDA_VISIBLE_DEVICES="$gpu" PYTHONUNBUFFERED=1 \
+  "$TORCH_PYTHON_BIN" eval_lewm_visual_decoder.py \
+    --task="$task" \
+    --latent-hdf5="$latent" \
+    --lance-path="$lance" \
+    --decoder-checkpoint="$decoder" \
+    --subgoal-checkpoint="$generator" \
+    --output-dir="$OUTPUT_ROOT/$EVAL_NAME/$task" \
+    --num-pairs="$NUM_PAIRS" \
+    --num-samples="$NUM_SAMPLES" \
+    --goal-offset=25 --split-seed=0 --sampling-seed=42 \
+    --phase=render \
+    2>&1 | tee -a "$OUTPUT_ROOT/$EVAL_NAME/logs/$task.log"
 }
 
 case "$MODE" in
