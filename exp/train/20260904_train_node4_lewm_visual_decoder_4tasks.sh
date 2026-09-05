@@ -11,7 +11,7 @@ DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/latent-geometry}
 LATENT_ROOT=${LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 RUN_ROOT=${RUN_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder}
 DECODER_TYPE=${DECODER_TYPE:-conv}
-RUN_NAME=${RUN_NAME:-20260905_mixed666_3072_official_cnn_image_decoder_var10}
+RUN_NAME=${RUN_NAME:-20260905_mixed666_3072_official_cnn_image_decoder_aligned}
 MODE=${MODE:-launch}
 EPOCHS=${EPOCHS:-50}
 TRAIN_ROWS=${TRAIN_ROWS:-200000}
@@ -21,7 +21,7 @@ DECODE_WORKERS=${DECODE_WORKERS:-12}
 FOREGROUND_WEIGHT=${FOREGROUND_WEIGHT:-0}
 FOREGROUND_THRESHOLD=${FOREGROUND_THRESHOLD:-0.08}
 FOREGROUND_DILATION=${FOREGROUND_DILATION:-9}
-VARIATION_WEIGHT=${VARIATION_WEIGHT:-10}
+VARIATION_WEIGHT=${VARIATION_WEIGHT:-0}
 mkdir -p "$RUN_ROOT/$RUN_NAME/logs"
 
 run_task() {

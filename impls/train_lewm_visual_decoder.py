@@ -80,12 +80,14 @@ class BatchSource:
 
     def fetch(self, indices):
         indices = np.asarray(indices, dtype=np.int64)
-        batch = self.rows.__getitems__(indices.tolist())
-        blobs = batch.column(batch.schema.get_field_index('pixels')).to_pylist()
-        pixels = np.stack(list(self.executor.map(self.decode, blobs)))
         order = np.argsort(indices)
+        sorted_indices = indices[order]
+        batch = self.rows.__getitems__(sorted_indices.tolist())
+        blobs = batch.column(batch.schema.get_field_index('pixels')).to_pylist()
+        sorted_pixels = np.stack(list(self.executor.map(self.decode, blobs)))
         inverse = np.argsort(order)
-        latents = self.h5['z'][indices[order]][inverse].astype(np.float32, copy=False)
+        latents = self.h5['z'][sorted_indices][inverse].astype(np.float32, copy=False)
+        pixels = sorted_pixels[inverse]
         return latents, pixels
 
     def close(self):
