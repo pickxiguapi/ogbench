@@ -1,9 +1,10 @@
 """Evaluate a frozen LeWM image decoder and render predicted latent subgoals.
 
-The protocol uses held-out episodes only.  For each pair, the maxgoal25
-LatentPathFlow generator receives three cached LeWM history latents and the
-true t+25 goal latent, and predicts the t+5/t+10 waypoint latents.  The same
-frozen decoder renders both target and predicted latents.
+The protocol uses held-out episodes only.  The LatentPathFlow generator
+receives three cached LeWM history latents and a true future goal latent, then
+predicts the t+5/t+10 waypoint latents.  The same frozen decoder renders both
+target and predicted latents.  Goal horizons outside the generator's training
+range require an explicit opt-in and are recorded as OOD evaluations.
 """
 
 from __future__ import annotations
@@ -47,6 +48,9 @@ def parse_args():
     parser.add_argument('--generator-batch-size', type=int, default=32)
     parser.add_argument('--decoder-batch-size', type=int, default=32)
     parser.add_argument('--goal-offset', type=int, default=25)
+    parser.add_argument('--allow-ood-goal-offset', action='store_true')
+    parser.add_argument('--num-visual-cases', type=int, default=6)
+    parser.add_argument('--visual-cases-per-sheet', type=int, default=6)
     parser.add_argument('--split-seed', type=int, default=0)
     parser.add_argument('--sampling-seed', type=int, default=42)
     parser.add_argument('--device', default='cuda:0')
@@ -155,8 +159,8 @@ def add_label(image, text, color=(0, 0, 0)):
     return canvas
 
 
-def make_sheet(path, indices, originals, decoded_true, decoded_pred, latent_mse):
-    columns = ('t', 'GT t+5', 'GT t+10', 'goal t+25')
+def make_sheet(path, indices, originals, decoded_true, decoded_pred, latent_mse, goal_offset):
+    columns = ('t', 'GT t+5', 'GT t+10', f'goal t+{goal_offset}')
     height, width = originals.shape[2], originals.shape[3]
     row_height = height + 24
     separator = 6
@@ -185,6 +189,46 @@ def make_sheet(path, indices, originals, decoded_true, decoded_pred, latent_mse)
     canvas.save(path)
 
 
+def make_paginated_sheets(
+    output_dir,
+    stem,
+    indices,
+    originals,
+    decoded_true,
+    decoded_pred,
+    latent_mse,
+    goal_offset,
+    cases_per_sheet,
+):
+    output_dir = Path(output_dir)
+    cases_per_sheet = max(1, int(cases_per_sheet))
+    files = []
+    for page, start in enumerate(range(0, len(indices), cases_per_sheet), start=1):
+        page_indices = indices[start : start + cases_per_sheet]
+        page_path = output_dir / f'{stem}_page_{page:02d}.png'
+        make_sheet(
+            page_path,
+            page_indices,
+            originals,
+            decoded_true,
+            decoded_pred,
+            latent_mse,
+            goal_offset,
+        )
+        files.append(page_path.name)
+        if page == 1:
+            make_sheet(
+                output_dir / f'{stem}.png',
+                page_indices,
+                originals,
+                decoded_true,
+                decoded_pred,
+                latent_mse,
+                goal_offset,
+            )
+    return files
+
+
 def prediction_file(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -198,8 +242,12 @@ def predict_and_save(args):
     )
     if config['architecture'] != LATENT_PATH_FLOW_ARCHITECTURE:
         raise ValueError('This evaluator requires a LatentPathFlow checkpoint.')
-    if int(config.get('max_goal_steps', -1)) != args.goal_offset:
-        raise ValueError('Generator max_goal_steps must match goal_offset.')
+    generator_max_goal_steps = int(config.get('max_goal_steps', -1))
+    if generator_max_goal_steps != args.goal_offset and not args.allow_ood_goal_offset:
+        raise ValueError(
+            'Generator max_goal_steps must match goal_offset unless '
+            '--allow-ood-goal-offset is set.'
+        )
     history_size = int(config['history_size'])
     waypoint_steps = latent_path_waypoint_steps(
         int(config['subgoal_steps']), int(config['action_block'])
@@ -251,6 +299,8 @@ def predict_and_save(args):
             latent_cosine=latent_cosine,
             generator_checkpoint_step=np.asarray(checkpoint_step),
             lewm_checkpoint_sha256=np.asarray(config['lewm_checkpoint_sha256']),
+            generator_max_goal_steps=np.asarray(generator_max_goal_steps),
+            evaluation_goal_offset=np.asarray(args.goal_offset),
         )
     temporary.replace(output)
     print(f'Saved {len(current_rows)} latent predictions to {output}', flush=True)
@@ -270,6 +320,10 @@ def render_predictions(args):
         latent_cosine = np.asarray(saved['latent_cosine'], dtype=np.float32)
         checkpoint_step = int(saved['generator_checkpoint_step'])
         generator_sha = str(saved['lewm_checkpoint_sha256'].item())
+        generator_max_goal_steps = int(saved['generator_max_goal_steps'])
+        evaluation_goal_offset = int(saved['evaluation_goal_offset'])
+    if evaluation_goal_offset != args.goal_offset:
+        raise ValueError('Prediction file goal offset does not match --goal-offset.')
     num_pairs = len(current_rows)
 
     decoder, decoder_payload = load_decoder(args.decoder_checkpoint, args.device)
@@ -313,24 +367,42 @@ def render_predictions(args):
 
     score = latent_mse.mean(axis=1)
     order = np.argsort(score)
-    best = order[: min(6, len(order))]
-    quantiles = np.linspace(0.1, 0.9, min(6, len(order)))
+    num_visual_cases = min(max(1, args.num_visual_cases), len(order))
+    best = order[:num_visual_cases]
+    quantiles = np.linspace(0.05, 0.95, num_visual_cases)
     representative = order[np.round(quantiles * (len(order) - 1)).astype(np.int64)]
-    make_sheet(
-        output_dir / 'best_cases.png', best, originals, decoded_true, decoded_pred, latent_mse
+    best_files = make_paginated_sheets(
+        output_dir,
+        'best_cases',
+        best,
+        originals,
+        decoded_true,
+        decoded_pred,
+        latent_mse,
+        args.goal_offset,
+        args.visual_cases_per_sheet,
     )
-    make_sheet(
-        output_dir / 'representative_quantiles.png',
+    representative_files = make_paginated_sheets(
+        output_dir,
+        'representative_quantiles',
         representative,
         originals,
         decoded_true,
         decoded_pred,
         latent_mse,
+        args.goal_offset,
+        args.visual_cases_per_sheet,
     )
 
     metrics = {
         'task': args.task,
-        'protocol': 'held-out episodes; history3; exact t+25 goal; medoid of sampled K5/K10 paths',
+        'protocol': (
+            f'held-out episodes; history3; exact t+{args.goal_offset} goal; '
+            'medoid of sampled K5/K10 paths'
+        ),
+        'goal_offset': args.goal_offset,
+        'generator_max_goal_steps': generator_max_goal_steps,
+        'out_of_distribution_goal_offset': args.goal_offset > generator_max_goal_steps,
         'num_pairs': num_pairs,
         'num_samples': args.num_samples,
         'generator_checkpoint_step': checkpoint_step,
@@ -351,6 +423,8 @@ def render_predictions(args):
         'selection': {
             'best_case_indices': best.tolist(),
             'representative_quantile_indices': representative.tolist(),
+            'best_case_files': best_files,
+            'representative_quantile_files': representative_files,
         },
     }
     (output_dir / 'metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True))

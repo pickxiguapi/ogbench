@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # A800 node4：评测四任务官方 CNNImageDecoder，并渲染 maxgoal25 LatentPathFlow
-# 在 held-out episode 上预测的 K5/K10 subgoal。固定 history3、goal offset 25、
-# medoid-of-8；同时输出固定分位代表样本与明确标注的 best-case 样本。
+# 在 held-out episode 上预测的 K5/K10 subgoal。默认 goal offset 25；更长
+# horizon 必须显式设置 ALLOW_OOD_GOAL_OFFSET=1，并在结果中标记为 OOD。
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 JAX_PYTHON_BIN=${JAX_PYTHON_BIN:-/data-training/yyf/ogbench/.venv/bin/python}
@@ -18,6 +18,10 @@ EVAL_NAME=${EVAL_NAME:-20260905_convdecoder_maxgoal25_ns8_h3_g25}
 MODE=${MODE:-launch}
 NUM_PAIRS=${NUM_PAIRS:-256}
 NUM_SAMPLES=${NUM_SAMPLES:-8}
+GOAL_OFFSET=${GOAL_OFFSET:-25}
+ALLOW_OOD_GOAL_OFFSET=${ALLOW_OOD_GOAL_OFFSET:-0}
+NUM_VISUAL_CASES=${NUM_VISUAL_CASES:-6}
+VISUAL_CASES_PER_SHEET=${VISUAL_CASES_PER_SHEET:-6}
 mkdir -p "$OUTPUT_ROOT/$EVAL_NAME/logs"
 
 run_task() {
@@ -51,6 +55,10 @@ run_task() {
   test -d "$lance"
   test -s "$decoder"
   test -s "$generator"
+  local ood_args=()
+  if [[ "$ALLOW_OOD_GOAL_OFFSET" == "1" ]]; then
+    ood_args+=(--allow-ood-goal-offset)
+  fi
   cd "$OGBENCH_ROOT/impls"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
   JAX_PLATFORMS=cuda PYTHONUNBUFFERED=1 \
@@ -63,7 +71,10 @@ run_task() {
     --output-dir="$OUTPUT_ROOT/$EVAL_NAME/$task" \
     --num-pairs="$NUM_PAIRS" \
     --num-samples="$NUM_SAMPLES" \
-    --goal-offset=25 --split-seed=0 --sampling-seed=42 \
+    --goal-offset="$GOAL_OFFSET" \
+    --num-visual-cases="$NUM_VISUAL_CASES" \
+    --visual-cases-per-sheet="$VISUAL_CASES_PER_SHEET" \
+    "${ood_args[@]}" --split-seed=0 --sampling-seed=42 \
     --phase=predict \
     2>&1 | tee "$OUTPUT_ROOT/$EVAL_NAME/logs/$task.log"
   CUDA_VISIBLE_DEVICES="$gpu" PYTHONUNBUFFERED=1 \
@@ -76,7 +87,10 @@ run_task() {
     --output-dir="$OUTPUT_ROOT/$EVAL_NAME/$task" \
     --num-pairs="$NUM_PAIRS" \
     --num-samples="$NUM_SAMPLES" \
-    --goal-offset=25 --split-seed=0 --sampling-seed=42 \
+    --goal-offset="$GOAL_OFFSET" \
+    --num-visual-cases="$NUM_VISUAL_CASES" \
+    --visual-cases-per-sheet="$VISUAL_CASES_PER_SHEET" \
+    "${ood_args[@]}" --split-seed=0 --sampling-seed=42 \
     --phase=render \
     2>&1 | tee -a "$OUTPUT_ROOT/$EVAL_NAME/logs/$task.log"
 }
@@ -89,8 +103,18 @@ case "$MODE" in
     for spec in tworoom:4 pusht:5 cube:6 reacher:7; do
       task=${spec%%:*}; gpu=${spec##*:}; session="lewm-visdec-eval-$task"
       tmux has-session -t "$session" 2>/dev/null && { echo "Session exists: $session" >&2; exit 3; }
-      tmux new-session -d -s "$session" \
-        "cd '$OGBENCH_ROOT' && MODE=worker TASK='$task' GPU_ID='$gpu' DECODER_RUN_NAME='$DECODER_RUN_NAME' EVAL_NAME='$EVAL_NAME' bash exp/eval/lewm_4tasks/20260905_eval_node4_lewm_visual_decoder_subgoals.sh"
+      printf -v worker_cmd '%q ' env \
+        MODE=worker TASK="$task" GPU_ID="$gpu" \
+        JAX_PYTHON_BIN="$JAX_PYTHON_BIN" TORCH_PYTHON_BIN="$TORCH_PYTHON_BIN" \
+        DATA_ROOT="$DATA_ROOT" LATENT_ROOT="$LATENT_ROOT" \
+        DECODER_RUN_ROOT="$DECODER_RUN_ROOT" DECODER_RUN_NAME="$DECODER_RUN_NAME" \
+        SUBGOAL_ROOT="$SUBGOAL_ROOT" OUTPUT_ROOT="$OUTPUT_ROOT" EVAL_NAME="$EVAL_NAME" \
+        NUM_PAIRS="$NUM_PAIRS" NUM_SAMPLES="$NUM_SAMPLES" \
+        GOAL_OFFSET="$GOAL_OFFSET" ALLOW_OOD_GOAL_OFFSET="$ALLOW_OOD_GOAL_OFFSET" \
+        NUM_VISUAL_CASES="$NUM_VISUAL_CASES" \
+        VISUAL_CASES_PER_SHEET="$VISUAL_CASES_PER_SHEET" \
+        bash exp/eval/lewm_4tasks/20260905_eval_node4_lewm_visual_decoder_subgoals.sh
+      tmux new-session -d -s "$session" -c "$OGBENCH_ROOT" "$worker_cmd"
     done
     echo "launched $EVAL_NAME on GPUs 4,5,6,7"
     ;;
