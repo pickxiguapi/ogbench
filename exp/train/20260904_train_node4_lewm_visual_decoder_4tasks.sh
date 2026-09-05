@@ -11,7 +11,7 @@ DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/latent-geometry}
 LATENT_ROOT=${LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 RUN_ROOT=${RUN_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder}
 DECODER_TYPE=${DECODER_TYPE:-conv}
-RUN_NAME=${RUN_NAME:-20260905_mixed666_3072_official_cnn_image_decoder_aligned}
+RUN_NAME=${RUN_NAME:-20260905_mixed666_3072_official_cnn_image_decoder_aligned_full200k}
 MODE=${MODE:-launch}
 EPOCHS=${EPOCHS:-50}
 TRAIN_ROWS=${TRAIN_ROWS:-200000}
@@ -75,8 +75,21 @@ case "$MODE" in
     for spec in tworoom:0 pusht:1 cube:2 reacher:3; do
       task=${spec%%:*}; gpu=${spec##*:}; session="lewm-visdec-$task"
       tmux has-session -t "$session" 2>/dev/null && { echo "Session exists: $session" >&2; exit 3; }
-      tmux new-session -d -s "$session" \
-        "cd '$OGBENCH_ROOT' && MODE=worker TASK='$task' GPU_ID='$gpu' RUN_NAME='$RUN_NAME' bash exp/train/20260904_train_node4_lewm_visual_decoder_4tasks.sh"
+      # A long-lived tmux server can retain stale environment variables from a
+      # previous launch.  Pass the full resolved configuration explicitly so a
+      # pilot (for example 20k rows / 5 epochs) cannot leak into a formal run.
+      printf -v worker_cmd '%q ' env \
+        MODE=worker TASK="$task" GPU_ID="$gpu" \
+        PYTHON_BIN="$PYTHON_BIN" DATA_ROOT="$DATA_ROOT" LATENT_ROOT="$LATENT_ROOT" \
+        RUN_ROOT="$RUN_ROOT" RUN_NAME="$RUN_NAME" DECODER_TYPE="$DECODER_TYPE" \
+        EPOCHS="$EPOCHS" TRAIN_ROWS="$TRAIN_ROWS" VAL_ROWS="$VAL_ROWS" \
+        BATCH_SIZE="$BATCH_SIZE" DECODE_WORKERS="$DECODE_WORKERS" \
+        FOREGROUND_WEIGHT="$FOREGROUND_WEIGHT" \
+        FOREGROUND_THRESHOLD="$FOREGROUND_THRESHOLD" \
+        FOREGROUND_DILATION="$FOREGROUND_DILATION" \
+        VARIATION_WEIGHT="$VARIATION_WEIGHT" \
+        bash exp/train/20260904_train_node4_lewm_visual_decoder_4tasks.sh
+      tmux new-session -d -s "$session" -c "$OGBENCH_ROOT" "$worker_cmd"
     done
     echo "launched $RUN_NAME on GPUs 0,1,2,3"
     ;;
