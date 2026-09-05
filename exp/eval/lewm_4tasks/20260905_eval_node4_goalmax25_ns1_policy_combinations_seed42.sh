@@ -61,6 +61,41 @@ if (( ${#gpus[@]} != 4 && ${#gpus[@]} != 8 )); then
   echo "GPU_IDS must contain exactly four or eight whitespace-separated GPU IDs." >&2
   exit 2
 fi
+if (( GOAL_OFFSET_STEPS != 25 || EVAL_BUDGET != 50 )); then
+  echo "This goalmax25 launcher requires GOAL_OFFSET_STEPS=25 and EVAL_BUDGET=50." >&2
+  exit 2
+fi
+
+# Refuse to run unless every checkpoint is the H25-specific bounded-offset
+# generator documented in AGENTS.md.
+"$PYTHON_BIN" - "${subgoal_checkpoints[@]}" <<'PY'
+import json
+import pathlib
+import sys
+
+expected_sampling = "uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25"
+for checkpoint_arg in sys.argv[1:]:
+    checkpoint = pathlib.Path(checkpoint_arg)
+    config_path = checkpoint.parent / "config.json"
+    if not checkpoint.is_file():
+        raise SystemExit(f"missing subgoal checkpoint: {checkpoint}")
+    if not config_path.is_file():
+        raise SystemExit(f"missing subgoal config: {config_path}")
+    config = json.loads(config_path.read_text())
+    if config.get("goal_sampling") != expected_sampling:
+        raise SystemExit(
+            f"wrong H25 subgoal generator at {checkpoint.parent}: "
+            f"goal_sampling={config.get('goal_sampling')!r}, "
+            f"expected {expected_sampling!r}"
+        )
+    if config.get("max_goal_steps") != 25:
+        raise SystemExit(
+            f"wrong H25 max_goal_steps at {checkpoint.parent}: "
+            f"got {config.get('max_goal_steps')!r}, expected 25"
+        )
+    print(f"verified goalmax25 generator: {checkpoint.parent.name}")
+PY
+
 variants_per_batch=$((${#gpus[@]} / 4))
 
 variant_names=()
