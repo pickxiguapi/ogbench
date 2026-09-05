@@ -227,6 +227,21 @@ class JAXLeWMCEMPolicy:
         self._plan_one = jax.jit(self._build_plan_one())
         self._score_guidance_plans = jax.jit(self._build_guidance_scorer())
 
+        model = self.model
+        variables = self.variables
+
+        def rollout_selected_plan(pixels, goals, plan):
+            _, predictions = model.apply(
+                variables,
+                pixels[None, None],
+                goals[None, None],
+                plan[None, None],
+                method=model._rollout_predictions,
+            )
+            return predictions[0, 0]
+
+        self._rollout_selected_plan = jax.jit(rollout_selected_plan)
+
     def encode_pixels(self, pixels):
         return np.asarray(self._encode_pixels(jnp.asarray(pixels)))
 
@@ -611,12 +626,6 @@ class JAXLeWMCEMPolicy:
                     if self.cost_mode == 'path_mean'
                     else predicted_path[-1]
                 )
-                self.subgoal_traces[env_index].append(
-                    {
-                        'environment_step': int(self.environment_steps[env_index]),
-                        'predicted_path': predicted_path.copy(),
-                    }
-                )
             if self.guidance_mode in (
                 'population',
                 'lewm_select',
@@ -685,6 +694,22 @@ class JAXLeWMCEMPolicy:
                 jnp.asarray(guidance_blocks),
             )
             normalized_blocks = np.asarray(normalized_blocks)
+            if self.subgoal_generator is not None:
+                imagined_path = np.asarray(
+                    self._rollout_selected_plan(
+                        jnp.asarray(pixels[env_index]),
+                        jnp.asarray(goals[env_index]),
+                        jnp.asarray(normalized_blocks),
+                    ),
+                    dtype=np.float32,
+                )
+                self.subgoal_traces[env_index].append(
+                    {
+                        'environment_step': int(self.environment_steps[env_index]),
+                        'predicted_path': predicted_path.copy(),
+                        'imagined_path': imagined_path,
+                    }
+                )
             keep = normalized_blocks[: self.receding_horizon]
             self.warm_starts[env_index] = normalized_blocks[
                 self.receding_horizon:

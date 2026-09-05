@@ -274,6 +274,11 @@ def evaluate_dataset_goals(
                         if events
                         else np.empty((0, 0, 0), dtype=np.float32)
                     )
+                    imagined_paths = (
+                        np.stack([event['imagined_path'] for event in events])
+                        if events
+                        else np.empty((0, 0, 0), dtype=np.float32)
+                    )
                     np.savez_compressed(
                         output / f'episode_{index:03d}.npz',
                         frames=np.stack(episode_frames),
@@ -284,6 +289,7 @@ def evaluate_dataset_goals(
                         success=np.asarray(successes[index]),
                         plan_steps=plan_steps,
                         predicted_paths=predicted_paths,
+                        imagined_paths=imagined_paths,
                     )
         return {
             'success_rate': float(successes.mean() * 100.0),

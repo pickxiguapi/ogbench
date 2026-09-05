@@ -20,7 +20,7 @@ POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10}
 DECODER_ROOT=${DECODER_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder/20260905_mixed666_3072_official_cnn_image_decoder_aligned_epoch10_snapshot}
-OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder-eval/20260906_general_h50_closed_loop_trace}
+OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder-eval/20260906_general_h50_real_imagination_subgoal_3col}
 MODE=${MODE:-launch}
 mkdir -p "$OUTPUT_ROOT/logs"
 
@@ -63,7 +63,7 @@ run_task() {
   "$TORCH_PYTHON_BIN" render_lewm_subgoal_trace.py \
     --task="$task" --trace-dir="$trace_dir" \
     --decoder-checkpoint="$decoder" --output-dir="$figure_dir" \
-    --goal-offset="$GOAL_OFFSET" --waypoint-step=10 --display-stride=5 \
+    --goal-offset="$GOAL_OFFSET" --waypoint-step=10 \
     >>"$OUTPUT_ROOT/logs/$task.log" 2>&1
 }
 
