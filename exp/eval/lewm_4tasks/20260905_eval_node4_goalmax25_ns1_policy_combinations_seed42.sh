@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # A800 node4: compare how the shared-all GCIQL-Chunk-AWR policy is combined
-# with LeWM++ planning.  All non-policy variables are frozen to the selected
-# 25/50 setting: LeWM seeds 3072 (Cube/Reacher/TwoRoom) and 666 (PushT),
+# with LeWM++ planning.  All non-policy variables are frozen: LeWM seeds 3072
+# (Cube/Reacher/TwoRoom) and 666 (PushT),
 # goalmax25 K10 LatentPathFlow, one flow sample, policy conditioned on the
 # final goal, MoH, H2/RH1, CEM300x5, action block 5, and 50 episodes.
 CLIENT_ID=node4
@@ -16,13 +16,15 @@ POLICY_SEED=${POLICY_SEED:-777}
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
 RUN_VARIANTS=${RUN_VARIANTS:-"zero_init policy_mode policy_mode_anchor policy_population64_t03 lewm_select64_t03 lewm_elite64_t03_e8"}
 SKIP_COMPLETED=${SKIP_COMPLETED:-1}
+GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-25}
+EVAL_BUDGET=${EVAL_BUDGET:-50}
 
 POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10-goalmax25}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks}
-OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260905_goalmax25_ns1_policy_combinations_sd${POLICY_SEED}_moh_cem300x5_h2_rh1_g25_b50_ep${NUM_EVAL}_seed${EVAL_SEED}}
-TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260905-goalmax25-ns1-policy-combinations-seed${EVAL_SEED}}
+OUTPUT_ROOT=${OUTPUT_ROOT:-$EVAL_ROOT/20260905_goalmax25_ns1_policy_combinations_sd${POLICY_SEED}_moh_cem300x5_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}_seed${EVAL_SEED}}
+TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260905-goalmax25-ns1-policy-combinations-g${GOAL_OFFSET_STEPS}-b${EVAL_BUDGET}-seed${EVAL_SEED}}
 
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 
@@ -134,7 +136,7 @@ run_variant() {
         --latent-subgoal-checkpoint="${subgoal_checkpoints[$i]}" \
         --num-samples=1 \
         --num-eval="$NUM_EVAL" --seed="$EVAL_SEED" \
-        --goal-offset-steps=25 --eval-budget=50 \
+        --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
         --cem-horizon=5 --cem-receding-horizon=1 --action-block=5 \
         --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 \
         --cem-var-scale=1.0 --cem-cost-mode=moh \
