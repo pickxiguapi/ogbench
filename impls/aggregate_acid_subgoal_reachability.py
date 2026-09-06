@@ -88,6 +88,7 @@ def main():
             task_summary = {}
             for metric in METRICS:
                 train_values = []
+                eval_values_by_train = []
                 for train_seed in args.train_seeds:
                     values = [
                         cells[(architecture, train_seed, eval_seed, task)][metric]
@@ -97,11 +98,16 @@ def main():
                         float('nan') if value is None else float(value)
                         for value in values
                     ]
+                    eval_values_by_train.append(values)
                     train_values.append(float(np.nanmean(values)))
+                pooled_eval_values = np.asarray(eval_values_by_train).reshape(-1)
                 task_summary[metric] = {
                     'mean': float(np.nanmean(train_values)),
                     'std': float(np.nanstd(train_values)),
                     'training_seed_values': train_values,
+                    'eval_seed_mean': float(np.nanmean(pooled_eval_values)),
+                    'eval_seed_std': float(np.nanstd(pooled_eval_values)),
+                    'eval_seed_values_by_training_seed': eval_values_by_train,
                 }
             architecture_summary[task] = task_summary
         summary['architectures'][architecture] = architecture_summary
