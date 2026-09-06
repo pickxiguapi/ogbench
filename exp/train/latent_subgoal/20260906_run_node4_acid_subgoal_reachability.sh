@@ -396,8 +396,9 @@ case "$MODE" in
       EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT" \
       FIXED_ROOT="$FIXED_ROOT" \
       bash exp/train/latent_subgoal/20260906_run_node4_acid_subgoal_reachability.sh
+    printf -v quoted_log '%q' "$DRIVER_LOG"
     tmux new-session -d -s "$SESSION" -c "$OGBENCH_ROOT" \
-      "bash -lc '$command >\"$DRIVER_LOG\" 2>&1'"
+      "$command >$quoted_log 2>&1"
     echo "launched tmux=$SESSION pipeline=$PIPELINE log=$DRIVER_LOG"
     ;;
   driver)
