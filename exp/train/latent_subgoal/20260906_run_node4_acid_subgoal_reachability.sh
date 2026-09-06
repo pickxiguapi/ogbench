@@ -371,7 +371,11 @@ driver() {
     (( failed == 0 )) || { echo "Reachability evaluation failed." >&2; exit 1; }
   done
   "$PYTHON_BIN" "$OGBENCH_ROOT/impls/aggregate_acid_subgoal_reachability.py" \
-    --root="$EVAL_ROOT" --output="$EVAL_ROOT/aggregate.json"
+    --root="$EVAL_ROOT" --output="$EVAL_ROOT/aggregate.json" \
+    --architectures "${architectures[@]}" \
+    --train-seeds "${train_seeds[@]}" \
+    --eval-seeds "${eval_seeds[@]}" \
+    --tasks "${tasks[@]}"
   echo "DONE: $EVAL_ROOT"
 }
 
