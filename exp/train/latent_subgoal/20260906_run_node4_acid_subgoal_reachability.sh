@@ -12,7 +12,10 @@ source "$OGBENCH_ROOT/scripts/client_env.sh"
 
 MODE=${MODE:-launch}
 SESSION=${SESSION:-acid-h50-reachability}
+PIPELINE=${PIPELINE:-fixed_candidates}
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
+WAIT_FOR_GPUS=${WAIT_FOR_GPUS:-1}
+GPU_WAIT_MAX_USED_MIB=${GPU_WAIT_MAX_USED_MIB:-2000}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
 IDM_BATCH_SIZE=${IDM_BATCH_SIZE:-256}
 IDM_WARMUP_STEPS=${IDM_WARMUP_STEPS:-2000}
@@ -22,6 +25,9 @@ IDM_LOG_INTERVAL=${IDM_LOG_INTERVAL:-1000}
 IDM_EVAL_INTERVAL=${IDM_EVAL_INTERVAL:-5000}
 IDM_CHECKPOINT_INTERVAL=${IDM_CHECKPOINT_INTERVAL:-25000}
 NUM_EVAL=${NUM_EVAL:-50}
+NUM_DIAGNOSTIC_STATES=${NUM_DIAGNOSTIC_STATES:-200}
+DIAGNOSTIC_CANDIDATES=${DIAGNOSTIC_CANDIDATES:-300}
+DIAGNOSTIC_TOPK=${DIAGNOSTIC_TOPK:-30}
 ARCHITECTURES=${ARCHITECTURES:-"history_mlp endpoint_flow latent_path_flow"}
 TRAIN_SEEDS=${TRAIN_SEEDS:-"0 1 42"}
 EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
@@ -35,8 +41,13 @@ GENERAL_ROOT=${GENERAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-
 PREDICTOR_VIEW_ROOT=${PREDICTOR_VIEW_ROOT:-$GENERAL_ROOT/general_uniform_future_h50_predictor_ablation}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260906_acid_reachability_h50_general_uniform_future_lewmpp_policy777_ns1_cem300x5_h2_rh1_g50_b100_ep${NUM_EVAL}}
+FIXED_ROOT=${FIXED_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260906_acid_fixed_candidates_h50_general_uniform_future_lewmpp_policy777_ns1_cem${DIAGNOSTIC_CANDIDATES}x5_h2_states${NUM_DIAGNOSTIC_STATES}}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260906-acid-reachability}
-DRIVER_LOG=${DRIVER_LOG:-$EVAL_ROOT/driver.log}
+if [[ "$PIPELINE" == fixed_candidates ]]; then
+  DRIVER_LOG=${DRIVER_LOG:-$FIXED_ROOT/driver.log}
+else
+  DRIVER_LOG=${DRIVER_LOG:-$EVAL_ROOT/driver.log}
+fi
 
 tasks=(cube pusht reacher tworoom)
 lewm_seeds=(3072 666 3072 3072)
@@ -59,6 +70,14 @@ read -r -a train_seeds <<<"$TRAIN_SEEDS"
 read -r -a eval_seeds <<<"$EVAL_SEEDS"
 if (( ${#gpu_ids[@]} != 8 )); then
   echo "GPU_IDS must contain exactly eight GPU IDs." >&2
+  exit 2
+fi
+if [[ "$PIPELINE" != fixed_candidates && "$PIPELINE" != selected_plans ]]; then
+  echo "PIPELINE must be fixed_candidates or selected_plans." >&2
+  exit 2
+fi
+if (( DIAGNOSTIC_TOPK <= 1 || DIAGNOSTIC_TOPK > DIAGNOSTIC_CANDIDATES )); then
+  echo "DIAGNOSTIC_TOPK must be in [2, DIAGNOSTIC_CANDIDATES]." >&2
   exit 2
 fi
 
@@ -158,6 +177,83 @@ train_idm_task() {
   )
 }
 
+wait_for_gpus() {
+  (( WAIT_FOR_GPUS == 1 )) || return 0
+  local -a required_gpus
+  if [[ "$PIPELINE" == fixed_candidates ]]; then
+    required_gpus=("${gpu_ids[@]:0:4}")
+  else
+    required_gpus=("${gpu_ids[@]}")
+  fi
+  while true; do
+    local busy=0 gpu used
+    for gpu in "${required_gpus[@]}"; do
+      used=$(nvidia-smi --id="$gpu" --query-gpu=memory.used \
+        --format=csv,noheader,nounits | tr -d ' ')
+      if (( used > GPU_WAIT_MAX_USED_MIB )); then busy=1; fi
+    done
+    (( busy == 1 )) || break
+    echo "Waiting for GPUs ${required_gpus[*]} (threshold ${GPU_WAIT_MAX_USED_MIB} MiB)."
+    sleep 60
+  done
+}
+
+run_fixed_task() {
+  local i=$1 task=${tasks[$1]} lewm_seed=${lewm_seeds[$1]} gpu=${gpu_ids[$1]}
+  local architecture=latent_path_flow train_seed=0 exp_name checkpoint policy_dir
+  local output_dir idm_checkpoint task_tmp
+  exp_name="h50_${architecture}_${task}_lewm${lewm_seed}_hist3_k10_pmatch18m_n200000_b1024_s${train_seed}"
+  checkpoint="$PREDICTOR_VIEW_ROOT/$exp_name/checkpoint_200000.msgpack"
+  verify_generator "$checkpoint" "$architecture" "$train_seed"
+  policy_dir="$POLICY_ROOT/gc4_${task}_all_n100000_b256_a0.0_sd${POLICY_SEED}"
+  output_dir="$FIXED_ROOT/$task"
+  idm_checkpoint="$(idm_dir "$task" "$lewm_seed")/checkpoint_$(printf '%06d' "$TRAIN_STEPS").msgpack"
+  task_tmp="$TMP_ROOT/fixed_candidates/$task"
+  mkdir -p "$output_dir" "$task_tmp"
+  if [[ -s "$output_dir/fixed_candidates.json" && -s "$output_dir/fixed_candidates.candidates.npz" ]]; then
+    echo "skip complete fixed-candidate task=$task"
+    return 0
+  fi
+  (
+    cd "$OGBENCH_ROOT/impls"
+    TMPDIR="$task_tmp" CUDA_VISIBLE_DEVICES="$gpu" \
+    XLA_PYTHON_CLIENT_PREALLOCATE=false \
+    MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless \
+    LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
+    "$PYTHON_BIN" eval_acid_fixed_candidates.py \
+      --task="$task" --data-root="$LEWM_DATA_ROOT" \
+      --lewm-checkpoint="${lewm_checkpoints[$i]}" \
+      --idm-checkpoint="$idm_checkpoint" \
+      --policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS" \
+      --latent-subgoal-checkpoint="$checkpoint" --num-subgoal-samples=1 \
+      --num-states="$NUM_DIAGNOSTIC_STATES" --seed=42 --goal-offset-steps=50 \
+      --action-block=5 --cem-horizon=2 --cem-receding-horizon=1 \
+      --cem-num-samples="$DIAGNOSTIC_CANDIDATES" --cem-iterations=5 \
+      --cem-topk="$DIAGNOSTIC_TOPK" --cem-var-scale=1.0 --cem-cost-mode=moh \
+      --high-forward-error-quantile=0.80 \
+      --output="$output_dir/fixed_candidates.json" \
+      >"$output_dir/fixed_candidates.log" 2>&1
+  )
+}
+
+run_fixed_candidates() {
+  mkdir -p "$FIXED_ROOT"
+  local -a pids=()
+  local i pid failed=0
+  for i in "${!tasks[@]}"; do
+    run_fixed_task "$i" &
+    pids+=("$!")
+  done
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then failed=1; fi
+  done
+  (( failed == 0 )) || { echo "Fixed-candidate evaluation failed." >&2; exit 1; }
+  "$PYTHON_BIN" "$OGBENCH_ROOT/impls/aggregate_acid_fixed_candidates.py" \
+    --root="$FIXED_ROOT" --output="$FIXED_ROOT/aggregate.json"
+  echo "DONE: $FIXED_ROOT"
+}
+
 run_setting() {
   local gpu_offset=$1 architecture=$2 train_seed=$3 eval_seed=$4
   local -a pids=()
@@ -208,7 +304,7 @@ run_setting() {
         --task="$task" --trace-dir="$trace_dir" \
         --lewm-checkpoint="$lewm_checkpoint" --idm-checkpoint="$idm_checkpoint" \
         --real-horizon=10 --transition-steps=5 \
-        --high-forward-error-quantile=0.75 --seed=0 \
+        --high-forward-error-quantile=0.80 --seed=0 \
         --output="$output_dir/reachability.json" \
         >"$output_dir/reachability.log" 2>&1
     ) &
@@ -222,8 +318,9 @@ run_setting() {
 }
 
 driver() {
-  mkdir -p "$IDM_ROOT" "$EVAL_ROOT" "$TMP_ROOT"
+  mkdir -p "$IDM_ROOT" "$EVAL_ROOT" "$FIXED_ROOT" "$TMP_ROOT"
   stage_predictor_view
+  wait_for_gpus
   local i used failed=0
   local -a pids=()
   for i in "${!tasks[@]}"; do
@@ -239,6 +336,10 @@ driver() {
     test -s "$(idm_dir "${tasks[$i]}" "${lewm_seeds[$i]}")/checkpoint_$(printf '%06d' "$TRAIN_STEPS").msgpack"
   done
 
+  if [[ "$PIPELINE" == fixed_candidates ]]; then
+    run_fixed_candidates
+    return 0
+  fi
   local -a setting_architectures=() setting_train_seeds=() setting_eval_seeds=()
   local architecture train_seed eval_seed base slot index
   for architecture in "${architectures[@]}"; do
@@ -276,8 +377,13 @@ case "$MODE" in
       echo "tmux session already exists: $SESSION" >&2
       exit 3
     fi
-    printf -v command '%q ' env MODE=driver SESSION="$SESSION" GPU_IDS="$GPU_IDS" \
+    printf -v command '%q ' env MODE=driver SESSION="$SESSION" PIPELINE="$PIPELINE" \
+      GPU_IDS="$GPU_IDS" WAIT_FOR_GPUS="$WAIT_FOR_GPUS" \
+      GPU_WAIT_MAX_USED_MIB="$GPU_WAIT_MAX_USED_MIB" \
       TRAIN_STEPS="$TRAIN_STEPS" NUM_EVAL="$NUM_EVAL" \
+      NUM_DIAGNOSTIC_STATES="$NUM_DIAGNOSTIC_STATES" \
+      DIAGNOSTIC_CANDIDATES="$DIAGNOSTIC_CANDIDATES" \
+      DIAGNOSTIC_TOPK="$DIAGNOSTIC_TOPK" \
       IDM_BATCH_SIZE="$IDM_BATCH_SIZE" IDM_WARMUP_STEPS="$IDM_WARMUP_STEPS" \
       IDM_VALIDATION_PAIRS="$IDM_VALIDATION_PAIRS" \
       IDM_EVAL_BATCH_SIZE="$IDM_EVAL_BATCH_SIZE" \
@@ -288,17 +394,18 @@ case "$MODE" in
       SOURCE_PREDICTOR_ROOT="$SOURCE_PREDICTOR_ROOT" GENERAL_ROOT="$GENERAL_ROOT" \
       PREDICTOR_VIEW_ROOT="$PREDICTOR_VIEW_ROOT" POLICY_ROOT="$POLICY_ROOT" \
       EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT" \
+      FIXED_ROOT="$FIXED_ROOT" \
       bash exp/train/latent_subgoal/20260906_run_node4_acid_subgoal_reachability.sh
     tmux new-session -d -s "$SESSION" -c "$OGBENCH_ROOT" \
       "bash -lc '$command >\"$DRIVER_LOG\" 2>&1'"
-    echo "launched tmux=$SESSION output=$EVAL_ROOT log=$DRIVER_LOG"
+    echo "launched tmux=$SESSION pipeline=$PIPELINE log=$DRIVER_LOG"
     ;;
   driver)
     driver
     ;;
   status)
     tmux list-sessions 2>/dev/null | grep "$SESSION" || true
-    echo "===== driver ====="
+    echo "===== driver ($PIPELINE) ====="
     tail -n 30 "$DRIVER_LOG" 2>/dev/null || true
     for i in "${!tasks[@]}"; do
       echo "===== IDM ${tasks[$i]} ====="

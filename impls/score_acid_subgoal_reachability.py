@@ -33,7 +33,7 @@ def parse_args():
     parser.add_argument('--real-horizon', type=int, default=10)
     parser.add_argument('--transition-steps', type=int, default=5)
     parser.add_argument('--encode-batch-size', type=int, default=256)
-    parser.add_argument('--high-forward-error-quantile', type=float, default=0.75)
+    parser.add_argument('--high-forward-error-quantile', type=float, default=0.80)
     parser.add_argument('--seed', type=int, default=0)
     return parser.parse_args()
 

@@ -58,6 +58,7 @@ class JAXLeWMCEMPolicy:
         guidance_goal_mode='subgoal',
         guidance_action_space='planner',
         paired_plan_keys=False,
+        trace_candidates=False,
         action_low=None,
         action_high=None,
         latent_subgoal_checkpoint=None,
@@ -162,6 +163,7 @@ class JAXLeWMCEMPolicy:
         self.guidance_goal_mode = str(guidance_goal_mode)
         self.guidance_action_space = str(guidance_action_space)
         self.paired_plan_keys = bool(paired_plan_keys)
+        self.trace_candidates = bool(trace_candidates)
 
         self._encode_pixels = jax.jit(
             lambda pixels: self.model.apply(
@@ -334,6 +336,9 @@ class JAXLeWMCEMPolicy:
             if self.planner_action_high is None
             else jnp.asarray(self.planner_action_high, dtype=jnp.float32)
         )
+        trace_candidates = self.trace_candidates
+        embed_dim = int(self.lewm_config['embed_dim'])
+        horizon = self.horizon
 
         def plan_one(
             key,
@@ -348,7 +353,10 @@ class JAXLeWMCEMPolicy:
                 initial_std = initial_std.at[0].set(guidance_first_block_std)
 
             def optimizer_step(iteration, carry):
-                key, mean, std = carry
+                if trace_candidates:
+                    key, mean, std, _, _, _ = carry
+                else:
+                    key, mean, std = carry
                 key, sample_key = jax.random.split(key)
                 candidates = (
                     jax.random.normal(
@@ -403,16 +411,36 @@ class JAXLeWMCEMPolicy:
                 costs = reduce_rollout_costs(distances, cost_mode)
                 _, elite_indices = jax.lax.top_k(-costs, topk)
                 elites = candidates[elite_indices]
-                return key, elites.mean(axis=0), elites.std(axis=0, ddof=1)
+                output = (key, elites.mean(axis=0), elites.std(axis=0, ddof=1))
+                if trace_candidates:
+                    output += (candidates, predictions[0], costs)
+                return output
 
-            _, mean, std = jax.lax.fori_loop(
-                0,
-                iterations,
-                optimizer_step,
-                (key, initial_mean, initial_std),
-            )
+            if trace_candidates:
+                initial_carry = (
+                    key,
+                    initial_mean,
+                    initial_std,
+                    jnp.zeros((num_samples, *initial_mean.shape), dtype=jnp.float32),
+                    jnp.zeros(
+                        (num_samples, horizon, embed_dim), dtype=jnp.float32
+                    ),
+                    jnp.zeros((num_samples,), dtype=jnp.float32),
+                )
+                _, mean, std, candidates, predictions, costs = jax.lax.fori_loop(
+                    0, iterations, optimizer_step, initial_carry
+                )
+            else:
+                _, mean, std = jax.lax.fori_loop(
+                    0,
+                    iterations,
+                    optimizer_step,
+                    (key, initial_mean, initial_std),
+                )
             if planner_action_low is not None:
                 mean = jnp.clip(mean, planner_action_low, planner_action_high)
+            if trace_candidates:
+                return mean, std, candidates, predictions, costs
             return mean, std
 
         return plan_one
@@ -695,7 +723,7 @@ class JAXLeWMCEMPolicy:
                 target_embedding=target_embedding,
                 guidance_block=guidance_block,
             )
-            normalized_blocks, _ = self._plan_one(
+            plan_output = self._plan_one(
                 plan_key,
                 jnp.asarray(pixels[env_index]),
                 jnp.asarray(goals[env_index]),
@@ -703,6 +731,7 @@ class JAXLeWMCEMPolicy:
                 jnp.asarray(initial_mean),
                 jnp.asarray(guidance_blocks),
             )
+            normalized_blocks = plan_output[0]
             normalized_blocks = np.asarray(normalized_blocks)
             if self.subgoal_generator is not None:
                 current_embedding = np.asarray(
@@ -724,8 +753,7 @@ class JAXLeWMCEMPolicy:
                     self.action_block,
                     self.atomic_action_dim,
                 )
-                self.subgoal_traces[env_index].append(
-                    {
+                trace = {
                         'environment_step': int(self.environment_steps[env_index]),
                         'current_embedding': current_embedding,
                         'predicted_path': predicted_path.copy(),
@@ -733,7 +761,25 @@ class JAXLeWMCEMPolicy:
                         'normalized_action_blocks': normalized_blocks.copy(),
                         'environment_action_blocks': environment_action_blocks,
                     }
-                )
+                if self.trace_candidates:
+                    candidate_normalized = np.asarray(plan_output[2])
+                    candidate_environment = self.scaler.inverse_transform(
+                        candidate_normalized.reshape(-1, self.atomic_action_dim)
+                    ).reshape(
+                        candidate_normalized.shape[0],
+                        candidate_normalized.shape[1],
+                        self.action_block,
+                        self.atomic_action_dim,
+                    )
+                    trace.update(
+                        {
+                            'candidate_normalized_action_blocks': candidate_normalized,
+                            'candidate_environment_action_blocks': candidate_environment,
+                            'candidate_imagined_paths': np.asarray(plan_output[3]),
+                            'candidate_goal_costs': np.asarray(plan_output[4]),
+                        }
+                    )
+                self.subgoal_traces[env_index].append(trace)
             keep = normalized_blocks[: self.receding_horizon]
             self.warm_starts[env_index] = normalized_blocks[
                 self.receding_horizon:

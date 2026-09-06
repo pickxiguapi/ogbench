@@ -77,6 +77,17 @@ class FakePlanner:
         return np.full((len(alive), 2), self.value, dtype=np.float32)
 
 
+class FakeWorldModel:
+    def _rollout_predictions(self):
+        raise AssertionError('Fake apply should receive, but not call, this method.')
+
+    def apply(self, variables, pixels, goals, candidates, method=None):
+        del variables, pixels, goals, method
+        displacement = jnp.mean(candidates, axis=-1, keepdims=True)
+        predictions = jnp.repeat(jnp.cumsum(displacement, axis=-2), 3, axis=-1)
+        return jnp.zeros((1, 3), dtype=jnp.float32), predictions
+
+
 def guidance_policy():
     policy = object.__new__(JAXLeWMCEMPolicy)
     policy.horizon = 5
@@ -93,6 +104,52 @@ def guidance_policy():
 
 
 class PlannerTest(unittest.TestCase):
+    def test_candidate_trace_returns_the_exact_last_cem_pool(self):
+        policy = object.__new__(JAXLeWMCEMPolicy)
+        policy.model = FakeWorldModel()
+        policy.variables = {}
+        policy.num_samples = 6
+        policy.iterations = 2
+        policy.topk = 2
+        policy.var_scale = 1.0
+        policy.cost_mode = 'last'
+        policy.subgoal_generator = None
+        policy.guidance_mode = 'none'
+        policy.guidance_population_size = 0
+        policy.guidance_first_block_std = None
+        policy.planner_action_low = None
+        policy.planner_action_high = None
+        policy.trace_candidates = True
+        policy.lewm_config = {'embed_dim': 3}
+        policy.horizon = 2
+        plan_one = jax.jit(policy._build_plan_one())
+
+        output = plan_one(
+            jax.random.PRNGKey(0),
+            jnp.zeros((1, 4, 4, 3), dtype=jnp.uint8),
+            jnp.zeros((1, 4, 4, 3), dtype=jnp.uint8),
+            jnp.zeros((3,), dtype=jnp.float32),
+            jnp.zeros((2, 4), dtype=jnp.float32),
+            jnp.zeros((1, 4), dtype=jnp.float32),
+        )
+
+        self.assertEqual(len(output), 5)
+        self.assertEqual(output[0].shape, (2, 4))
+        self.assertEqual(output[2].shape, (6, 2, 4))
+        self.assertEqual(output[3].shape, (6, 2, 3))
+        self.assertEqual(output[4].shape, (6,))
+
+        policy.trace_candidates = False
+        regular_output = jax.jit(policy._build_plan_one())(
+            jax.random.PRNGKey(0),
+            jnp.zeros((1, 4, 4, 3), dtype=jnp.uint8),
+            jnp.zeros((1, 4, 4, 3), dtype=jnp.uint8),
+            jnp.zeros((3,), dtype=jnp.float32),
+            jnp.zeros((2, 4), dtype=jnp.float32),
+            jnp.zeros((1, 4), dtype=jnp.float32),
+        )
+        self.assertEqual(len(regular_output), 2)
+
     def test_subgoal_planner_can_guide_policy_with_final_goal(self):
         policy = guidance_policy()
         policy.subgoal_generator = object()

@@ -96,3 +96,55 @@ def risk_at_coverages(scores, risks, coverages=(0.25, 0.50, 0.75, 1.0)):
         retained = max(1, int(np.ceil(coverage * len(ordered_risks))))
         output[float(coverage)] = float(ordered_risks[:retained].mean())
     return output
+
+
+def grouped_upper_tail_auc(scores, targets, groups, *, quantile=0.80):
+    """Compute AUROC using a within-group upper-tail target definition."""
+    if not 0.0 < quantile < 1.0:
+        raise ValueError('quantile must be in (0, 1).')
+    scores = np.asarray(scores, dtype=np.float64)
+    targets = np.asarray(targets, dtype=np.float64)
+    groups = np.asarray(groups)
+    finite = np.isfinite(scores) & np.isfinite(targets)
+    scores = scores[finite]
+    targets = targets[finite]
+    groups = groups[finite]
+    labels = np.zeros(len(targets), dtype=bool)
+    thresholds = {}
+    for group in np.unique(groups):
+        selected = groups == group
+        threshold = float(np.quantile(targets[selected], quantile))
+        labels[selected] = targets[selected] >= threshold
+        thresholds[str(group)] = threshold
+    return binary_auc(labels, scores), labels, thresholds
+
+
+def grouped_risk_at_coverages(
+    scores,
+    risks,
+    groups,
+    coverages=(0.25, 0.50, 0.75, 1.0),
+):
+    """Retain the lowest-score fraction independently inside every group."""
+    scores = np.asarray(scores, dtype=np.float64)
+    risks = np.asarray(risks, dtype=np.float64)
+    groups = np.asarray(groups)
+    finite = np.isfinite(scores) & np.isfinite(risks)
+    scores = scores[finite]
+    risks = risks[finite]
+    groups = groups[finite]
+    output = {}
+    for coverage in coverages:
+        if not 0.0 < coverage <= 1.0:
+            raise ValueError('coverages must be in (0, 1].')
+        retained_risks = []
+        for group in np.unique(groups):
+            selected = groups == group
+            group_order = np.argsort(scores[selected], kind='mergesort')
+            group_risks = risks[selected][group_order]
+            retained = max(1, int(np.ceil(coverage * len(group_risks))))
+            retained_risks.append(group_risks[:retained])
+        output[float(coverage)] = safe_mean(
+            np.concatenate(retained_risks) if retained_risks else []
+        )
+    return output

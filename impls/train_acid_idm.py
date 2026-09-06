@@ -369,8 +369,8 @@ def main():
         )
 
     def evaluate(params, seed):
-        sums = {'inverse_action_mse': 0.0, 'inverse_action_mae': 0.0}
-        count = 0
+        example_mse = []
+        example_mae = []
         eval_key = jax.random.PRNGKey(seed)
         for start in range(0, len(fixed_val), args.eval_batch_size):
             indices = fixed_val[start : start + args.eval_batch_size]
@@ -383,15 +383,39 @@ def main():
             eval_key, batch_key = jax.random.split(eval_key)
             predictions = predict_actions(params, current, next_z, batch_key)
             errors = np.asarray(jax.device_get(predictions - targets))
-            sums['inverse_action_mse'] += float(np.square(errors).sum())
-            sums['inverse_action_mae'] += float(np.abs(errors).sum())
-            count += errors.size
-        return {name: value / count for name, value in sums.items()}
+            example_mse.append(np.mean(np.square(errors), axis=-1))
+            example_mae.append(np.mean(np.abs(errors), axis=-1))
+        example_mse = np.concatenate(example_mse)
+        example_mae = np.concatenate(example_mae)
+        metrics = {
+            'inverse_action_mse': float(example_mse.mean()),
+            'inverse_action_mae': float(example_mae.mean()),
+        }
+        for quantile in (0.50, 0.80, 0.90, 0.95, 0.99):
+            suffix = int(round(100 * quantile))
+            metrics[f'inverse_action_mse_q{suffix}'] = float(
+                np.quantile(example_mse, quantile)
+            )
+        return metrics
+
+    def record_validation(step, metrics):
+        row = {'type': 'validation', 'step': step, **metrics}
+        append_jsonl(metrics_path, row)
+        write_json_atomic(
+            output_dir / 'calibration.json',
+            {
+                **row,
+                'split': 'heldout_episodes',
+                'score': 'mean squared normalized action residual',
+                'validation_pairs': args.validation_pairs,
+                'evaluation_seed': args.split_seed + 2,
+            },
+        )
 
     current_step = int(state.step)
     started = time.monotonic()
     initial_metrics = evaluate(state.params, args.split_seed + 2)
-    append_jsonl(metrics_path, {'type': 'validation', 'step': current_step, **initial_metrics})
+    record_validation(current_step, initial_metrics)
     print(f'Validation step={current_step}: {json.dumps(initial_metrics)}', flush=True)
     latest_metrics = None
     while current_step < args.train_steps:
@@ -408,7 +432,7 @@ def main():
             print(f'Train step={current_step}: {json.dumps(json_safe(row), sort_keys=True)}', flush=True)
         if current_step % args.eval_interval == 0 or current_step == args.train_steps:
             metrics = evaluate(state.params, args.split_seed + 2)
-            append_jsonl(metrics_path, {'type': 'validation', 'step': current_step, **metrics})
+            record_validation(current_step, metrics)
             print(f'Validation step={current_step}: {json.dumps(metrics, sort_keys=True)}', flush=True)
         if current_step % args.checkpoint_interval == 0 or current_step == args.train_steps:
             path = save_checkpoint(
