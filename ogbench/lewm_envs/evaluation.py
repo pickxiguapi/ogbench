@@ -279,6 +279,25 @@ def evaluate_dataset_goals(
                         if events
                         else np.empty((0, 0, 0), dtype=np.float32)
                     )
+                    current_embeddings = (
+                        np.stack([event['current_embedding'] for event in events])
+                        if events
+                        else np.empty((0, 0), dtype=np.float32)
+                    )
+                    normalized_action_blocks = (
+                        np.stack(
+                            [event['normalized_action_blocks'] for event in events]
+                        )
+                        if events
+                        else np.empty((0, 0, 0), dtype=np.float32)
+                    )
+                    environment_action_blocks = (
+                        np.stack(
+                            [event['environment_action_blocks'] for event in events]
+                        )
+                        if events
+                        else np.empty((0, 0, 0, 0), dtype=np.float32)
+                    )
                     np.savez_compressed(
                         output / f'episode_{index:03d}.npz',
                         frames=np.stack(episode_frames),
@@ -288,8 +307,11 @@ def evaluate_dataset_goals(
                         seed=np.asarray(-1 if seeds[index] is None else seeds[index]),
                         success=np.asarray(successes[index]),
                         plan_steps=plan_steps,
+                        current_embeddings=current_embeddings,
                         predicted_paths=predicted_paths,
                         imagined_paths=imagined_paths,
+                        normalized_action_blocks=normalized_action_blocks,
+                        environment_action_blocks=environment_action_blocks,
                     )
         return {
             'success_rate': float(successes.mean() * 100.0),

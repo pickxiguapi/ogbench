@@ -705,6 +705,10 @@ class JAXLeWMCEMPolicy:
             )
             normalized_blocks = np.asarray(normalized_blocks)
             if self.subgoal_generator is not None:
+                current_embedding = np.asarray(
+                    self.encode_pixels(np.asarray(pixels[env_index, -1:]))[0],
+                    dtype=np.float32,
+                )
                 imagined_path = np.asarray(
                     self._rollout_selected_plan(
                         jnp.asarray(pixels[env_index]),
@@ -713,11 +717,21 @@ class JAXLeWMCEMPolicy:
                     ),
                     dtype=np.float32,
                 )
+                environment_action_blocks = self.scaler.inverse_transform(
+                    normalized_blocks.reshape(-1, self.atomic_action_dim)
+                ).reshape(
+                    normalized_blocks.shape[0],
+                    self.action_block,
+                    self.atomic_action_dim,
+                )
                 self.subgoal_traces[env_index].append(
                     {
                         'environment_step': int(self.environment_steps[env_index]),
+                        'current_embedding': current_embedding,
                         'predicted_path': predicted_path.copy(),
                         'imagined_path': imagined_path,
+                        'normalized_action_blocks': normalized_blocks.copy(),
+                        'environment_action_blocks': environment_action_blocks,
                     }
                 )
             keep = normalized_blocks[: self.receding_horizon]
