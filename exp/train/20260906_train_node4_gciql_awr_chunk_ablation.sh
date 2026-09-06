@@ -16,7 +16,7 @@ POLICY_STEPS=${POLICY_STEPS:-100000}
 POLICY_BATCH_SIZE=${POLICY_BATCH_SIZE:-256}
 P_AUG=${P_AUG:-0.0}
 PYTHON_BIN=${PYTHON_BIN:-/data-training/yyf/envs/ogbench/bin/python}
-DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/lewm}
+DATA_ROOT=${DATA_ROOT:-/data-training/yyf/datasets/latent-geometry}
 RUNS_ROOT=${RUNS_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-chunk-ablation}
 
 if [[ "$CHUNK_SIZE" != 1 && "$CHUNK_SIZE" != 10 ]]; then
