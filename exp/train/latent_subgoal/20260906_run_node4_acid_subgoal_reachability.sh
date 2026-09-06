@@ -152,9 +152,14 @@ stage_predictor_view() {
 
 train_idm_task() {
   local task=$1 lewm_seed=$2 latent_dataset=$3 gpu=$4
-  local output_dir
+  local output_dir checkpoint
   output_dir=$(idm_dir "$task" "$lewm_seed")
+  checkpoint="$output_dir/checkpoint_$(printf '%06d' "$TRAIN_STEPS").msgpack"
   mkdir -p "$output_dir" "$TMP_ROOT/idm/$task"
+  if [[ -s "$checkpoint" && -s "$output_dir/complete.json" ]]; then
+    echo "skip complete IDM task=$task checkpoint=$checkpoint"
+    return 0
+  fi
   (
     cd "$OGBENCH_ROOT/impls"
     TMPDIR="$TMP_ROOT/idm/$task" CUDA_VISIBLE_DEVICES="$gpu" \

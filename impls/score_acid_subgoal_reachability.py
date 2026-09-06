@@ -126,6 +126,7 @@ def main():
         return noise - velocity
 
     event_rows = []
+    episode_successes = []
     acid_current = []
     acid_next = []
     acid_actions = []
@@ -150,6 +151,7 @@ def main():
             frames = np.asarray(trace['frames'])
             frame_latents = encode_frames(frames)
             success = bool(trace['success'])
+            episode_successes.append(success)
             plan_steps = np.asarray(trace['plan_steps'], dtype=np.int32)
             current_embeddings = np.asarray(
                 trace['current_embeddings'], dtype=np.float32
@@ -279,6 +281,7 @@ def main():
         'event_count': len(event_rows),
         'block_count': len(block_errors),
         'metrics': {
+            'closed_loop_success_rate': 100.0 * safe_mean(episode_successes),
             'acid_error_mean': safe_mean(acid_error),
             'acid_error_std': safe_std(acid_error),
             'acid_first_block_error_mean': safe_mean(

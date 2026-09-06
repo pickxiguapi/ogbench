@@ -10,6 +10,7 @@ import numpy as np
 
 
 METRICS = (
+    'closed_loop_success_rate',
     'acid_error_mean',
     'acid_first_block_error_mean',
     'real_min_subgoal_mse_mean',
