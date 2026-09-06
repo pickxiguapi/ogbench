@@ -60,6 +60,10 @@ def parse_args():
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--cem-cost-mode', choices=('last', 'moh', 'path_mean'), default='moh')
     parser.add_argument('--num-subgoal-samples', type=int, default=1)
+    parser.add_argument(
+        '--replay-scope', choices=('all_candidates', 'selected_plan'),
+        default='all_candidates',
+    )
     parser.add_argument('--high-forward-error-quantile', type=float, default=0.80)
     parser.add_argument('--encode-batch-size', type=int, default=256)
     return parser.parse_args()
@@ -225,21 +229,36 @@ def main():
         started = time.time()
         planner.get_actions(initial_frames[:, None], goal_frames[:, None], alive)
         traces = [events[0] for events in planner.latent_subgoal_trace]
-        candidate_actions = np.stack(
-            [event['candidate_environment_action_blocks'] for event in traces]
+        generated_paths = np.stack(
+            [event['predicted_path'] for event in traces]
         ).astype(np.float32)
-        predicted_paths = np.stack(
-            [event['candidate_imagined_paths'] for event in traces]
-        ).astype(np.float32)
-        candidate_goal_costs = np.stack(
-            [event['candidate_goal_costs'] for event in traces]
-        ).astype(np.float32)
+        if args.replay_scope == 'selected_plan':
+            candidate_actions = np.stack(
+                [event['environment_action_blocks'] for event in traces]
+            )[:, None].astype(np.float32)
+            predicted_paths = np.stack(
+                [event['imagined_path'] for event in traces]
+            )[:, None].astype(np.float32)
+            candidate_goal_costs = np.full(
+                (args.num_states, 1), np.nan, dtype=np.float32
+            )
+        else:
+            candidate_actions = np.stack(
+                [event['candidate_environment_action_blocks'] for event in traces]
+            ).astype(np.float32)
+            predicted_paths = np.stack(
+                [event['candidate_imagined_paths'] for event in traces]
+            ).astype(np.float32)
+            candidate_goal_costs = np.stack(
+                [event['candidate_goal_costs'] for event in traces]
+            ).astype(np.float32)
         current_embeddings = np.stack(
             [event['current_embedding'] for event in traces]
         ).astype(np.float32)
+        replay_candidates = candidate_actions.shape[1]
         expected_action_shape = (
             args.num_states,
-            args.cem_num_samples,
+            replay_candidates,
             planner.horizon,
             args.action_block,
             scaler.action_dim,
@@ -256,11 +275,11 @@ def main():
 
         real_paths = np.empty_like(predicted_paths)
         real_goal_success = np.zeros(
-            (args.num_states, args.cem_num_samples), dtype=bool
+            (args.num_states, replay_candidates), dtype=bool
         )
         for state_index in range(args.num_states):
             endpoint_frames = []
-            for candidate_index in range(args.cem_num_samples):
+            for candidate_index in range(replay_candidates):
                 frames, success = execute_candidate(
                     env,
                     args.task,
@@ -281,7 +300,7 @@ def main():
                     )
                 )
             real_paths[state_index] = np.concatenate(encoded).reshape(
-                args.cem_num_samples, planner.horizon, -1
+                replay_candidates, planner.horizon, -1
             )
             print(
                 f'replayed state {state_index + 1}/{args.num_states} '
@@ -294,12 +313,12 @@ def main():
             / action_std[None, None, None, None]
         ).reshape(
             args.num_states,
-            args.cem_num_samples,
+            replay_candidates,
             planner.horizon,
             -1,
         )
         acid_block_errors = np.empty(
-            (args.num_states, args.cem_num_samples, planner.horizon),
+            (args.num_states, replay_candidates, planner.horizon),
             dtype=np.float32,
         )
         for state_index in range(args.num_states):
@@ -307,7 +326,7 @@ def main():
                 (
                     np.repeat(
                         current_embeddings[state_index][None, None],
-                        args.cem_num_samples,
+                        replay_candidates,
                         axis=0,
                     ),
                     predicted_paths[state_index, :, :-1],
@@ -336,7 +355,7 @@ def main():
             )
             acid_block_errors[state_index] = np.mean(
                 np.square(inverse_actions - actions), axis=-1
-            ).reshape(args.cem_num_samples, planner.horizon)
+            ).reshape(replay_candidates, planner.horizon)
 
         forward_block_mse = np.mean(
             np.square(predicted_paths - real_paths), axis=-1
@@ -346,8 +365,18 @@ def main():
         forward_mean = forward_block_mse.mean(axis=-1)
         forward_max = forward_block_mse.max(axis=-1)
         forward_endpoint = forward_block_mse[..., -1]
+        subgoals = generated_paths[:, -1]
+        start_subgoal_mse = np.mean(
+            np.square(current_embeddings - subgoals), axis=-1
+        )
+        real_subgoal_mse = np.mean(
+            np.square(real_paths - subgoals[:, None, None]), axis=-1
+        )
+        relative_real_min_subgoal_mse = real_subgoal_mse.min(axis=-1) / np.maximum(
+            start_subgoal_mse[:, None], 1e-12
+        )
         state_ids = np.repeat(
-            np.arange(args.num_states, dtype=np.int32), args.cem_num_samples
+            np.arange(args.num_states, dtype=np.int32), replay_candidates
         )
         flat_acid_mean = acid_mean.reshape(-1)
         flat_acid_max = acid_max.reshape(-1)
@@ -376,6 +405,15 @@ def main():
             'forward_max_block_mse': safe_mean(flat_forward_max),
             'forward_endpoint_mse': safe_mean(flat_forward_endpoint),
             'real_goal_success_rate': safe_mean(flat_success),
+            'relative_real_min_subgoal_mse': safe_mean(
+                relative_real_min_subgoal_mse
+            ),
+            'real_subgoal_reach_at_0.50': safe_mean(
+                relative_real_min_subgoal_mse <= 0.50
+            ),
+            'real_subgoal_reach_at_0.25': safe_mean(
+                relative_real_min_subgoal_mse <= 0.25
+            ),
             'acid_mean_vs_forward_mean_pearson': correlation(
                 flat_acid_mean, flat_forward_mean
             ),
@@ -411,11 +449,16 @@ def main():
             )
 
         summary = {
-            'protocol': 'fixed_final_cem_candidate_pool_simulator_replay',
+            'protocol': 'paired_fixed_context_subgoal_generator_simulator_replay',
             'task': args.task,
             'num_states': args.num_states,
-            'candidates_per_state': args.cem_num_samples,
-            'candidate_pool': 'last CEM iteration before final elite refit',
+            'candidates_per_state': replay_candidates,
+            'replay_scope': args.replay_scope,
+            'candidate_pool': (
+                'selected CEM mean plan'
+                if args.replay_scope == 'selected_plan'
+                else 'last CEM iteration before final elite refit'
+            ),
             'high_forward_error_definition': (
                 'within-state upper tail of max per-block latent MSE'
             ),
@@ -458,6 +501,7 @@ def main():
             environment_seeds=np.asarray(seeds),
             candidate_environment_action_blocks=candidate_actions,
             candidate_goal_costs=candidate_goal_costs,
+            generated_subgoal_paths=generated_paths,
             predicted_paths=predicted_paths,
             real_paths=real_paths,
             real_goal_success=real_goal_success,
