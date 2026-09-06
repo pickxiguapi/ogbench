@@ -72,3 +72,62 @@ Pure-CEM-only replicate:
 `/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260906_goalmax25_ns1_pure_cem_no_policy_moh_cem300x5_h2_rh1_g25_b50_ep50_seed{0,1,42}/`.
 Launcher:
 `exp/eval/lewm_4tasks/20260906_eval_node4_goalmax25_ns1_pure_cem_3seeds.sh`.
+
+## 2026-09-06 — LeWM++ without LatentPathFlow, H25
+
+**Question.** Does a learned local latent subgoal improve fixed-short-horizon
+LeWM++ planning compared with asking the same planner to pursue the remote
+final-goal latent directly?
+
+**Single change.** The full variant loads the H25 goalmax25 LatentPathFlow and
+uses its K10 endpoint as the CEM target. The `no_subgoal` variant does not load
+or call a subgoal generator and instead scores CEM rollouts against the final
+goal. All other controls remain fixed, including final-goal Policy mode.
+
+**Fixed protocol.** Cube/Reacher/TwoRoom LeWM seed3072 and PushT LeWM seed666;
+shared-all GCIQL-Chunk-AWR policy seed777 at step100K; final-goal policy
+conditioning; MoH; explicit H2/RH1/action-block5; CEM300x5/top-k30; goal
+offset25/budget50; 50 episodes; evaluation seeds 0/1/42. The full and ablated
+variants were rerun simultaneously from GitHub main commit `d746ae5` with
+paired CEM random keys. The goalmax25 checkpoint configuration was verified
+before launch.
+
+| Variant | Eval seed | TwoRoom | Reacher | PushT | OGBench-Cube | Average |
+|---|---:|---:|---:|---:|---:|---:|
+| LeWM++ | 0 | 100.00 | 94.00 | 98.00 | 94.00 | 96.50 |
+| LeWM++ | 1 | 100.00 | 98.00 | 96.00 | 96.00 | 97.50 |
+| LeWM++ | 42 | 100.00 | 96.00 | 96.00 | 96.00 | 97.00 |
+| LeWM++ w/o Subgoal | 0 | 100.00 | 100.00 | 78.00 | 84.00 | 90.50 |
+| LeWM++ w/o Subgoal | 1 | 100.00 | 100.00 | 88.00 | 76.00 | 91.00 |
+| LeWM++ w/o Subgoal | 42 | 96.00 | 100.00 | 84.00 | 82.00 | 90.50 |
+
+Population mean±std:
+
+| Setting | TwoRoom | Reacher | PushT | OGBench-Cube | Average |
+|---|---:|---:|---:|---:|---:|
+| LeWM++ | 100.00±0.00 | 96.00±1.63 | 96.67±0.94 | 95.33±0.94 | 97.00±0.41 |
+| LeWM++ w/o Subgoal | 98.67±1.89 | 100.00±0.00 | 83.33±4.11 | 80.67±3.40 | 90.67±0.24 |
+| LeWM++ − w/o Subgoal | +1.33 | −4.00 | +13.33 | +14.67 | +6.33 |
+
+**Finding.** Removing LatentPathFlow reduces the four-task macro-average by
+6.33 points. The gain is concentrated in PushT (+13.33) and Cube (+14.67),
+with a smaller +1.33 gain on TwoRoom; direct final-goal planning is 4.00 points
+better on Reacher. This supports the contribution of local target decomposition
+for contact/object-manipulation tasks while showing that it is not uniformly
+beneficial. The result measures the joint value of a learned local target and
+hierarchical target decomposition under a fixed H2 planner; it does not isolate
+the generator's prediction quality from the value of locality itself.
+
+**Integrity.** A preceding 1-episode smoke test passed all eight cells. All 24
+formal result JSON files passed checks for task, evaluation seed, 50 episodes,
+policy checkpoint, final-goal policy conditioning, H25/budget50, MoH, H2/RH1,
+and CEM300x5. Full results record the goalmax25 checkpoint and FlowPath ns1;
+ablated results record `use_subgoal=false` and `latent_subgoal=null`. Planner
+and generator random streams are separate, and paired plan keys prevent the
+deleted generator from shifting CEM sampling. No traceback, NaN, or failed run
+was found.
+
+**Artifacts.** Results:
+`/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks/20260906_goalmax25_vs_no_subgoal_ns1_paired_policy_mode_sd777_moh_cem300x5_h2_rh1_g25_b50_ep50_seed{0,1,42}/`.
+Launcher:
+`exp/eval/lewm_4tasks/20260906_eval_node4_goalmax25_ns1_paired_subgoal_ablation_3seeds.sh`.
