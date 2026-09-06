@@ -210,6 +210,7 @@ Policy training seeds `0/42/777`、evaluation seeds `0/1/42`、每格50 episodes
 | `exp/eval/lewm_4tasks/20260903_eval_node4_goalmax25_policy_seed_search_moh.sh` | node4 搜索 shared-all AWR policy seeds 777/789 与 FlowPath samples 1/8；固定 mixed LeWM、goalmax25 K10、解耦 final-goal guidance、MoH、25/50 |
 | `exp/eval/lewm_4tasks/20260904_eval_node4_k10_uniform_future_ns1_multiseed_h50_h75_h100.sh` | node4 用 full-range uniform-future K10、policy seed777、ns1、MoH 评测 H50/H75/H100 × eval seeds 0/1/42 |
 | `exp/eval/lewm_4tasks/20260904_eval_node4_lewm_cem_vs_guided_no_subgoal_multiseed_h25_h50_h75_h100.sh` | node4 对比原生 LeWM-CEM（CEM300x30）与保留 seed777 policy 初始化但禁用 subgoal generator 的 Guided（CEM300x5），覆盖 H25/H50/H75/H100 × eval seeds 0/1/42 |
+| `exp/eval/lewm_4tasks/20260906_eval_node4_lewm_jax_seed3072_multiseed_h25_h50_h75_h100.sh` | node4 专门评测四任务全部使用 training seed3072 的纯 LeWM-JAX/CEM300x30，覆盖 H25/H50/H75/H100 × eval seeds 0/1/42；不使用 policy 或 subgoal generator |
 | `exp/eval/lewm_4tasks/20260831_eval_node4_lewm_global_goal_h2_moh.sh` | node4 无 subgoal 的 K25 global-goal H2 MoH，作为 K10-subgoal H2 MoH 的严格规划长度对照 |
 | `exp/eval/ogbench_env_8tasks/20260823_eval_node2_ogbench_env_8tasks.sh` | OGBench-Env-8Tasks 主评测 |
 | `exp/train/20260823_reproduce_yb_lewm_4tasks_main_matrix.sh` | 顺序复现 LeWM-4Tasks 四种训练设计 |
