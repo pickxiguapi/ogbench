@@ -84,7 +84,9 @@ class FakeWorldModel:
     def apply(self, variables, pixels, goals, candidates, method=None):
         del variables, pixels, goals, method
         displacement = jnp.mean(candidates, axis=-1, keepdims=True)
-        predictions = jnp.repeat(jnp.cumsum(displacement, axis=-2), 3, axis=-1)
+        predictions = jnp.repeat(
+            jnp.cumsum(displacement, axis=-2), 3, axis=-1
+        ).astype(jnp.bfloat16)
         return jnp.zeros((1, 3), dtype=jnp.float32), predictions
 
 
@@ -137,6 +139,7 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(output[0].shape, (2, 4))
         self.assertEqual(output[2].shape, (6, 2, 4))
         self.assertEqual(output[3].shape, (6, 2, 3))
+        self.assertEqual(output[3].dtype, jnp.float32)
         self.assertEqual(output[4].shape, (6,))
 
         policy.trace_candidates = False

@@ -413,7 +413,11 @@ class JAXLeWMCEMPolicy:
                 elites = candidates[elite_indices]
                 output = (key, elites.mean(axis=0), elites.std(axis=0, ddof=1))
                 if trace_candidates:
-                    output += (candidates, predictions[0], costs)
+                    output += (
+                        candidates,
+                        predictions[0].astype(jnp.float32),
+                        costs,
+                    )
                 return output
 
             if trace_candidates:
