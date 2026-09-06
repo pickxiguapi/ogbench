@@ -62,6 +62,7 @@ class JAXLeWMCEMPolicy:
         action_high=None,
         latent_subgoal_checkpoint=None,
         latent_subgoal_num_samples=1,
+        latent_subgoal_flow_sampling_steps=None,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
             raise ValueError(
@@ -179,6 +180,7 @@ class JAXLeWMCEMPolicy:
                 action_block=self.action_block,
                 num_samples=latent_subgoal_num_samples,
                 lewm_checkpoint=self.lewm_checkpoint,
+                flow_sampling_steps=latent_subgoal_flow_sampling_steps,
             )
         if self.cost_mode == 'path_mean' and self.subgoal_generator is None:
             raise ValueError('path_mean cost requires a latent subgoal path.')
@@ -271,6 +273,14 @@ class JAXLeWMCEMPolicy:
             None
             if self.subgoal_generator is None
             else self.subgoal_generator.sample_selection
+        )
+
+    @property
+    def latent_subgoal_flow_sampling_steps(self):
+        return (
+            None
+            if self.subgoal_generator is None
+            else self.subgoal_generator.flow_sampling_steps
         )
 
     @property

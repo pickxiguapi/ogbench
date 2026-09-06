@@ -67,6 +67,7 @@ def parse_args():
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--latent-subgoal-checkpoint')
+    parser.add_argument('--flow-sampling-steps', type=int)
     parser.add_argument('--num-samples', type=int, default=1)
     parser.add_argument('--final-goal-switch-steps', type=int)
     parser.add_argument(
@@ -97,6 +98,13 @@ def main():
         )
     if args.num_samples <= 0:
         raise ValueError('--num-samples must be positive.')
+    if args.flow_sampling_steps is not None:
+        if not needs_subgoal or args.controller != 'lewm_cem':
+            raise ValueError(
+                '--flow-sampling-steps requires lewm_cem with --use-subgoal.'
+            )
+        if args.flow_sampling_steps <= 0:
+            raise ValueError('--flow-sampling-steps must be positive.')
     if not needs_subgoal and args.num_samples != 1:
         raise ValueError('--num-samples only applies when --use-subgoal is set.')
     if args.final_goal_switch_steps is not None:
@@ -184,6 +192,7 @@ def main():
                 **planner_kwargs,
                 latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
                 latent_subgoal_num_samples=args.num_samples,
+                latent_subgoal_flow_sampling_steps=args.flow_sampling_steps,
             )
             if args.final_goal_switch_steps is None:
                 policy = local_policy
@@ -240,6 +249,10 @@ def main():
                 'checkpoint_step': policy.latent_subgoal_checkpoint_step,
                 'num_samples': policy.latent_subgoal_num_samples,
                 'sample_selection': policy.latent_subgoal_sample_selection,
+                'configured_flow_sampling_steps': policy.latent_subgoal_config.get(
+                    'flow_sampling_steps'
+                ),
+                'flow_sampling_steps': policy.latent_subgoal_flow_sampling_steps,
                 'training_subgoal_steps': int(
                     policy.latent_subgoal_config['subgoal_steps']
                 ),

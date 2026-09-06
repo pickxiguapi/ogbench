@@ -36,9 +36,12 @@ class LatentSubgoalGenerator:
         action_block,
         num_samples=1,
         lewm_checkpoint=None,
+        flow_sampling_steps=None,
     ):
         if int(num_samples) <= 0:
             raise ValueError('Latent subgoal sample count must be positive.')
+        if flow_sampling_steps is not None and int(flow_sampling_steps) <= 0:
+            raise ValueError('Flow sampling steps must be positive.')
 
         model, params, config, checkpoint_step = load_latent_subgoal_checkpoint(
             checkpoint
@@ -77,11 +80,17 @@ class LatentSubgoalGenerator:
         self.path_length = 1
         self.history_size = 1
         self.sample_selection = 'deterministic'
+        self.flow_sampling_steps = None
         self._requires_rng = False
 
         architecture = config['architecture']
         if architecture == FLOW_TRANSFORMER_ARCHITECTURE:
-            sampling_steps = int(config['flow_sampling_steps'])
+            sampling_steps = int(
+                config['flow_sampling_steps']
+                if flow_sampling_steps is None
+                else flow_sampling_steps
+            )
+            self.flow_sampling_steps = sampling_steps
             solver = str(config['flow_solver'])
             self.sample_selection = (
                 'single_sample' if self.num_samples == 1 else 'latent_medoid'
@@ -105,7 +114,12 @@ class LatentSubgoalGenerator:
             LATENT_ENDPOINT_FLOW_ARCHITECTURE,
             LATENT_PATH_FLOW_ARCHITECTURE,
         ):
-            sampling_steps = int(config['flow_sampling_steps'])
+            sampling_steps = int(
+                config['flow_sampling_steps']
+                if flow_sampling_steps is None
+                else flow_sampling_steps
+            )
+            self.flow_sampling_steps = sampling_steps
             solver = str(config['flow_solver'])
             self.history_size = int(config.get('history_size', 1))
             if self.history_size <= 0:
@@ -138,6 +152,10 @@ class LatentSubgoalGenerator:
                 )
             )
         else:
+            if flow_sampling_steps is not None:
+                raise ValueError(
+                    'Flow sampling steps can only override a flow-based generator.'
+                )
             if self.num_samples != 1:
                 raise ValueError(
                     'Deterministic subgoal models only support num_samples=1.'

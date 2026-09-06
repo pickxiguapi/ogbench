@@ -232,6 +232,10 @@ class LatentSubgoalGCIQLChunkPolicy:
         return self.subgoal_generator.num_samples
 
     @property
+    def latent_subgoal_flow_sampling_steps(self):
+        return self.subgoal_generator.flow_sampling_steps
+
+    @property
     def latent_subgoal_history_size(self):
         return self.subgoal_generator.history_size
 
