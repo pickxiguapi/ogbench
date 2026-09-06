@@ -12,6 +12,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from acid_idm import load_acid_idm_checkpoint
+from acid_metrics import (
+    binary_auc,
+    correlation,
+    risk_at_coverages,
+    safe_mean,
+    safe_std,
+    upper_tail_auc,
+)
 from lewm_jax.checkpoints import load_frozen_lewm
 
 
@@ -25,6 +33,7 @@ def parse_args():
     parser.add_argument('--real-horizon', type=int, default=10)
     parser.add_argument('--transition-steps', type=int, default=5)
     parser.add_argument('--encode-batch-size', type=int, default=256)
+    parser.add_argument('--high-forward-error-quantile', type=float, default=0.75)
     parser.add_argument('--seed', type=int, default=0)
     return parser.parse_args()
 
@@ -41,17 +50,9 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def safe_mean(values):
-    values = np.asarray(values, dtype=np.float64)
-    return float(np.nanmean(values)) if len(values) else float('nan')
-
-
-def safe_std(values):
-    values = np.asarray(values, dtype=np.float64)
-    return float(np.nanstd(values)) if len(values) else float('nan')
-
-
 def strict_json(value):
+    if isinstance(value, np.generic):
+        value = value.item()
     if isinstance(value, float) and not np.isfinite(value):
         return None
     if isinstance(value, dict):
@@ -61,57 +62,12 @@ def strict_json(value):
     return value
 
 
-def average_ranks(values):
-    values = np.asarray(values, dtype=np.float64)
-    order = np.argsort(values, kind='mergesort')
-    ranks = np.empty(len(values), dtype=np.float64)
-    start = 0
-    while start < len(values):
-        stop = start + 1
-        while stop < len(values) and values[order[stop]] == values[order[start]]:
-            stop += 1
-        ranks[order[start:stop]] = 0.5 * (start + stop - 1)
-        start = stop
-    return ranks
-
-
-def binary_auc(labels, scores):
-    labels = np.asarray(labels, dtype=bool)
-    scores = np.asarray(scores, dtype=np.float64)
-    finite = np.isfinite(scores)
-    labels = labels[finite]
-    scores = scores[finite]
-    positives = int(labels.sum())
-    negatives = len(labels) - positives
-    if positives == 0 or negatives == 0:
-        return float('nan')
-    ranks = average_ranks(scores)
-    return float(
-        (ranks[labels].sum() - positives * (positives - 1) / 2)
-        / (positives * negatives)
-    )
-
-
-def correlation(left, right, *, rank=False):
-    left = np.asarray(left, dtype=np.float64)
-    right = np.asarray(right, dtype=np.float64)
-    finite = np.isfinite(left) & np.isfinite(right)
-    left = left[finite]
-    right = right[finite]
-    if len(left) < 2:
-        return float('nan')
-    if rank:
-        left = average_ranks(left)
-        right = average_ranks(right)
-    if np.std(left) == 0 or np.std(right) == 0:
-        return float('nan')
-    return float(np.corrcoef(left, right)[0, 1])
-
-
 def main():
     args = parse_args()
     if args.real_horizon <= 0 or args.transition_steps <= 0:
         raise ValueError('Horizons must be positive.')
+    if not 0.0 < args.high_forward_error_quantile < 1.0:
+        raise ValueError('high-forward-error-quantile must be in (0, 1).')
     trace_paths = sorted(Path(args.trace_dir).glob('episode_*.npz'))
     if not trace_paths:
         raise FileNotFoundError(f'No trace files in {args.trace_dir}')
@@ -299,11 +255,23 @@ def main():
         for key in event_rows[0]
     }
     acid_error = columns['acid_error'].astype(np.float64)
+    acid_first = columns['acid_first_block_error'].astype(np.float64)
+    realized_first = columns['first_block_realization_mse'].astype(np.float64)
     relative = columns['relative_min_subgoal_mse'].astype(np.float64)
     reach50 = columns['reach_at_0.50'].astype(bool)
     reach25 = columns['reach_at_0.25'].astype(bool)
+    high_forward_auc, high_forward_threshold, calibration_count = upper_tail_auc(
+        acid_first,
+        realized_first,
+        quantile=args.high_forward_error_quantile,
+    )
+    risk_coverage = risk_at_coverages(acid_first, realized_first)
     summary = {
         'task': args.task,
+        'evaluation_scope': 'selected_lewmpp_plan_events',
+        'action_feasibility_target': (
+            'first executed action block versus the observed latent at t+transition_steps'
+        ),
         'trace_dir': str(Path(args.trace_dir).resolve()),
         'lewm_checkpoint': str(Path(args.lewm_checkpoint).resolve()),
         'idm_checkpoint': str(Path(args.idm_checkpoint).resolve()),
@@ -314,7 +282,7 @@ def main():
             'acid_error_mean': safe_mean(acid_error),
             'acid_error_std': safe_std(acid_error),
             'acid_first_block_error_mean': safe_mean(
-                columns['acid_first_block_error']
+                acid_first
             ),
             'real_min_subgoal_mse_mean': safe_mean(
                 columns['min_real_subgoal_mse']
@@ -326,7 +294,7 @@ def main():
             'reach_at_0.50': safe_mean(reach50),
             'reach_at_0.25': safe_mean(reach25),
             'first_block_realization_mse_mean': safe_mean(
-                columns['first_block_realization_mse']
+                realized_first
             ),
             'imagined_subgoal_mse_mean': safe_mean(
                 columns['imagined_subgoal_mse']
@@ -340,6 +308,30 @@ def main():
             ),
             'acid_predicts_reach_0.50_auc': binary_auc(reach50, -acid_error),
             'acid_predicts_reach_0.25_auc': binary_auc(reach25, -acid_error),
+            'first_block_calibration_event_count': calibration_count,
+            'high_forward_error_quantile': args.high_forward_error_quantile,
+            'high_forward_error_threshold': high_forward_threshold,
+            'acid_first_block_vs_realization_error_pearson': correlation(
+                acid_first, realized_first
+            ),
+            'acid_first_block_vs_realization_error_spearman': correlation(
+                acid_first, realized_first, rank=True
+            ),
+            'acid_first_block_predicts_high_realization_error_auc': (
+                high_forward_auc
+            ),
+            'first_block_realization_mse_at_25pct_acid_coverage': (
+                risk_coverage[0.25]
+            ),
+            'first_block_realization_mse_at_50pct_acid_coverage': (
+                risk_coverage[0.50]
+            ),
+            'first_block_realization_mse_at_75pct_acid_coverage': (
+                risk_coverage[0.75]
+            ),
+            'first_block_realization_mse_at_100pct_acid_coverage': (
+                risk_coverage[1.0]
+            ),
         },
     }
     output = Path(args.output)

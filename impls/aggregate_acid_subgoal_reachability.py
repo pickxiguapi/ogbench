@@ -21,6 +21,13 @@ METRICS = (
     'acid_vs_relative_distance_spearman',
     'acid_predicts_reach_0.50_auc',
     'acid_predicts_reach_0.25_auc',
+    'acid_first_block_vs_realization_error_pearson',
+    'acid_first_block_vs_realization_error_spearman',
+    'acid_first_block_predicts_high_realization_error_auc',
+    'first_block_realization_mse_at_25pct_acid_coverage',
+    'first_block_realization_mse_at_50pct_acid_coverage',
+    'first_block_realization_mse_at_75pct_acid_coverage',
+    'first_block_realization_mse_at_100pct_acid_coverage',
 )
 
 

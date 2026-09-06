@@ -3,7 +3,8 @@ set -euo pipefail
 
 # A800 node4: reproduce ACID's independent flow-matching IDM for the mixed
 # seed666/3072 LeWM encoders, then rerun the canonical H50 LeWM++ predictor
-# ablation with exact traces and measure ACID consistency plus real Hit@K.
+# ablation with exact traces and measure ACID calibration against the executed
+# first-block forward error plus real subgoal reachability.
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -13,6 +14,13 @@ MODE=${MODE:-launch}
 SESSION=${SESSION:-acid-h50-reachability}
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
+IDM_BATCH_SIZE=${IDM_BATCH_SIZE:-256}
+IDM_WARMUP_STEPS=${IDM_WARMUP_STEPS:-2000}
+IDM_VALIDATION_PAIRS=${IDM_VALIDATION_PAIRS:-50000}
+IDM_EVAL_BATCH_SIZE=${IDM_EVAL_BATCH_SIZE:-5000}
+IDM_LOG_INTERVAL=${IDM_LOG_INTERVAL:-1000}
+IDM_EVAL_INTERVAL=${IDM_EVAL_INTERVAL:-5000}
+IDM_CHECKPOINT_INTERVAL=${IDM_CHECKPOINT_INTERVAL:-25000}
 NUM_EVAL=${NUM_EVAL:-50}
 ARCHITECTURES=${ARCHITECTURES:-"history_mlp endpoint_flow latent_path_flow"}
 TRAIN_SEEDS=${TRAIN_SEEDS:-"0 1 42"}
@@ -56,7 +64,7 @@ fi
 
 idm_dir() {
   local task=$1 lewm_seed=$2
-  echo "$IDM_ROOT/acid_idm_${task}_lewm${lewm_seed}_k5_flow4x192h3_n${TRAIN_STEPS}_b256_s0"
+  echo "$IDM_ROOT/acid_idm_${task}_lewm${lewm_seed}_k5_flow4x192h3_n${TRAIN_STEPS}_b${IDM_BATCH_SIZE}_s0"
 }
 
 verify_generator() {
@@ -138,13 +146,14 @@ train_idm_task() {
       --save-dir="$output_dir" \
       --exp-name="$(basename "$output_dir")" \
       --seed=0 --split-seed=0 --train-fraction=0.9 \
-      --transition-steps=5 --train-steps="$TRAIN_STEPS" --batch-size=256 \
+      --transition-steps=5 --train-steps="$TRAIN_STEPS" --batch-size="$IDM_BATCH_SIZE" \
       --model-dim=192 --num-layers=4 --num-heads=3 --mlp-dim=768 \
       --learning-rate=1e-4 --final-learning-rate=1e-6 \
-      --warmup-steps=2000 --weight-decay=1e-4 \
-      --validation-pairs=50000 --eval-batch-size=5000 \
-      --log-interval=1000 --eval-interval=5000 \
-      --checkpoint-interval=25000 --resume \
+      --warmup-steps="$IDM_WARMUP_STEPS" --weight-decay=1e-4 \
+      --validation-pairs="$IDM_VALIDATION_PAIRS" \
+      --eval-batch-size="$IDM_EVAL_BATCH_SIZE" \
+      --log-interval="$IDM_LOG_INTERVAL" --eval-interval="$IDM_EVAL_INTERVAL" \
+      --checkpoint-interval="$IDM_CHECKPOINT_INTERVAL" --resume \
       >"$output_dir/train.log" 2>&1
   )
 }
@@ -198,7 +207,8 @@ run_setting() {
       "$PYTHON_BIN" score_acid_subgoal_reachability.py \
         --task="$task" --trace-dir="$trace_dir" \
         --lewm-checkpoint="$lewm_checkpoint" --idm-checkpoint="$idm_checkpoint" \
-        --real-horizon=10 --transition-steps=5 --seed=0 \
+        --real-horizon=10 --transition-steps=5 \
+        --high-forward-error-quantile=0.75 --seed=0 \
         --output="$output_dir/reachability.json" \
         >"$output_dir/reachability.log" 2>&1
     ) &
@@ -268,6 +278,11 @@ case "$MODE" in
     fi
     printf -v command '%q ' env MODE=driver SESSION="$SESSION" GPU_IDS="$GPU_IDS" \
       TRAIN_STEPS="$TRAIN_STEPS" NUM_EVAL="$NUM_EVAL" \
+      IDM_BATCH_SIZE="$IDM_BATCH_SIZE" IDM_WARMUP_STEPS="$IDM_WARMUP_STEPS" \
+      IDM_VALIDATION_PAIRS="$IDM_VALIDATION_PAIRS" \
+      IDM_EVAL_BATCH_SIZE="$IDM_EVAL_BATCH_SIZE" \
+      IDM_LOG_INTERVAL="$IDM_LOG_INTERVAL" IDM_EVAL_INTERVAL="$IDM_EVAL_INTERVAL" \
+      IDM_CHECKPOINT_INTERVAL="$IDM_CHECKPOINT_INTERVAL" \
       ARCHITECTURES="$ARCHITECTURES" TRAIN_SEEDS="$TRAIN_SEEDS" EVAL_SEEDS="$EVAL_SEEDS" \
       POLICY_SEED="$POLICY_SEED" LATENT_ROOT="$LATENT_ROOT" IDM_ROOT="$IDM_ROOT" \
       SOURCE_PREDICTOR_ROOT="$SOURCE_PREDICTOR_ROOT" GENERAL_ROOT="$GENERAL_ROOT" \
