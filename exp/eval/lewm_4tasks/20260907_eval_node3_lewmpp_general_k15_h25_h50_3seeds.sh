@@ -16,7 +16,7 @@ export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 
 PYTHON_BIN=${PYTHON_BIN_OVERRIDE:-$PYTHON_BIN}
-LEWM_DATA_ROOT=${LEWM_DATA_ROOT:-/data-training/yyf/datasets/lewm}
+LEWM_DATA_ROOT=${LEWM_DATA_ROOT:-/data-training/yyf/datasets/lewm-eval-compact-h25-h50-seeds0-1-42-v1}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k15}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks}
