@@ -46,6 +46,7 @@ for index in "${!TASKS[@]}"; do
         --data-root="$LEWM_DATA_ROOT" --lewm-checkpoint="${LEWM_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-dir="${ACTION_PRIOR_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-step=100000 --action-prior-mode=policy_mode
+        --action-prior-representation-mode=all
         --subgoal-generator-checkpoint="${SUBGOAL_CHECKPOINTS[$index]}"
         --flow-sampling-steps=16 --generator-num-samples=1
         --num-eval=50 --seed="$seed" --goal-offset-steps=25 --eval-budget=50
@@ -60,6 +61,7 @@ for index in "${!TASKS[@]}"; do
         --data-root="$LEWM_DATA_ROOT" --lewm-checkpoint="${LEWM_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-dir="${ACTION_PRIOR_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-step=100000 --action-prior-mode=policy_mode
+        --action-prior-representation-mode=all
         --subgoal-generator-checkpoint="${SUBGOAL_CHECKPOINTS[$index]}"
         --flow-sampling-steps=16 --generator-num-samples=1
         --num-eval=50 --seed="$seed" --goal-offset-steps=25 --eval-budget=50

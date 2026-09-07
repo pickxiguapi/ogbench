@@ -103,6 +103,34 @@ def test_lewm_encoded_agent_encodes_actor_pixels_and_goals():
     assert actions.shape == (2, 4)
 
 
+class _PixelChunkAgent:
+    action_horizon = 2
+
+    def sample_actions(self, observations, goals, seed, temperature):
+        del seed, temperature
+        np.testing.assert_array_equal(observations, np.full((2, 2, 2, 3), 3.0, dtype=np.float32))
+        np.testing.assert_array_equal(goals, np.full((2, 2, 2, 3), 12.0, dtype=np.float32))
+        return np.zeros((2, 4), dtype=np.float32)
+
+
+def test_v_representation_keeps_actor_inputs_as_pixels():
+    def reject_encoding(_):
+        raise AssertionError('The policy branch must not use LeWM encoding in v mode.')
+
+    agent = FinalGoalActionPrior(
+        _PixelChunkAgent(),
+        reject_encoding,
+        lewm_checkpoint='/tmp/lewm.msgpack',
+        representation_mode='v',
+    )
+    observations = np.full((2, 2, 2, 3), 3.0, dtype=np.float32)
+    goals = np.full((2, 2, 2, 3), 12.0, dtype=np.float32)
+    actions = agent.sample_actions(observations, goals, seed=None, temperature=0.0)
+    assert agent.representation_mode == 'v'
+    assert not agent.share_pi_encoder
+    assert actions.shape == (2, 4)
+
+
 class _FinalGoalPrior:
     action_horizon = 2
 

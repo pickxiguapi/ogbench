@@ -12,9 +12,20 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def load_action_prior(lance_path, checkpoint_dir, checkpoint_step, lewm_checkpoint=None):
-    """Restore the paper's shared-LeWM action prior and frozen encoder."""
-    from agents.action_prior_chunk import ActionPriorChunkAgent, get_config
+def load_action_prior(
+    lance_path,
+    checkpoint_dir,
+    checkpoint_step,
+    lewm_checkpoint=None,
+    expected_representation_mode=None,
+):
+    """Restore an action prior and the frozen LeWM encoder used by its shared branches."""
+    from agents.action_prior_chunk import (
+        ActionPriorChunkAgent,
+        get_config,
+        resolve_representation_mode,
+        validate_representation_sharing,
+    )
     from lewm_jax import load_frozen_lewm
     from utils.datasets import GCChunkDataset
     from utils.flax_utils import restore_agent
@@ -27,15 +38,27 @@ def load_action_prior(lance_path, checkpoint_dir, checkpoint_step, lewm_checkpoi
     saved = json.loads(flags_path.read_text())
     saved_agent = saved.get('agent', {})
     representation = saved.get('representation', {})
-    if representation.get('mode') != 'all':
-        raise ValueError('LeWM++ requires the shared-all action-prior representation.')
+    representation_mode = resolve_representation_mode(representation, saved_agent)
+    if expected_representation_mode is not None and representation_mode != expected_representation_mode:
+        raise ValueError(
+            f'Action-prior checkpoint uses representation mode {representation_mode!r}, '
+            f'but evaluation requested {expected_representation_mode!r}.'
+        )
 
     config = get_config()
     for key, value in saved_agent.items():
         if key in config and key != 'agent_name':
             config[key] = value
-    if not (config.share_q_encoder and config.share_v_encoder and config.share_pi_encoder):
-        raise ValueError('Action-prior checkpoint does not share all LeWM encoders.')
+    config.representation_mode = representation_mode
+    expected_sharing = validate_representation_sharing(representation_mode, config, label='metadata')
+    for module, shared in expected_sharing.items():
+        recorded_source = representation.get(module)
+        expected_source = 'lewm' if shared else 'pixel'
+        if recorded_source not in (None, expected_source):
+            raise ValueError(
+                f'Action-prior representation metadata is inconsistent: {module}={recorded_source!r}, '
+                f'expected {expected_source!r} for mode={representation_mode!r}.'
+            )
 
     base = LeWMLanceDataset(lance_path, split='train', validation_fraction=0.05)
     dataset = GCChunkDataset(base, config, preprocess_frame_stack=False)
@@ -65,21 +88,28 @@ def load_action_prior(lance_path, checkpoint_dir, checkpoint_step, lewm_checkpoi
             method=model.encode_pixels,
         ).astype(jnp.float32)
     )
-    return FinalGoalActionPrior(agent, encode_pixels, metadata['path'])
+    return FinalGoalActionPrior(agent, encode_pixels, metadata['path'], representation_mode)
 
 
 class FinalGoalActionPrior:
     """Adapter exposing deterministic normalized action chunks to CEM."""
 
-    def __init__(self, agent, encode_pixels, lewm_checkpoint):
+    def __init__(self, agent, encode_pixels, lewm_checkpoint, representation_mode='all'):
+        from agents.action_prior_chunk import representation_sharing
+
         self.agent = agent
         self.encode_pixels = encode_pixels
         self.lewm_checkpoint = lewm_checkpoint
+        self.representation_mode = representation_mode
+        self.share_pi_encoder = representation_sharing(representation_mode)['pi']
         self.action_horizon = int(agent.action_horizon)
 
     def sample_actions(self, observations, goals, seed, temperature=0.0):
-        observations = self.encode_pixels(jnp.asarray(observations))
-        goals = self.encode_pixels(jnp.asarray(goals))
+        observations = jnp.asarray(observations)
+        goals = jnp.asarray(goals)
+        if self.share_pi_encoder:
+            observations = self.encode_pixels(observations)
+            goals = self.encode_pixels(goals)
         return self.agent.sample_actions(
             observations=observations,
             goals=goals,

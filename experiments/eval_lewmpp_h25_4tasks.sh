@@ -49,6 +49,7 @@ for index in "${!TASKS[@]}"; do
         --action-prior-checkpoint-dir="${ACTION_PRIOR_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-step=100000
         --action-prior-mode=policy_mode
+        --action-prior-representation-mode=all
         --subgoal-generator-checkpoint="${SUBGOAL_CHECKPOINTS[$index]}"
         --flow-sampling-steps=16
         --generator-num-samples=1

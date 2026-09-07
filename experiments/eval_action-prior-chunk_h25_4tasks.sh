@@ -36,6 +36,7 @@ for index in "${!TASKS[@]}"; do
         --action-prior-checkpoint-dir="${ACTION_PRIOR_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-step=100000
         --action-prior-mode=policy_mode
+        --action-prior-representation-mode=all
         --generator-num-samples=1
         --num-eval=50
         --seed="$seed"

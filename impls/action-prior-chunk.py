@@ -12,7 +12,12 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-from agents.action_prior_chunk import ActionPriorChunkAgent, get_config
+from agents.action_prior_chunk import (
+    REPRESENTATION_MODES,
+    ActionPriorChunkAgent,
+    get_config,
+    representation_sharing,
+)
 from lewm_jax import load_frozen_lewm
 from utils.datasets import Dataset, GCChunkDataset
 from utils.env_utils import make_env_and_datasets
@@ -38,6 +43,7 @@ def parse_args():
     parser.add_argument('--alpha', type=float, default=3.0)
     parser.add_argument('--p_aug', type=float, default=0.0)
     parser.add_argument('--validation_fraction', type=float, default=0.05)
+    parser.add_argument('--representation_mode', choices=tuple(REPRESENTATION_MODES), default='all')
     return parser.parse_args()
 
 
@@ -71,10 +77,10 @@ def main():
     # frozen-LeWM encoding, so all representation modes receive the same view.
     config.p_aug = 0.0
     config.frame_stack = None
-    config.share_q_encoder = True
-    config.share_v_encoder = True
-    config.share_pi_encoder = True
-    config.representation_mode = 'all'
+    sharing = representation_sharing(args.representation_mode)
+    for module, shared in sharing.items():
+        config[f'share_{module}_encoder'] = shared
+    config.representation_mode = args.representation_mode
     config.latent_dim = int(lewm_metadata['config']['embed_dim'])
 
     _, train_base, val_base = make_env_and_datasets(
@@ -142,14 +148,12 @@ def main():
         'seed': args.seed,
         'agent': dict(config),
         'representation': {
-            'mode': 'all',
+            'mode': args.representation_mode,
             'module': 'LeWM.encode_pixels',
             'output': 'post_projector',
             'latent_dim': int(config.latent_dim),
             'frozen': True,
-            'q': 'lewm',
-            'v': 'lewm',
-            'pi': 'lewm',
+            **{module: 'lewm' if shared else 'pixel' for module, shared in sharing.items()},
             'downstream_heads_shared': False,
             'lewm_checkpoint': lewm_metadata['path'],
         },

@@ -26,12 +26,17 @@ def main():
     for path in Path(args.results_root).rglob('result.json'):
         result = json.loads(path.read_text())
         protocol = result['protocol']
+        components = result['components']
+        representation_mode = components.get('action_prior_representation_mode')
+        if representation_mode is None and components['action_prior_mode'] != 'zero':
+            representation_mode = 'unknown'
         rows.append(
             {
                 'group': result['experiment_group'],
                 'family': result['generator_family'],
                 'generator_type': result.get('generator_type') or 'no_generator',
-                'action_prior_mode': result['components']['action_prior_mode'],
+                'action_prior_mode': components['action_prior_mode'],
+                'action_prior_representation_mode': representation_mode or 'no_action_prior',
                 'horizon': int(protocol['goal_offset_steps']),
                 'variant': result['variant'],
                 'seed': int(protocol['seed']),
@@ -49,6 +54,7 @@ def main():
             row['family'],
             row['generator_type'],
             row['action_prior_mode'],
+            row['action_prior_representation_mode'],
             row['horizon'],
             row['variant'],
         )
@@ -63,7 +69,15 @@ def main():
             raise ValueError(f'Incomplete group {key}; missing {missing}')
         record = dict(
             zip(
-                ('group', 'family', 'generator_type', 'action_prior_mode', 'horizon', 'variant'),
+                (
+                    'group',
+                    'family',
+                    'generator_type',
+                    'action_prior_mode',
+                    'action_prior_representation_mode',
+                    'horizon',
+                    'variant',
+                ),
                 key,
             )
         )

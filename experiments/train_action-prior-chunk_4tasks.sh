@@ -49,6 +49,7 @@ for index in "${!TASKS[@]}"; do
       --alpha=3.0 \
       --p_aug=0.0 \
       --validation_fraction=0.05 \
+      --representation_mode=all \
       2>&1 | tee "$log_file"
   ) &
   pids+=("$!")

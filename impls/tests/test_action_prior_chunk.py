@@ -1,15 +1,33 @@
 import unittest
 
 import jax.numpy as jnp
-from agents.action_prior_chunk import ActionPriorChunkAgent, get_config
+import pytest
+from agents.action_prior_chunk import (
+    REPRESENTATION_MODES,
+    ActionPriorChunkAgent,
+    get_config,
+    representation_sharing,
+)
 
 
 class ActionPriorChunkAgentTest(unittest.TestCase):
+    def test_public_representation_modes_have_exact_sharing_semantics(self):
+        self.assertEqual(tuple(REPRESENTATION_MODES), ('all', 'pi', 'v'))
+        self.assertEqual(representation_sharing('all'), {'q': True, 'v': True, 'pi': True})
+        self.assertEqual(representation_sharing('pi'), {'q': False, 'v': False, 'pi': True})
+        self.assertEqual(representation_sharing('v'), {'q': True, 'v': True, 'pi': False})
+        with pytest.raises(ValueError, match='Unsupported action-prior representation mode'):
+            representation_sharing('qv')
+
     def test_release_config_uses_five_action_chunks(self):
         config = get_config()
         self.assertEqual(config.agent_name, 'action_prior_chunk')
         self.assertEqual(config.chunk_size, 5)
         self.assertEqual(config.dataset_class, 'GCChunkDataset')
+        self.assertEqual(config.representation_mode, 'all')
+        self.assertTrue(config.share_q_encoder)
+        self.assertTrue(config.share_v_encoder)
+        self.assertTrue(config.share_pi_encoder)
 
     def make_agent_and_batch(self, shared):
         config = get_config()
@@ -18,6 +36,11 @@ class ActionPriorChunkAgentTest(unittest.TestCase):
         config.chunk_size = 2
         config.latent_dim = 6
         config.encoder = 'impala_debug'
+        config.representation_mode = {
+            frozenset({'q', 'v', 'pi'}): 'all',
+            frozenset({'pi'}): 'pi',
+            frozenset({'q', 'v'}): 'v',
+        }[frozenset(shared)]
         config.share_q_encoder = 'q' in shared
         config.share_v_encoder = 'v' in shared
         config.share_pi_encoder = 'pi' in shared

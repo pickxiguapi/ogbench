@@ -41,6 +41,16 @@ Action-prior initialization is selected with `ACTION_PRIOR_MODE`:
 
 In all modes, the policy input is always the original final goal. A generated subgoal is used only by the LeWM rollout cost and is never passed to the policy.
 
+Action-prior representation sharing is a separate setting, selected at training time with `--representation_mode`:
+
+| Representation mode | Q encoder | V encoder | Policy encoder |
+|---|---|---|---|
+| `all` | frozen LeWM | frozen LeWM | frozen LeWM |
+| `pi` | trainable pixel | trainable pixel | frozen LeWM |
+| `v` | frozen LeWM | frozen LeWM | trainable pixel |
+
+Here `v` names the critic/value side of the action prior, so both Q and V use the frozen LeWM representation. It is not a mode in which only the scalar V network is shared. The four-task LeWM++ paper configuration uses `all`; the loader and evaluator also restore `pi` and `v` checkpoints and route policy inputs through the correct encoder automatically. Evaluation defaults to `--action-prior-representation-mode=all`; set that argument explicitly to `pi` or `v` when evaluating the corresponding checkpoint. Checkpoint metadata records the mode and all three sharing flags, and evaluation rejects an unexpected mode or inconsistent metadata.
+
 ## Installation
 
 Python 3.10 or 3.11 is recommended.
@@ -94,7 +104,7 @@ bash experiments/train_subgoal_latent_path_flow_goalmax25_4tasks.sh
 bash experiments/train_subgoal_latent_path_flow_general_uniform_future_4tasks.sh
 ```
 
-`train_action-prior-chunk_4tasks.sh` directly records the release settings: 100,000 updates, batch size 256, seed 777, learning rate `3e-4`, discount 0.99, expectile 0.9, target-update rate 0.005, action chunk 5, temperature 3.0, no image augmentation, and a 5% validation split.
+`train_action-prior-chunk_4tasks.sh` directly records the release settings: 100,000 updates, batch size 256, seed 777, learning rate `3e-4`, discount 0.99, expectile 0.9, target-update rate 0.005, action chunk 5, temperature 3.0, no image augmentation, a 5% validation split, and `all` representation sharing.
 
 There is one fixed training Bash for every subgoal-generator choice and family:
 
@@ -134,7 +144,7 @@ Additional release checks are `eval_action-prior-chunk_h25_4tasks.sh`, `eval_pol
 
 All LeWM++ launchers write the planner settings directly: 300 CEM candidates, 5 iterations, 30 elites, planner horizon `P=2`, receding horizon `R=1`, action chunk `c=5`, and 16 flow steps. The action policy is always conditioned on the original final goal.
 
-Aggregate completed JSON files without pooling groups, families, architectures, or prior modes:
+Aggregate completed JSON files without pooling groups, families, architectures, action-prior initialization modes, or action-prior representation modes:
 
 ```bash
 uv run python impls/aggregate_lewmpp_results.py \

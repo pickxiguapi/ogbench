@@ -9,6 +9,11 @@ import time
 from pathlib import Path
 
 from action_prior_chunk import FinalGoalPolicy, load_action_prior
+from agents.action_prior_chunk import (
+    REPRESENTATION_MODES,
+    resolve_representation_mode,
+    validate_representation_sharing,
+)
 from lewm_jax.planner import LeWMPPController
 from subgoal_generators import GENERATOR_ARCHITECTURES
 
@@ -45,6 +50,11 @@ def parse_args():
         '--action-prior-mode',
         choices=('zero', 'policy_mode', 'policy_mode_anchor'),
         default='policy_mode',
+    )
+    parser.add_argument(
+        '--action-prior-representation-mode',
+        choices=tuple(REPRESENTATION_MODES),
+        default='all',
     )
     parser.add_argument('--subgoal-generator-checkpoint')
     parser.add_argument('--flow-sampling-steps', type=int, default=DEFAULT_FLOW_STEPS)
@@ -158,6 +168,26 @@ def validate_release_files(args):
             raise ValueError(f'Action-prior training seed must be 777, got {flags.get("seed")!r}.')
         if flags.get('agent', {}).get('chunk_size') != args.action_block:
             raise ValueError('Action-prior chunk size does not match --action-block.')
+        representation = flags.get('representation', {})
+        representation_mode = resolve_representation_mode(representation, flags.get('agent', {}))
+        if representation_mode != args.action_prior_representation_mode:
+            raise ValueError(
+                f'Action-prior checkpoint uses representation mode {representation_mode!r}, '
+                f'but evaluation requested {args.action_prior_representation_mode!r}.'
+            )
+        expected_sharing = validate_representation_sharing(
+            representation_mode,
+            flags.get('agent', {}),
+            label='metadata',
+        )
+        for module, shared in expected_sharing.items():
+            recorded_source = representation.get(module)
+            expected_source = 'lewm' if shared else 'pixel'
+            if recorded_source not in (None, expected_source):
+                raise ValueError(
+                    f'Action-prior representation metadata is inconsistent: {module}={recorded_source!r}, '
+                    f'expected {expected_source!r} for mode={representation_mode!r}.'
+                )
         expected_lewm_sha = flags.get('lewm_checkpoint_sha256')
         if expected_lewm_sha is not None and sha256_file(lewm_checkpoint) != expected_lewm_sha:
             raise ValueError('Action prior and evaluator use different frozen LeWM checkpoints.')
@@ -234,6 +264,7 @@ def main():
                 args.action_prior_checkpoint_dir,
                 args.action_prior_checkpoint_step,
                 args.lewm_checkpoint,
+                args.action_prior_representation_mode,
             )
             if use_prior
             else None
@@ -294,6 +325,7 @@ def main():
         'components': {
             'subgoal_generator': use_subgoal,
             'action_prior_mode': args.action_prior_mode,
+            'action_prior_representation_mode': action_prior.representation_mode if use_prior else None,
             'min_over_horizon': None if direct_policy else args.cem_cost_mode == 'moh',
             'direct_policy': direct_policy,
         },

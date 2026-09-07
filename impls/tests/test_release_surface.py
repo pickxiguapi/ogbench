@@ -78,8 +78,16 @@ def test_action_prior_training_launcher_records_release_hyperparameters():
         '--alpha=3.0',
         '--p_aug=0.0',
         '--validation_fraction=0.05',
+        '--representation_mode=all',
     ):
         assert argument in text
+
+
+def test_paper_evaluations_explicitly_require_all_representation_sharing():
+    for path in (ROOT / 'experiments').glob('eval_*.sh'):
+        text = path.read_text()
+        if '--action-prior-checkpoint-dir' in text:
+            assert '--action-prior-representation-mode=all' in text
 
 
 def test_generator_launchers_record_and_validate_family_invariants():
@@ -185,4 +193,46 @@ def test_preflight_rejects_generator_family_mismatch(tmp_path):
     validate_release_files(args)
     args.generator_family = 'general_uniform_future'
     with pytest.raises(ValueError, match='H25 requires goalmax25'):
+        validate_release_files(args)
+
+
+def test_preflight_requires_the_requested_action_prior_representation(tmp_path):
+    (tmp_path / 'cube_single_expert.h5').touch()
+    (tmp_path / 'cube_single_expert.lance').touch()
+    lewm = tmp_path / 'lewm.msgpack'
+    lewm.touch()
+    checkpoint_dir = tmp_path / 'cube_action_prior'
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / 'params_100000.pkl').touch()
+    flags = {
+        'dataset_path': str(tmp_path / 'cube_single_expert.lance'),
+        'seed': 777,
+        'lewm_checkpoint_sha256': hashlib.sha256(lewm.read_bytes()).hexdigest(),
+        'agent': {
+            'chunk_size': 5,
+            'representation_mode': 'v',
+            'share_q_encoder': True,
+            'share_v_encoder': True,
+            'share_pi_encoder': False,
+        },
+        'representation': {'mode': 'v', 'q': 'lewm', 'v': 'lewm', 'pi': 'pixel'},
+    }
+    (checkpoint_dir / 'flags.json').write_text(json.dumps(flags))
+    args = SimpleNamespace(
+        variant='no_subgoal',
+        task='cube',
+        data_root=str(tmp_path),
+        lewm_checkpoint=str(lewm),
+        action_prior_checkpoint_dir=str(checkpoint_dir),
+        action_prior_checkpoint_step=100_000,
+        action_prior_representation_mode='v',
+        action_block=5,
+        subgoal_generator_checkpoint=None,
+        goal_offset_steps=25,
+        generator_family='no_generator',
+        generator_type='latent_path_flow',
+    )
+    validate_release_files(args)
+    args.action_prior_representation_mode = 'all'
+    with pytest.raises(ValueError, match="uses representation mode 'v'"):
         validate_release_files(args)

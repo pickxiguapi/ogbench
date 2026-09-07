@@ -14,6 +14,47 @@ from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
 from utils.networks import GCActor, GCValue
 
+REPRESENTATION_MODULES = ('q', 'v', 'pi')
+REPRESENTATION_MODES = {
+    'all': (True, True, True),
+    'pi': (False, False, True),
+    'v': (True, True, False),
+}
+
+
+def representation_sharing(mode):
+    """Return the frozen-LeWM sharing flags for Q, V, and policy."""
+    try:
+        return dict(zip(REPRESENTATION_MODULES, REPRESENTATION_MODES[mode]))
+    except KeyError as error:
+        choices = ', '.join(REPRESENTATION_MODES)
+        raise ValueError(f'Unsupported action-prior representation mode {mode!r}; choose {choices}.') from error
+
+
+def resolve_representation_mode(representation, config):
+    """Resolve a persisted mode and reject disagreement between metadata sections."""
+    metadata_mode = representation.get('mode')
+    config_mode = config.get('representation_mode')
+    if metadata_mode is not None and config_mode is not None and metadata_mode != config_mode:
+        raise ValueError(
+            f'Action-prior representation metadata disagrees: representation.mode={metadata_mode!r}, '
+            f'agent.representation_mode={config_mode!r}.'
+        )
+    mode = metadata_mode if metadata_mode is not None else config_mode
+    representation_sharing(mode)
+    return mode
+
+
+def validate_representation_sharing(mode, config, label='config'):
+    """Check that a mode and its three persisted sharing flags agree."""
+    expected = representation_sharing(mode)
+    actual = {module: bool(config.get(f'share_{module}_encoder', False)) for module in REPRESENTATION_MODULES}
+    if actual != expected:
+        raise ValueError(
+            f'Action-prior representation {label} is inconsistent: mode={mode!r} expects {expected}, got {actual}.'
+        )
+    return expected
+
 
 class ActionPriorChunkAgent(flax.struct.PyTreeNode):
     """Value-weighted action-chunk prior in a shared frozen LeWM space."""
@@ -135,7 +176,10 @@ class ActionPriorChunkAgent(flax.struct.PyTreeNode):
     def create(cls, seed, ex_pixels, ex_latents, ex_actions, config):
         if config['discrete']:
             raise ValueError('ActionPriorChunkAgent supports continuous actions only.')
-        if config['encoder'] is None and not all(config[f'share_{module}_encoder'] for module in ('q', 'v', 'pi')):
+        validate_representation_sharing(config['representation_mode'], config)
+        if config['encoder'] is None and not all(
+            config[f'share_{module}_encoder'] for module in REPRESENTATION_MODULES
+        ):
             raise ValueError('Non-shared modules require a pixel encoder.')
 
         rng = jax.random.PRNGKey(seed)
@@ -221,9 +265,10 @@ def get_config():
             gc_negative=True,
             p_aug=0.0,
             frame_stack=None,
-            share_q_encoder=False,
-            share_v_encoder=False,
-            share_pi_encoder=False,
+            representation_mode='all',
+            share_q_encoder=True,
+            share_v_encoder=True,
+            share_pi_encoder=True,
             latent_dim=192,
         )
     )
