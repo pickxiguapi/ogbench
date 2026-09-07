@@ -1,6 +1,6 @@
 import h5py
 import numpy as np
-from action_prior import FinalGoalActionPrior, FinalGoalPolicy
+from action_prior_chunk import FinalGoalActionPrior, FinalGoalPolicy
 from utils.evaluation import evaluate
 
 from ogbench.lewm_envs.evaluation import (

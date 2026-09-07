@@ -1,4 +1,4 @@
-"""Train the final-goal-conditioned GCIQL-Chunk action prior for LeWM++."""
+"""Train the final-goal-conditioned Action-Prior-Chunk used by LeWM++."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent, get_config
+from agents.action_prior_chunk import ActionPriorChunkAgent, get_config
 from lewm_jax import load_frozen_lewm
 from utils.datasets import Dataset, GCChunkDataset
 from utils.env_utils import make_env_and_datasets
@@ -91,7 +91,7 @@ def main():
 
     np.random.seed(args.seed)
     example = train_dataset.sample(1, evaluation=True)
-    agent = LeWMGCIQLChunkAgent.create(
+    agent = ActionPriorChunkAgent.create(
         args.seed,
         jnp.asarray(example['observations']),
         jnp.zeros((1, config.latent_dim), dtype=jnp.float32),
@@ -133,7 +133,7 @@ def main():
         return batch
 
     metadata = {
-        'entrypoint': 'train_action_prior.py',
+        'entrypoint': 'action-prior-chunk.py',
         'env_name': args.env_name,
         'dataset_path': args.dataset_path,
         'lewm_checkpoint': lewm_metadata['path'],

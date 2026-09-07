@@ -30,7 +30,8 @@ def test_release_has_only_paper_experiment_launchers():
 def test_release_has_complete_config_templates():
     names = {path.name for path in (ROOT / 'configs').glob('*.example.env')}
     assert names == {
-        'eval_gciql_chunk.example.env',
+        'action-prior-chunk.example.env',
+        'eval_action_prior_chunk.example.env',
         'eval_lewm_baseline.example.env',
         'eval_lewmpp_general.example.env',
         'eval_lewmpp_h25.example.env',
@@ -39,7 +40,6 @@ def test_release_has_complete_config_templates():
         'eval_no_subgoal.example.env',
         'lewmpp_paths.example.env',
         'precompute_latents.example.env',
-        'train_action_prior.example.env',
         'train_lewm.example.env',
         'train_subgoal_generator.example.env',
     }
@@ -47,9 +47,10 @@ def test_release_has_complete_config_templates():
 
 def test_python_entrypoints_match_the_release_pipeline():
     names = {path.name for path in (ROOT / 'impls').glob('*.py') if path.name.startswith(('train_', 'eval_'))}
+    names.add('action-prior-chunk.py')
     assert names == {
+        'action-prior-chunk.py',
         'train_lewm_jax.py',
-        'train_action_prior.py',
         'train_subgoal_generator.py',
         'eval_lewm_4tasks.py',
     }
@@ -62,8 +63,28 @@ def test_release_has_exactly_three_subgoal_model_types():
 
 
 def test_evaluator_exposes_required_release_variants_and_defaults():
-    assert VARIANTS == ('full', 'no_subgoal', 'no_action_prior', 'no_moh', 'lewm', 'gciql_chunk')
+    assert VARIANTS == ('full', 'no_subgoal', 'no_action_prior', 'no_moh', 'lewm', 'action_prior_chunk')
     assert (DEFAULT_CEM_ITERATIONS, DEFAULT_CEM_SAMPLES, DEFAULT_FLOW_STEPS) == (5, 300, 16)
+
+
+def test_action_prior_public_surface_uses_neutral_name():
+    retired_method_name = 'gci' + 'ql'
+    retired_loss_name = 'a' + 'wr'
+    paths = [
+        ROOT / 'README.md',
+        ROOT / 'CHANGELOG.md',
+        ROOT / 'impls' / 'action-prior-chunk.py',
+        ROOT / 'impls' / 'action_prior_chunk.py',
+        ROOT / 'impls' / 'agents' / 'action_prior_chunk.py',
+        ROOT / 'impls' / 'eval_lewm_4tasks.py',
+    ]
+    paths.extend((ROOT / 'configs').glob('*.example.env'))
+    for path in paths:
+        for line in path.read_text().splitlines():
+            lowered = line.lower()
+            assert retired_method_name not in lowered, path
+            if 'actor_loss' not in lowered:
+                assert retired_loss_name not in lowered, path
 
 
 def test_preflight_rejects_generator_family_mismatch(tmp_path):

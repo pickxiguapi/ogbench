@@ -1,4 +1,4 @@
-"""Evaluate LeWM++, its ablations, LeWM, and GCIQL-Chunk on LeWM-4Tasks."""
+"""Evaluate LeWM++, its ablations, LeWM, and Action-Prior-Chunk on LeWM-4Tasks."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 
-from action_prior import FinalGoalPolicy, load_action_prior
+from action_prior_chunk import FinalGoalPolicy, load_action_prior
 from lewm_jax.planner import LeWMPPController
 from subgoal_generators import GENERATOR_ARCHITECTURES
 
@@ -19,7 +19,7 @@ from ogbench.lewm_envs.evaluation import (
     task_paths,
 )
 
-VARIANTS = ('full', 'no_subgoal', 'no_action_prior', 'no_moh', 'lewm', 'gciql_chunk')
+VARIANTS = ('full', 'no_subgoal', 'no_action_prior', 'no_moh', 'lewm', 'action_prior_chunk')
 DEFAULT_CEM_SAMPLES = 300
 DEFAULT_CEM_ITERATIONS = 5
 DEFAULT_FLOW_STEPS = 16
@@ -75,7 +75,7 @@ def expected_components(variant):
         'no_action_prior': (True, False, 'moh', False),
         'no_moh': (True, True, 'last', False),
         'lewm': (False, False, 'last', False),
-        'gciql_chunk': (False, True, None, True),
+        'action_prior_chunk': (False, True, None, True),
     }[variant]
 
 
@@ -107,7 +107,7 @@ def validate_args(args):
     if use_prior != (args.action_prior_mode != 'zero'):
         raise ValueError(f'Variant {args.variant} has an invalid action-prior mode.')
     if direct_policy and args.action_prior_mode != 'policy_mode':
-        raise ValueError('Direct GCIQL-Chunk evaluation requires action_prior_mode=policy_mode.')
+        raise ValueError('Direct Action-Prior-Chunk evaluation requires action_prior_mode=policy_mode.')
     if not direct_policy and args.cem_cost_mode != cost_mode:
         raise ValueError(f'Variant {args.variant} requires CEM cost {cost_mode}.')
     if use_subgoal == (args.generator_family == 'no_generator'):

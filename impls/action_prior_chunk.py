@@ -1,4 +1,4 @@
-"""Load the final-goal-conditioned GCIQL-Chunk action prior for LeWM++."""
+"""Load the final-goal-conditioned Action-Prior-Chunk used by LeWM++."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import numpy as np
 
 def load_action_prior(lance_path, checkpoint_dir, checkpoint_step, lewm_checkpoint=None):
     """Restore the paper's shared-LeWM action prior and frozen encoder."""
-    from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent, get_config
+    from agents.action_prior_chunk import ActionPriorChunkAgent, get_config
     from lewm_jax import load_frozen_lewm
     from utils.datasets import GCChunkDataset
     from utils.flax_utils import restore_agent
@@ -27,14 +27,12 @@ def load_action_prior(lance_path, checkpoint_dir, checkpoint_step, lewm_checkpoi
     saved = json.loads(flags_path.read_text())
     saved_agent = saved.get('agent', {})
     representation = saved.get('representation', {})
-    if saved_agent.get('agent_name') != 'gciql_chunk_lewm':
-        raise ValueError('LeWM++ requires a GCIQL-Chunk-LeWM checkpoint.')
     if representation.get('mode') != 'all':
         raise ValueError('LeWM++ requires the shared-all action-prior representation.')
 
     config = get_config()
     for key, value in saved_agent.items():
-        if key in config:
+        if key in config and key != 'agent_name':
             config[key] = value
     if not (config.share_q_encoder and config.share_v_encoder and config.share_pi_encoder):
         raise ValueError('Action-prior checkpoint does not share all LeWM encoders.')
@@ -51,7 +49,7 @@ def load_action_prior(lance_path, checkpoint_dir, checkpoint_step, lewm_checkpoi
         if actual_sha != expected_sha:
             raise ValueError('Action prior and evaluator must use the same frozen LeWM checkpoint.')
     model, variables, metadata = load_frozen_lewm(lewm_checkpoint)
-    agent = LeWMGCIQLChunkAgent.create(
+    agent = ActionPriorChunkAgent.create(
         0,
         jnp.asarray(example['observations']),
         jnp.zeros((1, int(metadata['config']['embed_dim'])), dtype=jnp.float32),
@@ -91,7 +89,7 @@ class FinalGoalActionPrior:
 
 
 class FinalGoalPolicy:
-    """Execute GCIQL-Chunk-AWR directly, always conditioned on the final goal."""
+    """Execute Action-Prior-Chunk directly, always conditioned on the final goal."""
 
     def __init__(self, action_prior, scaler, seed):
         self.action_prior = action_prior

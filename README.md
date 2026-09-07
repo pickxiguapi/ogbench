@@ -3,10 +3,10 @@
 LeWM++ is a closed-loop latent-space planner for long-distance image-goal control. It combines a frozen LeWM world model with three independently switchable components:
 
 1. a subgoal generator that maps observation history and the remote final goal to a reachable latent target;
-2. a final-goal-conditioned GCIQL-AWR-Chunk action prior that initializes CEM;
+2. a final-goal-conditioned Action-Prior-Chunk that initializes CEM;
 3. min-over-horizon (MoH) trajectory scoring.
 
-This release branch reproduces the LeWM four-task experiments at goal offsets H25, H50, H75, and H100. It also provides the three paper ablations, standalone LeWM and GCIQL-AWR-Chunk baselines, three subgoal-generator architectures, and two generator sampling families.
+This release branch reproduces the LeWM four-task experiments at goal offsets H25, H50, H75, and H100. It also provides the three paper ablations, standalone LeWM and Action-Prior-Chunk baselines, three subgoal-generator architectures, and two generator sampling families.
 
 The code is based on [OGBench](https://github.com/seohongpark/ogbench) and retains its MIT license. The preliminary DINO-WM transfer study uses a separate codebase and is not included here.
 
@@ -21,7 +21,7 @@ The unified evaluator accepts these variants:
 | `no_action_prior` | on | zero initialization | MoH | LeWM++ w/o Action Prior |
 | `no_moh` | on | selectable policy mode | terminal | LeWM++ w/o MoH |
 | `lewm` | off | zero initialization | terminal | standalone LeWM CEM |
-| `gciql_chunk` | off | direct execution | n/a | standalone GCIQL-AWR-Chunk |
+| `action_prior_chunk` | off | direct execution | n/a | standalone Action-Prior-Chunk |
 
 The public subgoal interface supports:
 
@@ -69,7 +69,7 @@ Activate `.venv`, or invoke them through `uv run bash`.
 
 ## Data and path configuration
 
-The four tasks are Cube, PushT, Reacher, and TwoRoom. Each task needs an evaluation HDF5 file, a JPEG-backed Lance table, a frozen LeWM checkpoint, a GCIQL-AWR-Chunk checkpoint, and the relevant generator checkpoints.
+The four tasks are Cube, PushT, Reacher, and TwoRoom. Each task needs an evaluation HDF5 file, a JPEG-backed Lance table, a frozen LeWM checkpoint, an Action-Prior-Chunk checkpoint, and the relevant generator checkpoints.
 
 ```bash
 cp configs/lewmpp_paths.example.env configs/lewmpp_paths.env
@@ -95,7 +95,7 @@ Every path, hyperparameter, GPU assignment, entrypoint, and output location is w
 |---|---|
 | `configs/train_lewm.example.env` | Train the frozen LeWM |
 | `configs/precompute_latents.example.env` | Build the checkpoint-bound latent cache |
-| `configs/train_action_prior.example.env` | Train final-goal GCIQL-AWR-Chunk |
+| `configs/action-prior-chunk.example.env` | Train final-goal Action-Prior-Chunk |
 | `configs/train_subgoal_generator.example.env` | Train MLP, Endpoint Flow, or LatentPath Flow |
 
 Copy the desired template, fill its paths, and run it:
@@ -109,11 +109,11 @@ The same launcher runs every training stage:
 
 ```bash
 bash train.sh configs/precompute_latents.env
-bash train.sh configs/train_action_prior.env
+bash train.sh configs/action-prior-chunk.env
 bash train.sh configs/train_subgoal_generator.env
 ```
 
-In the subgoal config, select `GENERATOR_TYPE` from `mlp`, `endpoint_flow`, and `latent_path_flow`, and select `GENERATOR_FAMILY` from `goalmax25` and `general_uniform_future`. The released flow configuration uses 16 Euler steps. The action-prior config fixes chunk size 5, AWR, training seed 777, and the shared frozen LeWM representation used by Q, V, and policy.
+In the subgoal config, select `GENERATOR_TYPE` from `mlp`, `endpoint_flow`, and `latent_path_flow`, and select `GENERATOR_FAMILY` from `goalmax25` and `general_uniform_future`. The released flow configuration uses 16 Euler steps. The Action-Prior-Chunk config fixes chunk size 5, training seed 777, and the shared frozen LeWM representation used by Q, V, and policy.
 
 ## Config-driven evaluation
 
@@ -135,7 +135,7 @@ The provided evaluation configs are directly runnable after their paths are fill
 | `eval_no_action_prior.example.env` | LeWM++ w/o Action Prior, zero initialization |
 | `eval_no_moh.example.env` | LeWM++ w/o MoH, terminal cost |
 | `eval_lewm_baseline.example.env` | Standalone LeWM |
-| `eval_gciql_chunk.example.env` | Standalone GCIQL-AWR-Chunk |
+| `eval_action_prior_chunk.example.env` | Standalone Action-Prior-Chunk |
 
 Each file contains the complete command arguments rather than relying on hidden defaults. To use `policy_mode_anchor`, change the action-prior mode and its corresponding output-directory component in a copied config. To evaluate an MLP or Endpoint Flow checkpoint, change `--generator-type` and `--subgoal-generator-checkpoint` together. The Python preflight rejects inconsistent combinations.
 
@@ -174,7 +174,7 @@ bash -n eval.sh
 for config in configs/*.example.env; do bash -n "$config"; done
 ```
 
-Tests cover the three generator shapes, family validation, consecutive-frame history, zero/policy/policy-anchor initialization, final-goal-only policy conditioning, MoH/terminal scoring, direct GCIQL chunk execution, and the reduced release surface.
+Tests cover the three generator shapes, family validation, consecutive-frame history, zero/policy/policy-anchor initialization, final-goal-only policy conditioning, MoH/terminal scoring, direct Action-Prior-Chunk execution, and the reduced release surface.
 
 ## Repository layout
 
@@ -182,7 +182,8 @@ Tests cover the three generator shapes, family validation, consecutive-frame his
 train.sh                    Config-driven training launcher
 eval.sh                     Config-driven evaluation launcher and preflight
 configs/                    Complete train/eval config templates
-impls/action_prior.py       GCIQL-AWR-Chunk loader and direct policy
+impls/action_prior_chunk.py Action-Prior-Chunk loader and direct policy
+impls/action-prior-chunk.py Action-Prior-Chunk training entrypoint
 impls/subgoal_generators.py MLP, Endpoint Flow, and LatentPath Flow
 impls/lewm_jax/planner.py   Canonical LeWM++ controller
 impls/train_*.py            LeWM, action-prior, and generator trainers
