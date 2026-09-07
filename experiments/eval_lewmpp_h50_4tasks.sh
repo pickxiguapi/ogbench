@@ -24,8 +24,8 @@ for index in "${!TASKS[@]}"; do
     --checkpoint="${SUBGOAL_CHECKPOINTS[$index]}" \
     --task="$task" \
     --family=general_uniform_future \
-       --generator-type=latent_path_flow \
-       --goal-sampling=hiql_uniform_future_same_trajectory
+    --generator-type=latent_path_flow \
+    --goal-sampling=hiql_uniform_future_same_trajectory
 done
 
 pids=()
