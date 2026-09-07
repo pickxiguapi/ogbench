@@ -186,7 +186,9 @@ def restore_agent(agent, restore_path, restore_epoch):
         restore_path: Path to the directory containing the saved agent.
         restore_epoch: Epoch number.
     """
-    candidates = glob.glob(restore_path)
+    # Python 3.12's glob implementation expects a string for this code path;
+    # callers may naturally provide pathlib.Path objects.
+    candidates = glob.glob(os.fspath(restore_path))
 
     assert len(candidates) == 1, f'Found {len(candidates)} candidates: {candidates}'
 
