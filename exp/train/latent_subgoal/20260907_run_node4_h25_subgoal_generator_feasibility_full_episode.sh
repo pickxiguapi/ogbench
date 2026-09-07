@@ -16,8 +16,8 @@ ROOT=/data-training/yyf/ogbench-lewm-policy-runs
 H25_ROOT=${H25_ROOT:-$ROOT/latent-predictor-h25-goalmax25-ablation}
 LPF_ROOT=${LPF_ROOT:-$ROOT/latent-path-flow-k10-goalmax25}
 VIEW_ROOT=${VIEW_ROOT:-$LPF_ROOT/goalmax25_h25_predictor_ablation_view}
-EVAL_ROOT=${EVAL_ROOT:-$ROOT/evals/lewm-4tasks/20260907_acid_subgoal_generator_feasibility_full_episode_h25_goalmax25_lewmpp_policy777_ns1_cem300x5_h2_rh1_train0_eval0-1-42_ep50}
-TMP_ROOT=${TMP_ROOT:-$ROOT/tmp/20260907-acid-subgoal-generator-feasibility-h25-full-episode}
+EVAL_ROOT=${EVAL_ROOT:-$ROOT/evals/lewm-4tasks/20260907_h25_goalmax25_subgoal_generator_success_only_lewmpp_policy777_ns1_cem300x5_h2_rh1_train0_eval0-1-42_ep50}
+TMP_ROOT=${TMP_ROOT:-$ROOT/tmp/20260907-h25-goalmax25-subgoal-generator-success-only}
 DRIVER_LOG=${DRIVER_LOG:-$EVAL_ROOT/driver.log}
 
 tasks=(cube pusht reacher tworoom)
@@ -51,15 +51,22 @@ driver() {
     MAX_GOAL_STEPS=25 RUNS_ROOT="$H25_ROOT" MANIFEST_ROOT="$H25_ROOT/manifests" \
     bash "$SCRIPT_DIR/20260904_train_node4_h50_predictor_ablation.sh"
   stage_latent_path_flow
-  MODE=driver PIPELINE=selected_plans SESSION="$SESSION" WAIT_FOR_GPUS=0 \
-    GPU_IDS="$GPU_IDS" TRAIN_STEPS=200000 NUM_EVAL=50 \
+  GPU_IDS="$GPU_IDS" WAIT_FOR_GPUS=0 \
     ARCHITECTURES="history_mlp endpoint_flow latent_path_flow" \
-    TRAIN_SEEDS=0 EVAL_SEEDS="0 1 42" POLICY_SEED=777 \
+    TRAIN_SEEDS=0 EVAL_SEEDS="0 1 42" TRAIN_STEPS=200000 \
+    NUM_EVAL=50 POLICY_GUIDANCE=mode GUIDANCE_GOAL_MODE=final \
+    POLICY_SEED=777 POLICY_STEPS=100000 CEM_ITERATIONS=5 \
+    HORIZON_TAG=h25_goalmax25 RUN_TAG=h25_goalmax25 \
     GENERATOR_FAMILY=goalmax25 GOAL_OFFSET_STEPS=25 EVAL_BUDGET=50 \
-    PREDICTOR_HORIZON_TAG=h25_goalmax25 \
-    SOURCE_PREDICTOR_ROOT="$H25_ROOT" PREDICTOR_VIEW_ROOT="$VIEW_ROOT" \
-    EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT" \
-    bash "$SCRIPT_DIR/20260906_run_node4_acid_subgoal_reachability.sh"
+    RUNS_ROOT="$H25_ROOT" EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT" \
+    bash "$OGBENCH_ROOT/exp/eval/lewm_4tasks/20260904_eval_node4_h50_predictor_ablation.sh"
+  "$PYTHON_BIN" "$OGBENCH_ROOT/impls/aggregate_subgoal_success.py" \
+    --root="$EVAL_ROOT" --prefix=h25_goalmax25 \
+    --architectures history_mlp endpoint_flow latent_path_flow \
+    --train-seed=0 --eval-seeds 0 1 42 \
+    --tasks tworoom reacher pusht cube \
+    --output="$EVAL_ROOT/aggregate_success.json"
+  echo "DONE: $EVAL_ROOT/aggregate_success.json"
 }
 
 case "$MODE" in

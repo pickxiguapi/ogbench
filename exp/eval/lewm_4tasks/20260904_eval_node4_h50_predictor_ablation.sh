@@ -26,11 +26,32 @@ POLICY_SEED=${POLICY_SEED:-777}
 POLICY_STEPS=${POLICY_STEPS:-100000}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 CEM_ITERATIONS=${CEM_ITERATIONS:-30}
+HORIZON_TAG=${HORIZON_TAG:-h50}
+RUN_TAG=${RUN_TAG:-${HORIZON_TAG}_${GENERATOR_FAMILY:-general_uniform_future}}
+GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-50}
+EVAL_BUDGET=${EVAL_BUDGET:-100}
+GENERATOR_FAMILY=${GENERATOR_FAMILY:-general_uniform_future}
 RUNS_ROOT=${RUNS_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-predictor-h50-ablation}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260904-h50-predictor-ablation}
 
 source "$OGBENCH_ROOT/scripts/client_env.sh"
+
+case "$GENERATOR_FAMILY" in
+  general_uniform_future)
+    EXPECTED_GOAL_SAMPLING=hiql_uniform_future_same_trajectory
+    EXPECTED_MAX_GOAL_STEPS=none
+    ;;
+  goalmax25)
+    EXPECTED_GOAL_SAMPLING=uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25
+    EXPECTED_MAX_GOAL_STEPS=25
+    (( GOAL_OFFSET_STEPS == 25 && EVAL_BUDGET == 50 )) || {
+      echo "goalmax25 requires GOAL_OFFSET_STEPS=25 and EVAL_BUDGET=50" >&2
+      exit 2
+    }
+    ;;
+  *) echo "Unknown GENERATOR_FAMILY=$GENERATOR_FAMILY" >&2; exit 2 ;;
+esac
 
 tasks=(cube pusht reacher tworoom)
 lewm_seeds=(3072 666 3072 3072)
@@ -106,15 +127,33 @@ run_setting() {
   if [[ "$POLICY_GUIDANCE" != none ]]; then
     guidance_tag="gciql_chunk_all_sd${POLICY_SEED}_${POLICY_GUIDANCE}_${GUIDANCE_GOAL_MODE}goal_guided"
   fi
-  local output_root="$EVAL_ROOT/20260904_h50_${architecture}_train${train_seed}_eval${eval_seed}_ns1_${guidance_tag}_moh_cem300x${CEM_ITERATIONS}_h2_rh1_g50_b100_ep${NUM_EVAL}"
+  local output_root="$EVAL_ROOT/${RUN_TAG}_${architecture}_train${train_seed}_eval${eval_seed}_ns1_${guidance_tag}_moh_cem300x${CEM_ITERATIONS}_h2_rh1_g${GOAL_OFFSET_STEPS}_b${EVAL_BUDGET}_ep${NUM_EVAL}"
   local -a gpus
   local -a pids=()
   read -r -a gpus <<< "$setting_gpus"
 
   for i in "${!tasks[@]}"; do
     local task=${tasks[$i]}
-    local exp_name="h50_${architecture}_${task}_lewm${lewm_seeds[$i]}_hist3_k10_pmatch18m_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${train_seed}"
+    local exp_name="${HORIZON_TAG}_${architecture}_${task}_lewm${lewm_seeds[$i]}_hist3_k10_pmatch18m_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${train_seed}"
     local subgoal_checkpoint="$RUNS_ROOT/$exp_name/checkpoint_${TRAIN_STEPS}.msgpack"
+    "$PYTHON_BIN" - "$subgoal_checkpoint" "$EXPECTED_GOAL_SAMPLING" \
+      "$EXPECTED_MAX_GOAL_STEPS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+checkpoint = Path(sys.argv[1]).resolve()
+expected_sampling = sys.argv[2]
+expected_max = None if sys.argv[3] == 'none' else int(sys.argv[3])
+if not checkpoint.is_file():
+    raise FileNotFoundError(checkpoint)
+config = json.loads((checkpoint.parent / 'config.json').read_text())
+if config.get('goal_sampling') != expected_sampling:
+    raise ValueError(f'invalid goal_sampling in {checkpoint.parent}')
+if config.get('max_goal_steps') != expected_max:
+    raise ValueError(f'invalid max_goal_steps in {checkpoint.parent}')
+print(f'verified {checkpoint}')
+PY
     local policy_dir="$POLICY_ROOT/gc4_${task}_all_n100000_b256_a0.0_sd${POLICY_SEED}"
     local -a task_guidance_args=(--policy-guidance="$POLICY_GUIDANCE")
     if [[ "$POLICY_GUIDANCE" != none ]]; then
@@ -141,7 +180,7 @@ run_setting() {
         --lewm-checkpoint="${lewm_checkpoints[$i]}" \
         --latent-subgoal-checkpoint="$subgoal_checkpoint" --num-samples=1 \
         --num-eval="$NUM_EVAL" --seed="$eval_seed" \
-        --goal-offset-steps=50 --eval-budget=100 \
+        --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
         --cem-horizon=2 --cem-receding-horizon=1 --action-block=5 \
         --cem-num-samples=300 --cem-iterations="$CEM_ITERATIONS" --cem-topk=30 --cem-var-scale=1.0 \
         --cem-cost-mode=moh \
