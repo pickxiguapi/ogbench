@@ -10,6 +10,8 @@ CLIENT_ID=${CLIENT_ID:-node3}
 GPU_ID=${GPU_ID:?Set GPU_ID}
 TASKS=${TASKS:?Set TASKS to a whitespace-separated task list}
 WAIT_FOR_SCREEN=${WAIT_FOR_SCREEN:-}
+ALLOW_BUSY_GPU=${ALLOW_BUSY_GPU:-0}
+MIN_FREE_GPU_MEMORY_MIB=${MIN_FREE_GPU_MEMORY_MIB:-20000}
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -38,11 +40,21 @@ if [[ -n "$WAIT_FOR_SCREEN" ]]; then
   done
 fi
 
-gpu_memory_used=$(nvidia-smi --id="$GPU_ID" --query-gpu=memory.used \
-  --format=csv,noheader,nounits | tr -d ' ')
+read -r gpu_memory_used gpu_memory_total < <(
+  nvidia-smi --id="$GPU_ID" --query-gpu=memory.used,memory.total \
+    --format=csv,noheader,nounits | tr -d ' ' | tr ',' ' '
+)
+gpu_memory_free=$((gpu_memory_total - gpu_memory_used))
 if (( gpu_memory_used >= 500 )); then
-  echo "GPU $GPU_ID is not free after wait: ${gpu_memory_used} MiB" >&2
-  exit 2
+  if [[ "$ALLOW_BUSY_GPU" != 1 ]]; then
+    echo "GPU $GPU_ID is not free after wait: ${gpu_memory_used} MiB" >&2
+    exit 2
+  fi
+  if (( gpu_memory_free < MIN_FREE_GPU_MEMORY_MIB )); then
+    echo "GPU $GPU_ID has only ${gpu_memory_free} MiB free; need at least ${MIN_FREE_GPU_MEMORY_MIB} MiB." >&2
+    exit 2
+  fi
+  echo "SHARED_GPU gpu=$GPU_ID used=${gpu_memory_used}MiB free=${gpu_memory_free}MiB"
 fi
 
 checkpoint_for_task() {
