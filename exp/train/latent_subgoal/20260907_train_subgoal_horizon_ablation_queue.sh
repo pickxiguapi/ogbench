@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Train the missing local-subgoal-horizon ablation generators sequentially on
 # one GPU. QUEUE entries use FAMILY:SUBGOAL_STEPS:TASK, for example:
-#   goalmax25:5:tworoom general_uniform_future:5:tworoom
+#   general_uniform_future:15:tworoom general_uniform_future:25:tworoom
 # H25 uses goalmax25; H50 and longer horizons use general_uniform_future.
 
 CLIENT_ID=${CLIENT_ID:-node3}
@@ -91,8 +91,8 @@ run_one() {
   local dataset_seed latent_dataset lewm_seed output_root exp_name run_dir checkpoint
   local -a goal_args
 
-  if [[ "$subgoal_steps" != 5 && "$subgoal_steps" != 15 ]]; then
-    echo "This launcher only accepts missing ablation values k=5 or k=15; got $subgoal_steps" >&2
+  if [[ "$subgoal_steps" != 15 && "$subgoal_steps" != 25 ]]; then
+    echo "This launcher only accepts requested ablation values k=15 or k=25; got $subgoal_steps" >&2
     return 2
   fi
 
