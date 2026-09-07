@@ -155,16 +155,21 @@ class LeWMInferenceProfiler:
             and module_summary[label]['steady_mean_ms'] is not None
         )
         steady_replans = max(self._cem_calls - self._DROP_FIRST['cem'], 0)
+        # Random-key helpers and other Python/JAX glue can also compile during
+        # the first replan batch, outside the individually wrapped modules.
+        # Drop that batch when estimating steady-state bookkeeping overhead.
+        steady_other_steps = replan_steps[1:]
         other_replan_seconds = sum(
             max(
                 0.0,
                 step['elapsed_seconds'] - step['profiled_component_seconds'],
             )
-            for step in replan_steps
+            for step in steady_other_steps
         )
+        steady_other_replans = sum(step['replans'] for step in steady_other_steps)
         other_replan_ms = (
-            other_replan_seconds * 1_000.0 / self._cem_calls
-            if self._cem_calls
+            other_replan_seconds * 1_000.0 / steady_other_replans
+            if steady_other_replans
             else 0.0
         )
 
