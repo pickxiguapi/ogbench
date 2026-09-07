@@ -33,6 +33,10 @@ TRAIN_SEEDS=${TRAIN_SEEDS:-"0 1 42"}
 EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
 POLICY_SEED=${POLICY_SEED:-777}
 POLICY_STEPS=100000
+GENERATOR_FAMILY=${GENERATOR_FAMILY:-general_uniform_future}
+GOAL_OFFSET_STEPS=${GOAL_OFFSET_STEPS:-50}
+EVAL_BUDGET=${EVAL_BUDGET:-100}
+PREDICTOR_HORIZON_TAG=${PREDICTOR_HORIZON_TAG:-h50}
 
 LATENT_ROOT=${LATENT_ROOT:-/data-training/yyf/datasets/lewm-latents}
 IDM_ROOT=${IDM_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/acid-idm-k5-lewm-mixed666-3072}
@@ -64,6 +68,22 @@ lewm_checkpoints=(
   /data-training/yyf/models/lewm-jax-seed3072/LeWMJAX_impala_lance_tworoom_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack
 )
 
+case "$GENERATOR_FAMILY" in
+  general_uniform_future)
+    EXPECTED_GOAL_SAMPLING=hiql_uniform_future_same_trajectory
+    EXPECTED_MAX_GOAL_STEPS=none
+    ;;
+  goalmax25)
+    EXPECTED_GOAL_SAMPLING=uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25
+    EXPECTED_MAX_GOAL_STEPS=25
+    if (( GOAL_OFFSET_STEPS != 25 || EVAL_BUDGET != 50 )); then
+      echo "goalmax25 requires GOAL_OFFSET_STEPS=25 and EVAL_BUDGET=50." >&2
+      exit 2
+    fi
+    ;;
+  *) echo "Unknown GENERATOR_FAMILY=$GENERATOR_FAMILY" >&2; exit 2 ;;
+esac
+
 read -r -a gpu_ids <<<"$GPU_IDS"
 read -r -a architectures <<<"$ARCHITECTURES"
 read -r -a train_seeds <<<"$TRAIN_SEEDS"
@@ -88,7 +108,8 @@ idm_dir() {
 
 verify_generator() {
   local checkpoint=$1 architecture=$2 train_seed=$3
-  "$PYTHON_BIN" - "$checkpoint" "$architecture" "$train_seed" <<'PY'
+  "$PYTHON_BIN" - "$checkpoint" "$architecture" "$train_seed" \
+    "$EXPECTED_GOAL_SAMPLING" "$EXPECTED_MAX_GOAL_STEPS" "$GENERATOR_FAMILY" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -96,6 +117,9 @@ from pathlib import Path
 checkpoint = Path(sys.argv[1]).resolve()
 requested = sys.argv[2]
 train_seed = int(sys.argv[3])
+expected_sampling = sys.argv[4]
+expected_max_goal_steps = None if sys.argv[5] == 'none' else int(sys.argv[5])
+generator_family = sys.argv[6]
 expected_architecture = {
     'history_mlp': 'history_latent_mlp',
     'endpoint_flow': 'latent_endpoint_flow_transformer_encoder',
@@ -107,8 +131,8 @@ config_path = checkpoint.parent / 'config.json'
 config = json.loads(config_path.read_text())
 expected = {
     'architecture': expected_architecture,
-    'goal_sampling': 'hiql_uniform_future_same_trajectory',
-    'max_goal_steps': None,
+    'goal_sampling': expected_sampling,
+    'max_goal_steps': expected_max_goal_steps,
     'subgoal_steps': 10,
     'action_block': 5,
     'history_size': 3,
@@ -118,8 +142,13 @@ expected = {
 for key, value in expected.items():
     if config.get(key) != value:
         raise ValueError(f'{config_path}: {key}={config.get(key)!r}, expected {value!r}')
-print(f'verified general_uniform_future generator: {checkpoint}')
+print(f'verified {generator_family} generator: {checkpoint}')
 PY
+}
+
+predictor_exp_name() {
+  local architecture=$1 task=$2 lewm_seed=$3 train_seed=$4
+  echo "${PREDICTOR_HORIZON_TAG}_${architecture}_${task}_lewm${lewm_seed}_hist3_k10_pmatch18m_n200000_b1024_s${train_seed}"
 }
 
 stage_predictor_view() {
@@ -130,7 +159,7 @@ stage_predictor_view() {
       for i in "${!tasks[@]}"; do
         task=${tasks[$i]}
         lewm_seed=${lewm_seeds[$i]}
-        exp_name="h50_${architecture}_${task}_lewm${lewm_seed}_hist3_k10_pmatch18m_n200000_b1024_s${train_seed}"
+        exp_name=$(predictor_exp_name "$architecture" "$task" "$lewm_seed" "$train_seed")
         source_dir="$SOURCE_PREDICTOR_ROOT/$exp_name"
         view_dir="$PREDICTOR_VIEW_ROOT/$exp_name"
         verify_generator "$source_dir/checkpoint_200000.msgpack" "$architecture" "$train_seed"
@@ -207,7 +236,7 @@ run_fixed_task() {
   local i=$1 task=${tasks[$1]} lewm_seed=${lewm_seeds[$1]} gpu=${gpu_ids[$1]}
   local architecture=latent_path_flow train_seed=0 exp_name checkpoint policy_dir
   local output_dir idm_checkpoint task_tmp
-  exp_name="h50_${architecture}_${task}_lewm${lewm_seed}_hist3_k10_pmatch18m_n200000_b1024_s${train_seed}"
+  exp_name=$(predictor_exp_name "$architecture" "$task" "$lewm_seed" "$train_seed")
   checkpoint="$PREDICTOR_VIEW_ROOT/$exp_name/checkpoint_200000.msgpack"
   verify_generator "$checkpoint" "$architecture" "$train_seed"
   policy_dir="$POLICY_ROOT/gc4_${task}_all_n100000_b256_a0.0_sd${POLICY_SEED}"
@@ -232,7 +261,7 @@ run_fixed_task() {
       --idm-checkpoint="$idm_checkpoint" \
       --policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS" \
       --latent-subgoal-checkpoint="$checkpoint" --num-subgoal-samples=1 \
-      --num-states="$NUM_DIAGNOSTIC_STATES" --seed=42 --goal-offset-steps=50 \
+      --num-states="$NUM_DIAGNOSTIC_STATES" --seed=42 --goal-offset-steps="$GOAL_OFFSET_STEPS" \
       --action-block=5 --cem-horizon=2 --cem-receding-horizon=1 \
       --cem-num-samples="$DIAGNOSTIC_CANDIDATES" --cem-iterations=5 \
       --cem-topk="$DIAGNOSTIC_TOPK" --cem-var-scale=1.0 --cem-cost-mode=moh \
@@ -267,7 +296,7 @@ run_setting() {
     task=${tasks[$i]}
     lewm_seed=${lewm_seeds[$i]}
     lewm_checkpoint=${lewm_checkpoints[$i]}
-    exp_name="h50_${architecture}_${task}_lewm${lewm_seed}_hist3_k10_pmatch18m_n200000_b1024_s${train_seed}"
+    exp_name=$(predictor_exp_name "$architecture" "$task" "$lewm_seed" "$train_seed")
     checkpoint="$PREDICTOR_VIEW_ROOT/$exp_name/checkpoint_200000.msgpack"
     verify_generator "$checkpoint" "$architecture" "$train_seed"
     policy_dir="$POLICY_ROOT/gc4_${task}_all_n100000_b256_a0.0_sd${POLICY_SEED}"
@@ -296,7 +325,7 @@ run_setting() {
         --policy-checkpoint-dir="$policy_dir" --policy-checkpoint-step="$POLICY_STEPS" \
         --latent-subgoal-checkpoint="$checkpoint" --num-samples=1 \
         --num-eval="$NUM_EVAL" --seed="$eval_seed" \
-        --goal-offset-steps=50 --eval-budget=100 \
+        --goal-offset-steps="$GOAL_OFFSET_STEPS" --eval-budget="$EVAL_BUDGET" \
         --cem-horizon=2 --cem-receding-horizon=1 --action-block=5 \
         --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 \
         --cem-var-scale=1.0 --cem-cost-mode=moh \
@@ -399,6 +428,8 @@ case "$MODE" in
       IDM_LOG_INTERVAL="$IDM_LOG_INTERVAL" IDM_EVAL_INTERVAL="$IDM_EVAL_INTERVAL" \
       IDM_CHECKPOINT_INTERVAL="$IDM_CHECKPOINT_INTERVAL" \
       ARCHITECTURES="$ARCHITECTURES" TRAIN_SEEDS="$TRAIN_SEEDS" EVAL_SEEDS="$EVAL_SEEDS" \
+      GENERATOR_FAMILY="$GENERATOR_FAMILY" GOAL_OFFSET_STEPS="$GOAL_OFFSET_STEPS" \
+      EVAL_BUDGET="$EVAL_BUDGET" PREDICTOR_HORIZON_TAG="$PREDICTOR_HORIZON_TAG" \
       POLICY_SEED="$POLICY_SEED" LATENT_ROOT="$LATENT_ROOT" IDM_ROOT="$IDM_ROOT" \
       SOURCE_PREDICTOR_ROOT="$SOURCE_PREDICTOR_ROOT" GENERAL_ROOT="$GENERAL_ROOT" \
       PREDICTOR_VIEW_ROOT="$PREDICTOR_VIEW_ROOT" POLICY_ROOT="$POLICY_ROOT" \

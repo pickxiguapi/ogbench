@@ -13,6 +13,10 @@ export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
 ARCHITECTURES=${ARCHITECTURES:-"history_mlp endpoint_flow latent_path_flow"}
 TRAIN_SEEDS=${TRAIN_SEEDS:-"0 1 42"}
+HORIZON_TAG=${HORIZON_TAG:-h50}
+GOAL_OFFSET=${GOAL_OFFSET:-50}
+GOAL_SAMPLING=${GOAL_SAMPLING:-uniform_future}
+MAX_GOAL_STEPS=${MAX_GOAL_STEPS:-}
 TRAIN_STEPS=${TRAIN_STEPS:-200000}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1024}
 VALIDATION_PAIRS=${VALIDATION_PAIRS:-10000}
@@ -45,16 +49,20 @@ fi
 gpu_count=${#gpu_ids[@]}
 
 mkdir -p "$MANIFEST_ROOT"
+goal_args=(--goal-sampling="$GOAL_SAMPLING")
+if [[ -n "$MAX_GOAL_STEPS" ]]; then
+  goal_args+=(--max-goal-steps="$MAX_GOAL_STEPS")
+fi
 for i in "${!tasks[@]}"; do
   (
     cd "$OGBENCH_ROOT/impls"
     PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" \
     "$PYTHON_BIN" create_latent_subgoal_validation_manifest.py \
       --latent-dataset="${latent_datasets[$i]}" \
-      --output="$MANIFEST_ROOT/${tasks[$i]}_h50_hist3_k10_n${VALIDATION_PAIRS}.npz" \
+      --output="$MANIFEST_ROOT/${tasks[$i]}_${HORIZON_TAG}_hist3_k10_n${VALIDATION_PAIRS}.npz" \
       --split-seed=0 --train-fraction=0.95 \
       --num-pairs="$VALIDATION_PAIRS" --history-size=3 \
-      --goal-offset=50 --subgoal-steps=10 --action-block=5 --seed=1
+      --goal-offset="$GOAL_OFFSET" --subgoal-steps=10 --action-block=5 --seed=1
   )
 done
 
@@ -84,9 +92,9 @@ run_training() {
   local architecture=$4
   local train_seed=$5
   local architecture_tag=$architecture
-  local exp_name="h50_${architecture_tag}_${task}_lewm${lewm_seeds[$task_index]}_hist3_k10_pmatch18m_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${train_seed}"
+  local exp_name="${HORIZON_TAG}_${architecture_tag}_${task}_lewm${lewm_seeds[$task_index]}_hist3_k10_pmatch18m_n${TRAIN_STEPS}_b${TRAIN_BATCH_SIZE}_s${train_seed}"
   local run_dir="$RUNS_ROOT/$exp_name"
-  local manifest="$MANIFEST_ROOT/${task}_h50_hist3_k10_n${VALIDATION_PAIRS}.npz"
+  local manifest="$MANIFEST_ROOT/${task}_${HORIZON_TAG}_hist3_k10_n${VALIDATION_PAIRS}.npz"
   mkdir -p "$run_dir"
 
   if [[ "$architecture" == history_mlp ]]; then
@@ -101,7 +109,7 @@ run_training() {
         --save-dir="$run_dir" --exp-name="$exp_name" \
         --architecture=history_mlp --hidden-dims 2048 2048 2048 2048 2048 \
         --history-size=3 --seed="$train_seed" --split-seed=0 --train-fraction=0.95 \
-        --subgoal-steps=10 --action-block=5 --goal-sampling=uniform_future \
+        --subgoal-steps=10 --action-block=5 "${goal_args[@]}" \
         --train-steps="$TRAIN_STEPS" --batch-size="$TRAIN_BATCH_SIZE" \
         --ema-decay=0.9999 --learning-rate=1e-4 --final-learning-rate=1e-5 \
         --warmup-steps="$WARMUP_STEPS" --weight-decay=1e-4 --gradient-clip=1.0 \
@@ -123,7 +131,7 @@ run_training() {
         --architecture="$architecture" \
         --history-size=3 --hidden-dim=512 --depth=4 --num-heads=8 --ff-dim=2048 --time-dim=64 \
         --seed="$train_seed" --split-seed=0 --train-fraction=0.95 \
-        --subgoal-steps=10 --action-block=5 --goal-sampling=uniform_future \
+        --subgoal-steps=10 --action-block=5 "${goal_args[@]}" \
         --train-steps="$TRAIN_STEPS" --batch-size="$TRAIN_BATCH_SIZE" \
         --flow-sampling-steps=16 --flow-solver=euler --num-samples=1 \
         --ema-decay=0.9999 --learning-rate=1e-4 --final-learning-rate=1e-5 \
