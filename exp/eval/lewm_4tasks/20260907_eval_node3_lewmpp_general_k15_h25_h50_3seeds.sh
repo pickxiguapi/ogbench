@@ -37,6 +37,13 @@ if [[ -n "$WAIT_FOR_SCREEN" ]]; then
   done
 fi
 
+gpu_memory_used=$(nvidia-smi --id="$GPU_ID" --query-gpu=memory.used \
+  --format=csv,noheader,nounits | tr -d ' ')
+if (( gpu_memory_used >= 500 )); then
+  echo "GPU $GPU_ID is not free after wait: ${gpu_memory_used} MiB" >&2
+  exit 2
+fi
+
 checkpoint_for_task() {
   local task=$1
   case "$task" in
