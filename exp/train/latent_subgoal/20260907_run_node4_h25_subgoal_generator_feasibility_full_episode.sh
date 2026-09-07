@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Train the missing H25 goalmax25 History-MLP and Endpoint-Flow checkpoints,
-# stage the canonical goalmax25 LatentPathFlow, then run the same full-episode
-# ACID/success comparison used for H50 (50 episodes x eval seeds 0/1/42).
+# H25 success-only comparison requested by the user. History-MLP and
+# Endpoint-Flow intentionally reuse their general-uniform checkpoints because
+# no goalmax25 variants exist; LatentPathFlow uses the canonical goalmax25
+# checkpoint. The mixed checkpoint families are explicit in the output name.
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -13,11 +14,11 @@ MODE=${MODE:-launch}
 SESSION=${SESSION:-acid-subgoal-generators-h25-full-ep50}
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
 ROOT=/data-training/yyf/ogbench-lewm-policy-runs
-H25_ROOT=${H25_ROOT:-$ROOT/latent-predictor-h25-goalmax25-ablation}
+H25_ROOT=${H25_ROOT:-$ROOT/latent-predictor-h25-mixed-family-view}
+GENERAL_ROOT=${GENERAL_ROOT:-$ROOT/latent-predictor-h50-ablation}
 LPF_ROOT=${LPF_ROOT:-$ROOT/latent-path-flow-k10-goalmax25}
-VIEW_ROOT=${VIEW_ROOT:-$LPF_ROOT/goalmax25_h25_predictor_ablation_view}
-EVAL_ROOT=${EVAL_ROOT:-$ROOT/evals/lewm-4tasks/20260907_h25_goalmax25_subgoal_generator_success_only_lewmpp_policy777_ns1_cem300x5_h2_rh1_train0_eval0-1-42_ep50}
-TMP_ROOT=${TMP_ROOT:-$ROOT/tmp/20260907-h25-goalmax25-subgoal-generator-success-only}
+EVAL_ROOT=${EVAL_ROOT:-$ROOT/evals/lewm-4tasks/20260907_h25_mixed_generator_family_success_only_lewmpp_policy777_ns1_cem300x5_h2_rh1_train0_eval0-1-42_ep50}
+TMP_ROOT=${TMP_ROOT:-$ROOT/tmp/20260907-h25-mixed-generator-family-success-only}
 DRIVER_LOG=${DRIVER_LOG:-$EVAL_ROOT/driver.log}
 
 tasks=(cube pusht reacher tworoom)
@@ -46,22 +47,29 @@ stage_latent_path_flow() {
 
 driver() {
   mkdir -p "$H25_ROOT" "$EVAL_ROOT" "$TMP_ROOT"
-  GPU_IDS="$GPU_IDS" ARCHITECTURES="history_mlp endpoint_flow" TRAIN_SEEDS=0 \
-    HORIZON_TAG=h25_goalmax25 GOAL_OFFSET=25 GOAL_SAMPLING=aligned_future \
-    MAX_GOAL_STEPS=25 RUNS_ROOT="$H25_ROOT" MANIFEST_ROOT="$H25_ROOT/manifests" \
-    bash "$SCRIPT_DIR/20260904_train_node4_h50_predictor_ablation.sh"
   stage_latent_path_flow
+  # Missing H25 variants deliberately reuse the general-uniform predictors.
   GPU_IDS="$GPU_IDS" WAIT_FOR_GPUS=0 \
-    ARCHITECTURES="history_mlp endpoint_flow latent_path_flow" \
+    ARCHITECTURES="history_mlp endpoint_flow" \
     TRAIN_SEEDS=0 EVAL_SEEDS="0 1 42" TRAIN_STEPS=200000 \
     NUM_EVAL=50 POLICY_GUIDANCE=mode GUIDANCE_GOAL_MODE=final \
     POLICY_SEED=777 POLICY_STEPS=100000 CEM_ITERATIONS=5 \
-    HORIZON_TAG=h25_goalmax25 RUN_TAG=h25_goalmax25 \
+    HORIZON_TAG=h50 RUN_TAG=h25_mixed \
+    GENERATOR_FAMILY=general_uniform_future GOAL_OFFSET_STEPS=25 EVAL_BUDGET=50 \
+    RUNS_ROOT="$GENERAL_ROOT" EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT/general" \
+    bash "$OGBENCH_ROOT/exp/eval/lewm_4tasks/20260904_eval_node4_h50_predictor_ablation.sh"
+  # LatentPathFlow keeps the required H25 goalmax25 checkpoint family.
+  GPU_IDS="$GPU_IDS" WAIT_FOR_GPUS=0 \
+    ARCHITECTURES="latent_path_flow" \
+    TRAIN_SEEDS=0 EVAL_SEEDS="0 1 42" TRAIN_STEPS=200000 \
+    NUM_EVAL=50 POLICY_GUIDANCE=mode GUIDANCE_GOAL_MODE=final \
+    POLICY_SEED=777 POLICY_STEPS=100000 CEM_ITERATIONS=5 \
+    HORIZON_TAG=h25_goalmax25 RUN_TAG=h25_mixed \
     GENERATOR_FAMILY=goalmax25 GOAL_OFFSET_STEPS=25 EVAL_BUDGET=50 \
-    RUNS_ROOT="$H25_ROOT" EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT" \
+    RUNS_ROOT="$H25_ROOT" EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT/goalmax25" \
     bash "$OGBENCH_ROOT/exp/eval/lewm_4tasks/20260904_eval_node4_h50_predictor_ablation.sh"
   "$PYTHON_BIN" "$OGBENCH_ROOT/impls/aggregate_subgoal_success.py" \
-    --root="$EVAL_ROOT" --prefix=h25_goalmax25 \
+    --root="$EVAL_ROOT" --prefix=h25_mixed \
     --architectures history_mlp endpoint_flow latent_path_flow \
     --train-seed=0 --eval-seeds 0 1 42 \
     --tasks tworoom reacher pusht cube \
@@ -76,7 +84,7 @@ case "$MODE" in
       echo "tmux session already exists: $SESSION" >&2; exit 3;
     }
     printf -v command '%q ' env MODE=driver SESSION="$SESSION" GPU_IDS="$GPU_IDS" \
-      H25_ROOT="$H25_ROOT" LPF_ROOT="$LPF_ROOT" VIEW_ROOT="$VIEW_ROOT" \
+      H25_ROOT="$H25_ROOT" GENERAL_ROOT="$GENERAL_ROOT" LPF_ROOT="$LPF_ROOT" \
       EVAL_ROOT="$EVAL_ROOT" TMP_ROOT="$TMP_ROOT" \
       bash exp/train/latent_subgoal/20260907_run_node4_h25_subgoal_generator_feasibility_full_episode.sh
     printf -v quoted_log '%q' "$DRIVER_LOG"
