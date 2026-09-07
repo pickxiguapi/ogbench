@@ -55,10 +55,11 @@ def episode_balanced_metrics(events_path):
         output = {}
         for output_name, event_name in EPISODE_BALANCED_EVENT_METRICS.items():
             values = np.asarray(events[event_name], dtype=np.float64)
-            episode_values = [
-                float(np.nanmean(values[episode_indices == episode]))
-                for episode in np.unique(episode_indices)
-            ]
+            episode_values = []
+            for episode in np.unique(episode_indices):
+                selected = values[episode_indices == episode]
+                if np.any(np.isfinite(selected)):
+                    episode_values.append(float(np.nanmean(selected)))
             output[output_name] = float(np.nanmean(episode_values))
     return output
 
