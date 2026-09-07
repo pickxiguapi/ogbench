@@ -112,15 +112,25 @@ class LeWMInferenceProfiler:
         def timed_get_actions(pixels, goals, alive):
             alive_count = int(np.count_nonzero(alive))
             cem_before = self._cem_calls
+            component_labels = ('subgoal_total', 'action_prior', 'cem')
+            sample_counts_before = {
+                label: len(self.samples.get(label, ()))
+                for label in component_labels
+            }
             started = time.perf_counter()
             result = get_actions(pixels, goals, alive)
             result = _block_until_ready(result)
             elapsed = time.perf_counter() - started
+            component_seconds = sum(
+                sum(self.samples.get(label, ())[sample_counts_before[label]:])
+                for label in component_labels
+            )
             self.control_steps.append(
                 {
                     'elapsed_seconds': elapsed,
                     'alive_actions': alive_count,
                     'replans': self._cem_calls - cem_before,
+                    'profiled_component_seconds': component_seconds,
                 }
             )
             return result
@@ -137,18 +147,33 @@ class LeWMInferenceProfiler:
         }
 
         replan_steps = [step for step in self.control_steps if step['replans']]
-        steady_replan_steps = replan_steps[1:]
-        steady_replan_seconds = sum(
-            step['elapsed_seconds'] for step in steady_replan_steps
+        top_level_labels = ('subgoal_total', 'action_prior', 'cem')
+        steady_component_ms = sum(
+            module_summary[label]['steady_mean_ms']
+            for label in top_level_labels
+            if label in module_summary
+            and module_summary[label]['steady_mean_ms'] is not None
         )
-        steady_replans = sum(step['replans'] for step in steady_replan_steps)
+        steady_replans = max(self._cem_calls - self._DROP_FIRST['cem'], 0)
+        other_replan_seconds = sum(
+            max(
+                0.0,
+                step['elapsed_seconds'] - step['profiled_component_seconds'],
+            )
+            for step in replan_steps
+        )
+        other_replan_ms = (
+            other_replan_seconds * 1_000.0 / self._cem_calls
+            if self._cem_calls
+            else 0.0
+        )
 
         buffer_steps = [step for step in self.control_steps if not step['replans']]
         buffer_seconds = sum(step['elapsed_seconds'] for step in buffer_steps)
         buffer_actions = sum(step['alive_actions'] for step in buffer_steps)
 
         replan_ms = (
-            steady_replan_seconds * 1_000.0 / steady_replans
+            steady_component_ms + other_replan_ms
             if steady_replans
             else None
         )
@@ -192,6 +217,8 @@ class LeWMInferenceProfiler:
             },
             'end_to_end': {
                 'steady_replan_ms_per_environment': replan_ms,
+                'steady_component_ms_per_environment': steady_component_ms,
+                'other_replan_ms_per_environment': other_replan_ms,
                 'buffer_action_ms_per_environment': buffer_action_ms,
                 'steady_amortized_ms_per_environment_action': amortized_action_ms,
                 'steady_actions_per_second': (

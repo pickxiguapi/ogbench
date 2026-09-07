@@ -36,8 +36,8 @@ def test_profiler_reports_per_environment_replan_and_buffer_costs():
     goals = np.zeros_like(pixels)
     alive = np.ones(3, dtype=bool)
 
-    # The first replan batch is treated as cold start.  The second contributes
-    # three steady-state replans, followed by one buffer-only action step.
+    # Only the first individual CEM call is treated as cold start.  The two
+    # batches contain five steady-state replans, then one buffer-only step.
     policy.get_actions(pixels, goals, alive)
     policy.get_actions(pixels, goals, alive)
     policy.should_replan = False
@@ -45,8 +45,9 @@ def test_profiler_reports_per_environment_replan_and_buffer_costs():
 
     summary = profiler.summary()
     assert summary['counts']['replan_events'] == 6
-    assert summary['counts']['steady_replan_events'] == 3
+    assert summary['counts']['steady_replan_events'] == 5
     assert summary['counts']['alive_actions'] == 9
     assert summary['modules']['cem']['count'] == 6
     assert summary['end_to_end']['steady_replan_ms_per_environment'] >= 0.0
+    assert summary['end_to_end']['other_replan_ms_per_environment'] >= 0.0
     assert summary['end_to_end']['buffer_action_ms_per_environment'] >= 0.0
