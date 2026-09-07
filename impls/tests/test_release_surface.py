@@ -13,6 +13,7 @@ def test_release_has_only_paper_experiment_launchers():
     assert scripts == [
         'common.sh',
         'evaluate.sh',
+        'evaluate_main_one_seed.sh',
         'precompute_latents.sh',
         'reproduce_paper.sh',
         'train_action_prior.sh',

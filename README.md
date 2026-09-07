@@ -173,6 +173,20 @@ After filling and sourcing `configs/lewmpp_paths.env`:
 bash exp/lewmpp/reproduce_paper.sh
 ```
 
+To reproduce only the full LeWM++ H25/H50/H75/H100 main result with one
+evaluation seed, use the focused launcher:
+
+```bash
+EVAL_SEED=42 \
+GPU_IDS="0 1 2 3" \
+bash exp/lewmpp/evaluate_main_one_seed.sh
+```
+
+The launcher validates all 16 task/horizon jobs before dispatch. H25 must use
+the bounded `goalmax25` generator, while H50/H75/H100 must use the
+`general_uniform_future` generator. Set `VALIDATE_ONLY=1` to check paths and
+checkpoint metadata without starting evaluation.
+
 The wrapper runs:
 
 - full LeWM++ at H25/H50/H75/H100;
