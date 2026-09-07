@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -130,17 +131,36 @@ def require_path(path, label):
     return path
 
 
+def sha256_file(path, block_size=16 * 1024 * 1024):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as file:
+        while block := file.read(block_size):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def validate_release_files(args):
     """Validate all data and checkpoint metadata before allocating an environment."""
     use_subgoal, use_prior, _, _ = expected_components(args.variant)
-    require_file(args.lewm_checkpoint, 'LeWM checkpoint')
+    lewm_checkpoint = require_file(args.lewm_checkpoint, 'LeWM checkpoint')
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     require_file(hdf5_path, 'evaluation HDF5 dataset')
 
     if use_prior:
         require_path(lance_path, 'action-prior Lance dataset')
         checkpoint_dir = Path(args.action_prior_checkpoint_dir).expanduser().resolve()
-        require_file(checkpoint_dir / 'flags.json', 'action-prior flags')
+        flags_path = require_file(checkpoint_dir / 'flags.json', 'action-prior flags')
+        flags = json.loads(flags_path.read_text())
+        saved_dataset = Path(flags.get('dataset_path') or '')
+        if args.task not in saved_dataset.stem.lower():
+            raise ValueError(f'Action-prior dataset does not match task {args.task}: {saved_dataset}')
+        if flags.get('seed') != 777:
+            raise ValueError(f'Action-prior training seed must be 777, got {flags.get("seed")!r}.')
+        if flags.get('agent', {}).get('chunk_size') != args.action_block:
+            raise ValueError('Action-prior chunk size does not match --action-block.')
+        expected_lewm_sha = flags.get('lewm_checkpoint_sha256')
+        if expected_lewm_sha is not None and sha256_file(lewm_checkpoint) != expected_lewm_sha:
+            raise ValueError('Action prior and evaluator use different frozen LeWM checkpoints.')
         require_file(
             checkpoint_dir / f'params_{args.action_prior_checkpoint_step}.pkl',
             'action-prior checkpoint',
@@ -152,6 +172,18 @@ def validate_release_files(args):
     checkpoint = require_file(args.subgoal_generator_checkpoint, 'subgoal-generator checkpoint')
     config_path = require_file(checkpoint.parent / 'config.json', 'adjacent generator config')
     config = json.loads(config_path.read_text())
+
+    config_task = config.get('task')
+    latent_dataset = Path(config.get('latent_dataset') or '')
+    if config_task not in (None, args.task):
+        raise ValueError(f'Generator task mismatch: {config_task!r} != {args.task!r}.')
+    if config_task is None and args.task not in latent_dataset.stem.lower():
+        raise ValueError(f'Generator latent dataset does not match task {args.task}: {latent_dataset}')
+    expected_lewm_sha = config.get('lewm_checkpoint_sha256')
+    if expected_lewm_sha is None:
+        raise ValueError('Generator config does not record lewm_checkpoint_sha256.')
+    if sha256_file(lewm_checkpoint) != expected_lewm_sha:
+        raise ValueError('Subgoal generator and evaluator use different frozen LeWM checkpoints.')
 
     if args.goal_offset_steps == 25:
         expected_family = 'goalmax25'

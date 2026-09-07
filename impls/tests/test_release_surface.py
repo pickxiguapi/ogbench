@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,33 +17,98 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_release_has_only_paper_experiment_launchers():
-    scripts = sorted(path.name for path in ROOT.glob('*.sh'))
-    assert scripts == ['eval.sh', 'train.sh']
-    assert not list((ROOT / 'exp' / 'lewmpp').glob('*.sh'))
+    assert not list(ROOT.glob('*.sh'))
+    scripts = {path.name for path in (ROOT / 'experiments').glob('*.sh')}
+    assert scripts == {
+        'eval_ablation_action_prior_h25_4tasks.sh',
+        'eval_ablation_moh_h25_4tasks.sh',
+        'eval_ablation_subgoal_path_h25_4tasks.sh',
+        'eval_action-prior-chunk_h25_4tasks.sh',
+        'eval_lewm_baseline_h100_4tasks.sh',
+        'eval_lewm_baseline_h25_4tasks.sh',
+        'eval_lewm_baseline_h50_4tasks.sh',
+        'eval_lewm_baseline_h75_4tasks.sh',
+        'eval_lewmpp_h100_4tasks.sh',
+        'eval_lewmpp_h25_4tasks.sh',
+        'eval_lewmpp_h50_4tasks.sh',
+        'eval_lewmpp_h75_4tasks.sh',
+        'eval_policy_mode_anchor_h25_4tasks.sh',
+        'eval_subgoal_generators_h25_4tasks.sh',
+        'precompute_lewm_latents_4tasks.sh',
+        'train_action-prior-chunk_4tasks.sh',
+        'train_lewm_4tasks.sh',
+        'train_subgoal_endpoint_flow_general_uniform_future_4tasks.sh',
+        'train_subgoal_endpoint_flow_goalmax25_4tasks.sh',
+        'train_subgoal_latent_path_flow_general_uniform_future_4tasks.sh',
+        'train_subgoal_latent_path_flow_goalmax25_4tasks.sh',
+        'train_subgoal_mlp_general_uniform_future_4tasks.sh',
+        'train_subgoal_mlp_goalmax25_4tasks.sh',
+    }
     for script in scripts:
-        text = (ROOT / script).read_text()
+        text = (ROOT / 'experiments' / script).read_text()
         assert '\nif ' not in text
         assert '\ncase ' not in text
+        assert 'TASKS=(cube pusht reacher tworoom)' in text
+        assert 'GPU_IDS=(0 1 2 3)' in text
+        assert 'pids+=("$!")' in text
+        assert 'wait "$pid" || status=1' in text
+        assert 'exit "$status"' in text
     for retired in ('backup', 'reports', 'results'):
         assert not (ROOT / retired).exists()
 
 
 def test_release_has_complete_config_templates():
     names = {path.name for path in (ROOT / 'configs').glob('*.example.env')}
-    assert names == {
-        'action-prior-chunk.example.env',
-        'eval_action_prior_chunk.example.env',
-        'eval_lewm_baseline.example.env',
-        'eval_lewmpp_general.example.env',
-        'eval_lewmpp_h25.example.env',
-        'eval_no_action_prior.example.env',
-        'eval_no_moh.example.env',
-        'eval_no_subgoal.example.env',
-        'lewmpp_paths.example.env',
-        'precompute_latents.example.env',
-        'train_lewm.example.env',
-        'train_subgoal_generator.example.env',
-    }
+    assert names == {'lewmpp_paths.example.env'}
+
+
+def test_action_prior_training_launcher_records_release_hyperparameters():
+    text = (ROOT / 'experiments' / 'train_action-prior-chunk_4tasks.sh').read_text()
+    for argument in (
+        '--train_steps=100000',
+        '--save_interval=100000',
+        '--log_interval=5000',
+        '--batch_size=256',
+        '--seed=777',
+        '--lr=3e-4',
+        '--discount=0.99',
+        '--expectile=0.9',
+        '--tau=0.005',
+        '--chunk_size=5',
+        '--alpha=3.0',
+        '--p_aug=0.0',
+        '--validation_fraction=0.05',
+    ):
+        assert argument in text
+
+
+def test_generator_launchers_record_and_validate_family_invariants():
+    for path in (ROOT / 'experiments').glob('train_subgoal_*_goalmax25_4tasks.sh'):
+        text = path.read_text()
+        assert '--goal-sampling=uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25' in text
+        assert '--max-goal-steps=25' in text
+    for path in (ROOT / 'experiments').glob('train_subgoal_*_general_uniform_future_4tasks.sh'):
+        text = path.read_text()
+        assert '--goal-sampling=hiql_uniform_future_same_trajectory' in text
+        assert '--max-goal-steps' not in text
+    generator_evals = [
+        path
+        for path in (ROOT / 'experiments').glob('eval_*.sh')
+        if '--subgoal-generator-checkpoint' in path.read_text()
+    ]
+    assert len(generator_evals) == 9
+    for path in generator_evals:
+        text = path.read_text()
+        assert text.count('validate_generator_checkpoint.py') == 1
+        assert text.index('validate_generator_checkpoint.py') < text.index('pids=()')
+
+
+def test_evaluation_launchers_refuse_to_overwrite_results():
+    for path in (ROOT / 'experiments').glob('eval_*.sh'):
+        text = path.read_text()
+        assert 'test ! -e "$result_dir/result.json"' in text or (
+            'test ! -e "$full_dir/result.json"' in text and 'test ! -e "$ablation_dir/result.json"' in text
+        )
 
 
 def test_python_entrypoints_match_the_release_pipeline():
@@ -79,6 +145,7 @@ def test_action_prior_public_surface_uses_neutral_name():
         ROOT / 'impls' / 'eval_lewm_4tasks.py',
     ]
     paths.extend((ROOT / 'configs').glob('*.example.env'))
+    paths.extend((ROOT / 'experiments').glob('*.sh'))
     for path in paths:
         for line in path.read_text().splitlines():
             lowered = line.lower()
@@ -96,6 +163,9 @@ def test_preflight_rejects_generator_family_mismatch(tmp_path):
     checkpoint.write_bytes(b'checkpoint')
     config = {
         'architecture': 'latent_path_flow_transformer_encoder',
+        'task': 'cube',
+        'latent_dataset': str(tmp_path / 'cube.h5'),
+        'lewm_checkpoint_sha256': hashlib.sha256(lewm.read_bytes()).hexdigest(),
         'goal_sampling': 'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25',
         'max_goal_steps': 25,
     }

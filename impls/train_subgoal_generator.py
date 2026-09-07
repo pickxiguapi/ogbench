@@ -53,6 +53,15 @@ def parse_args():
         choices=('mlp', 'endpoint_flow', 'latent_path_flow'),
         default='latent_path_flow',
     )
+    parser.add_argument(
+        '--goal-sampling',
+        choices=(
+            'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25',
+            'hiql_uniform_future_same_trajectory',
+        ),
+        required=True,
+    )
+    parser.add_argument('--max-goal-steps', type=int)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--split-seed', type=int, default=0)
     parser.add_argument('--train-fraction', type=float, default=0.95)
@@ -131,6 +140,15 @@ def validate_args(args):
     if args.generator_family == 'goalmax25':
         if args.action_block != 5 or args.subgoal_steps != 10:
             raise ValueError('goalmax25 requires action_block=5 and subgoal_steps=10.')
+        if args.goal_sampling != 'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25':
+            raise ValueError('goalmax25 requires bounded, stride-5 distance-first goal sampling.')
+        if args.max_goal_steps != 25:
+            raise ValueError('goalmax25 requires max_goal_steps=25.')
+    if args.generator_family == 'general_uniform_future':
+        if args.goal_sampling != 'hiql_uniform_future_same_trajectory':
+            raise ValueError('general_uniform_future requires uniform future sampling.')
+        if args.max_goal_steps is not None:
+            raise ValueError('general_uniform_future must not set a finite max_goal_steps.')
 
 
 class FlowTrainState(train_state.TrainState):
@@ -409,7 +427,7 @@ def main():
     print(f'Loading complete latent cache: {args.latent_dataset}', flush=True)
     cache = load_latent_cache(args.latent_dataset)
     embed_dim = int(cache.z.shape[1])
-    max_goal_steps = 25 if args.generator_family == 'goalmax25' else None
+    max_goal_steps = args.max_goal_steps
     goal_stride = args.action_block if max_goal_steps is not None else 1
     offsets = (
         waypoint_steps(args.subgoal_steps, args.action_block)
@@ -477,6 +495,8 @@ def main():
         **vars(args),
         'latent_dataset': str(Path(args.latent_dataset).expanduser().resolve()),
         'save_dir': str(output_dir),
+        'task': cache.metadata.get('task'),
+        'source_lance': cache.metadata.get('source_lance'),
         'embed_dim': embed_dim,
         'num_rows': len(cache.z),
         'num_episodes': len(cache.episode_offsets),
@@ -503,11 +523,7 @@ def main():
         'flow_solver': None if args.generator_type == 'mlp' else 'euler',
         'hidden_dims': list(args.hidden_dims),
         'max_goal_steps': max_goal_steps,
-        'goal_sampling': (
-            'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25'
-            if args.generator_family == 'goalmax25'
-            else 'hiql_uniform_future_same_trajectory'
-        ),
+        'goal_sampling': args.goal_sampling,
     }
     config_path = output_dir / 'config.json'
     if config_path.exists():

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$REPO_ROOT/configs/lewmpp_paths.env"
+
+TASKS=(cube pusht reacher tworoom)
+GPU_IDS=(0 1 2 3)
+EVAL_SEEDS=(0 1 42)
+LEWM_CHECKPOINTS=("$LEWM_CUBE_CHECKPOINT" "$LEWM_PUSHT_CHECKPOINT" "$LEWM_REACHER_CHECKPOINT" "$LEWM_TWOROOM_CHECKPOINT")
+ACTION_PRIOR_CHECKPOINTS=("$ACTION_PRIOR_CUBE_CHECKPOINT_DIR" "$ACTION_PRIOR_PUSHT_CHECKPOINT_DIR" "$ACTION_PRIOR_REACHER_CHECKPOINT_DIR" "$ACTION_PRIOR_TWOROOM_CHECKPOINT_DIR")
+
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export MUJOCO_GL=egl
+export PYOPENGL_PLATFORM=egl
+export EGL_PLATFORM=surfaceless
+export PYTHONPATH="$REPO_ROOT:$REPO_ROOT/impls${PYTHONPATH:+:$PYTHONPATH}"
+cd "$REPO_ROOT/impls"
+
+pids=()
+for index in "${!TASKS[@]}"; do
+  task=${TASKS[$index]}
+  (
+    export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
+    for seed in "${EVAL_SEEDS[@]}"; do
+      result_dir="$OUTPUT_ROOT/baseline_action_prior_chunk_h25/goalmax25/no_generator/H25/action_prior_chunk/policy_mode/seed${seed}/$task"
+      mkdir -p "$result_dir"
+      test ! -e "$result_dir/result.json"
+      args=(
+        --task="$task"
+        --variant=action_prior_chunk
+        --experiment-group=baseline_action_prior_chunk_h25
+        --generator-family=no_generator
+        --data-root="$LEWM_DATA_ROOT"
+        --lewm-checkpoint="${LEWM_CHECKPOINTS[$index]}"
+        --action-prior-checkpoint-dir="${ACTION_PRIOR_CHECKPOINTS[$index]}"
+        --action-prior-checkpoint-step=100000
+        --action-prior-mode=policy_mode
+        --generator-num-samples=1
+        --num-eval=50
+        --seed="$seed"
+        --goal-offset-steps=25
+        --eval-budget=50
+        --action-block=5
+        --output="$result_dir/result.json"
+      )
+      "$PYTHON_BIN" eval_lewm_4tasks.py "${args[@]}" --validate-only
+      "$PYTHON_BIN" eval_lewm_4tasks.py "${args[@]}" 2>&1 | tee "$result_dir/eval.log"
+    done
+  ) &
+  pids+=("$!")
+done
+
+status=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || status=1
+done
+exit "$status"

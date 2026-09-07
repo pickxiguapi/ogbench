@@ -58,14 +58,7 @@ On Linux with CUDA 12:
 uv sync --extra train --extra cuda12 --extra dev
 ```
 
-The two public launchers are deliberately small and live at the repository root:
-
-```text
-train.sh   Read one training config and run its Python entrypoint.
-eval.sh    Read one evaluation config, validate it, and run evaluation.
-```
-
-Activate `.venv`, or invoke them through `uv run bash`.
+Paper-facing launchers live in `experiments/`. Each Bash file is one named experiment, contains its complete hyperparameter list, launches the four tasks concurrently on GPUs 0--3, and runs that task's evaluation seeds sequentially on the same GPU. Activate `.venv`, or invoke the scripts through `uv run bash`.
 
 ## Data and path configuration
 
@@ -85,63 +78,61 @@ The horizon-to-family mapping is strict:
 | H25 | `goalmax25` | `uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25` | `25` |
 | H50/H75/H100 | `general_uniform_future` | `hiql_uniform_future_same_trajectory` | unset / `null` |
 
-Before evaluation, `eval.sh` asks the evaluator to perform a validation-only pass. It reads the `config.json` adjacent to the generator checkpoint and aborts on a family, sampling protocol, maximum-goal distance, architecture, data, or checkpoint mismatch. Output paths in the provided configs contain experiment group, generator family, generator type, horizon, variant, prior mode, seed, and task, so incompatible results do not overwrite or silently pool.
+Every generator-based evaluation script performs a validation-only pass before allocating an environment. It reads the `config.json` adjacent to each generator checkpoint and aborts on a family, sampling protocol, maximum-goal distance, architecture, data, or checkpoint mismatch. Output paths contain experiment group, protocol family, generator type, horizon, variant, prior mode, seed, and task.
 
-## Config-driven training
+Launchers refuse to overwrite an existing `result.json`, propagate a failure from any of the four task processes, and return nonzero when a matrix is incomplete. Move an old experiment directory before intentionally rerunning the same setting.
 
-Every path, hyperparameter, GPU assignment, entrypoint, and output location is written in a config. The Bash launcher contains no experiment-specific branches.
+## Training experiments
 
-| Config template | Purpose |
-|---|---|
-| `configs/train_lewm.example.env` | Train the frozen LeWM |
-| `configs/precompute_latents.example.env` | Build the checkpoint-bound latent cache |
-| `configs/action-prior-chunk.example.env` | Train final-goal Action-Prior-Chunk |
-| `configs/train_subgoal_generator.example.env` | Train MLP, Endpoint Flow, or LatentPath Flow |
-
-Copy the desired template, fill its paths, and run it:
+The training pipeline is explicit and ordered:
 
 ```bash
-cp configs/train_lewm.example.env configs/train_lewm.env
-bash train.sh configs/train_lewm.env
+bash experiments/train_lewm_4tasks.sh
+bash experiments/precompute_lewm_latents_4tasks.sh
+bash experiments/train_action-prior-chunk_4tasks.sh
+bash experiments/train_subgoal_latent_path_flow_goalmax25_4tasks.sh
+bash experiments/train_subgoal_latent_path_flow_general_uniform_future_4tasks.sh
 ```
 
-The same launcher runs every training stage:
+`train_action-prior-chunk_4tasks.sh` directly records the release settings: 100,000 updates, batch size 256, seed 777, learning rate `3e-4`, discount 0.99, expectile 0.9, target-update rate 0.005, action chunk 5, temperature 3.0, no image augmentation, and a 5% validation split.
+
+There is one fixed training Bash for every subgoal-generator choice and family:
+
+```text
+train_subgoal_mlp_goalmax25_4tasks.sh
+train_subgoal_endpoint_flow_goalmax25_4tasks.sh
+train_subgoal_latent_path_flow_goalmax25_4tasks.sh
+train_subgoal_mlp_general_uniform_future_4tasks.sh
+train_subgoal_endpoint_flow_general_uniform_future_4tasks.sh
+train_subgoal_latent_path_flow_general_uniform_future_4tasks.sh
+```
+
+The flow scripts use 16 Euler steps. `goalmax25` produces `goal_sampling=uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25` with `max_goal_steps=25`; `general_uniform_future` produces `goal_sampling=hiql_uniform_future_same_trajectory` with no finite maximum.
+
+## Evaluation experiments
+
+The four main LeWM++ settings are separate launchers, so H25 cannot accidentally reuse the general generator and H50--H100 cannot accidentally reuse the bounded generator:
 
 ```bash
-bash train.sh configs/precompute_latents.env
-bash train.sh configs/action-prior-chunk.env
-bash train.sh configs/train_subgoal_generator.env
+bash experiments/eval_lewmpp_h25_4tasks.sh
+bash experiments/eval_lewmpp_h50_4tasks.sh
+bash experiments/eval_lewmpp_h75_4tasks.sh
+bash experiments/eval_lewmpp_h100_4tasks.sh
 ```
 
-In the subgoal config, select `GENERATOR_TYPE` from `mlp`, `endpoint_flow`, and `latent_path_flow`, and select `GENERATOR_FAMILY` from `goalmax25` and `general_uniform_future`. The released flow configuration uses 16 Euler steps. The Action-Prior-Chunk config fixes chunk size 5, training seed 777, and the shared frozen LeWM representation used by Q, V, and policy.
-
-## Config-driven evaluation
-
-Copy the path file and one complete evaluation config:
+The LeWM rows use the corresponding four fixed launchers `eval_lewm_baseline_h{25,50,75,100}_4tasks.sh`. The three paper ablation blocks are paired inside their launchers:
 
 ```bash
-cp configs/lewmpp_paths.example.env configs/lewmpp_paths.env
-cp configs/eval_lewmpp_h25.example.env configs/eval_lewmpp_h25.env
-bash eval.sh configs/eval_lewmpp_h25.env
+bash experiments/eval_ablation_action_prior_h25_4tasks.sh
+bash experiments/eval_ablation_subgoal_path_h25_4tasks.sh
+bash experiments/eval_ablation_moh_h25_4tasks.sh
 ```
 
-The provided evaluation configs are directly runnable after their paths are filled:
+The first two use evaluation seeds 0, 1, and 42; the MoH block uses 0, 1, and 666, matching the manuscript. Each launcher reruns its own full row and its paired ablation row on identical sampled starts.
 
-| Config template | Experiment |
-|---|---|
-| `eval_lewmpp_h25.example.env` | Full LeWM++ with the H25 `goalmax25` generator |
-| `eval_lewmpp_general.example.env` | Full LeWM++ at H50/H75/H100 with the general generator |
-| `eval_no_subgoal.example.env` | LeWM++ w/o Subgoal Path |
-| `eval_no_action_prior.example.env` | LeWM++ w/o Action Prior, zero initialization |
-| `eval_no_moh.example.env` | LeWM++ w/o MoH, terminal cost |
-| `eval_lewm_baseline.example.env` | Standalone LeWM |
-| `eval_action_prior_chunk.example.env` | Standalone Action-Prior-Chunk |
+Additional release checks are `eval_action-prior-chunk_h25_4tasks.sh`, `eval_policy_mode_anchor_h25_4tasks.sh`, and `eval_subgoal_generators_h25_4tasks.sh`. Together with the action-prior ablation, these cover direct Action-Prior-Chunk, `policy_mode_anchor`, MLP/Endpoint Flow/LatentPath Flow use, and zero initialization. The ordinary main scripts use `policy_mode`.
 
-Each file contains the complete command arguments rather than relying on hidden defaults. To use `policy_mode_anchor`, change the action-prior mode and its corresponding output-directory component in a copied config. To evaluate an MLP or Endpoint Flow checkpoint, change `--generator-type` and `--subgoal-generator-checkpoint` together. The Python preflight rejects inconsistent combinations.
-
-The paper planner settings are explicit in every LeWM++ config: 300 candidates, 5 CEM iterations, 30 elites, planning horizon `P=2`, receding horizon `R=1`, action chunk `c=5`, and 16 flow steps. The policy is always conditioned on the original final goal.
-
-To reproduce a matrix, create one config per task, horizon, and evaluation seed, then launch those config files with `eval.sh`. Keeping each run explicit makes its checkpoint family, GPU, seed, and output provenance reviewable without reading launcher logic.
+All LeWM++ launchers write the planner settings directly: 300 CEM candidates, 5 iterations, 30 elites, planner horizon `P=2`, receding horizon `R=1`, action chunk `c=5`, and 16 flow steps. The action policy is always conditioned on the original final goal.
 
 Aggregate completed JSON files without pooling groups, families, architectures, or prior modes:
 
@@ -169,9 +160,7 @@ The deviations are population standard deviations over evaluation seeds with fix
 uv run pytest -q
 uv run ruff check impls
 uv run ruff format --check impls
-bash -n train.sh
-bash -n eval.sh
-for config in configs/*.example.env; do bash -n "$config"; done
+for script in experiments/*.sh; do bash -n "$script"; done
 ```
 
 Tests cover the three generator shapes, family validation, consecutive-frame history, zero/policy/policy-anchor initialization, final-goal-only policy conditioning, MoH/terminal scoring, direct Action-Prior-Chunk execution, and the reduced release surface.
@@ -179,9 +168,8 @@ Tests cover the three generator shapes, family validation, consecutive-frame his
 ## Repository layout
 
 ```text
-train.sh                    Config-driven training launcher
-eval.sh                     Config-driven evaluation launcher and preflight
-configs/                    Complete train/eval config templates
+experiments/                One complete Bash launcher per experiment
+configs/lewmpp_paths.env    Machine-local paths only (ignored by Git)
 impls/action_prior_chunk.py Action-Prior-Chunk loader and direct policy
 impls/action-prior-chunk.py Action-Prior-Chunk training entrypoint
 impls/subgoal_generators.py MLP, Endpoint Flow, and LatentPath Flow
