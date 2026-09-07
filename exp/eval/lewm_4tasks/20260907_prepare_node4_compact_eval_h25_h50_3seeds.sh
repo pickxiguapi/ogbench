@@ -32,6 +32,7 @@ import pathlib
 import sys
 
 import h5py
+import hdf5plugin  # noqa: F401  # Register the source Blosc filter.
 import lancedb
 import numpy as np
 from PIL import Image
