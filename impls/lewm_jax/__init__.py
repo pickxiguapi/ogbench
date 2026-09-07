@@ -1,8 +1,8 @@
 """LeWM JAX using OGBench's native IMPALA-small encoder."""
 
+from lewm_jax.checkpoints import load_frozen_lewm
 from lewm_jax.loss import lewm_loss, sigreg_loss
 from lewm_jax.model import LeWM
-from lewm_jax.checkpoints import load_frozen_lewm
 
 ARCHITECTURE = 'lewm_impala_small'
 

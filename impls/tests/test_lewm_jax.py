@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-
 from lewm_jax import ARCHITECTURE, LeWM, lewm_loss
 from train_lewm_jax import LeWMConfig
 
@@ -25,12 +24,8 @@ def test_impala_lewm_forward_and_loss():
     pixels = jnp.zeros((2, 4, 64, 64, 3), dtype=jnp.uint8)
     actions = jnp.zeros((2, 4, 10), dtype=jnp.float32)
     params_key, dropout_key, sigreg_key = jax.random.split(jax.random.PRNGKey(0), 3)
-    variables = model.init(
-        {'params': params_key, 'dropout': dropout_key}, pixels, actions, train=False
-    )
-    embeddings, predictions = model.apply(
-        variables, pixels, actions, train=False, rngs={'dropout': dropout_key}
-    )
+    variables = model.init({'params': params_key, 'dropout': dropout_key}, pixels, actions, train=False)
+    embeddings, predictions = model.apply(variables, pixels, actions, train=False, rngs={'dropout': dropout_key})
     loss, (metrics, batch_stats) = lewm_loss(
         model,
         variables,
@@ -59,9 +54,7 @@ def test_rollout_min_over_horizon_cost_is_bounded_by_terminal_cost():
         train=False,
     )
 
-    terminal = model.apply(
-        variables, pixels, goals, candidates, method=model.rollout_cost
-    )
+    terminal = model.apply(variables, pixels, goals, candidates, method=model.rollout_cost)
     minimum = model.apply(
         variables,
         pixels,

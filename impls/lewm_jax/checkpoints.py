@@ -9,7 +9,6 @@ import jax.numpy as jnp
 
 from lewm_jax.model import LeWM
 
-
 ARCHITECTURE = 'lewm_impala_small'
 
 
@@ -19,18 +18,11 @@ def load_frozen_lewm(checkpoint):
     payload = flax.serialization.msgpack_restore(checkpoint.read_bytes())
     config = payload['config']
     if config.get('architecture') != ARCHITECTURE:
-        raise ValueError(
-            f'Checkpoint architecture {config.get("architecture")!r} is not '
-            f'{ARCHITECTURE!r}.'
-        )
+        raise ValueError(f'Checkpoint architecture {config.get("architecture")!r} is not {ARCHITECTURE!r}.')
     try:
-        dtype = {'bf16': jnp.bfloat16, 'float32': jnp.float32}[
-            config.get('precision', 'bf16')
-        ]
+        dtype = {'bf16': jnp.bfloat16, 'float32': jnp.float32}[config.get('precision', 'bf16')]
     except KeyError as error:
-        raise ValueError(
-            f'Unsupported checkpoint precision: {config.get("precision")!r}.'
-        ) from error
+        raise ValueError(f'Unsupported checkpoint precision: {config.get("precision")!r}.') from error
     model = LeWM(
         image_size=int(config['image_size']),
         embed_dim=int(config['embed_dim']),

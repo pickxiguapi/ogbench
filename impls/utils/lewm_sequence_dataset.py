@@ -21,14 +21,18 @@ from PIL import Image
 IMAGENET_MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
 
+
 def _fixed_list_to_numpy(column):
     """Convert a Lance/Arrow action column to a dense float32 array."""
     import pyarrow as pa
 
     if pa.types.is_fixed_size_list(column.type):
-        return column.flatten().to_numpy(zero_copy_only=False).reshape(
-            len(column), column.type.list_size
-        ).astype(np.float32, copy=False)
+        return (
+            column.flatten()
+            .to_numpy(zero_copy_only=False)
+            .reshape(len(column), column.type.list_size)
+            .astype(np.float32, copy=False)
+        )
     return np.asarray(column.to_pylist(), dtype=np.float32)
 
 

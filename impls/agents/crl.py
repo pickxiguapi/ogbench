@@ -41,9 +41,9 @@ class CRLAgent(flax.struct.PyTreeNode):
             psi = psi[None, ...]
         logits = jnp.einsum('eik,ejk->ije', phi, psi) / jnp.sqrt(phi.shape[-1])
         # logits.shape is (B, B, e) with one term for positive pair and (B - 1) terms for negative pairs in each row.
-        I = jnp.eye(batch_size)
+        identity = jnp.eye(batch_size)
         contrastive_loss = jax.vmap(
-            lambda _logits: optax.sigmoid_binary_cross_entropy(logits=_logits, labels=I),
+            lambda _logits: optax.sigmoid_binary_cross_entropy(logits=_logits, labels=identity),
             in_axes=-1,
             out_axes=-1,
         )(logits)
@@ -52,16 +52,16 @@ class CRLAgent(flax.struct.PyTreeNode):
         # Compute additional statistics.
         v = jnp.exp(v)
         logits = jnp.mean(logits, axis=-1)
-        correct = jnp.argmax(logits, axis=1) == jnp.argmax(I, axis=1)
-        logits_pos = jnp.sum(logits * I) / jnp.sum(I)
-        logits_neg = jnp.sum(logits * (1 - I)) / jnp.sum(1 - I)
+        correct = jnp.argmax(logits, axis=1) == jnp.argmax(identity, axis=1)
+        logits_pos = jnp.sum(logits * identity) / jnp.sum(identity)
+        logits_neg = jnp.sum(logits * (1 - identity)) / jnp.sum(1 - identity)
 
         return contrastive_loss, {
             'contrastive_loss': contrastive_loss,
             'v_mean': v.mean(),
             'v_max': v.max(),
             'v_min': v.min(),
-            'binary_accuracy': jnp.mean((logits > 0) == I),
+            'binary_accuracy': jnp.mean((logits > 0) == identity),
             'categorical_accuracy': jnp.mean(correct),
             'logits_pos': logits_pos,
             'logits_neg': logits_neg,

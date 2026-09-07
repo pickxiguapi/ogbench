@@ -191,7 +191,6 @@ def evaluate_dataset_goals(
     policy,
     image_size=224,
     video_dir=None,
-    trace_dir=None,
 ):
     """Evaluate one policy from fixed dataset states and future image goals."""
     spec = TASK_SPECS[task]
@@ -204,7 +203,7 @@ def evaluate_dataset_goals(
         )
         for _ in episodes
     ]
-    frames = [[] for _ in envs] if video_dir or trace_dir else None
+    frames = [[] for _ in envs] if video_dir else None
     seeds = []
     goals = []
     try:
@@ -244,75 +243,16 @@ def evaluate_dataset_goals(
                 break
 
         if frames is not None:
-            if video_dir:
-                import imageio.v3 as iio
+            import imageio.v3 as iio
 
-                output = Path(video_dir)
-                output.mkdir(parents=True, exist_ok=True)
-                for index, episode_frames in enumerate(frames):
-                    iio.imwrite(
-                        output / f'episode_{index}.mp4',
-                        np.stack(episode_frames),
-                        fps=10,
-                    )
-            if trace_dir:
-                output = Path(trace_dir)
-                output.mkdir(parents=True, exist_ok=True)
-                traces = getattr(policy, 'latent_subgoal_trace', None)
-                if traces is None:
-                    raise ValueError(
-                        'Trace output requires a policy exposing latent_subgoal_trace.'
-                    )
-                for index, episode_frames in enumerate(frames):
-                    events = traces[index]
-                    plan_steps = np.asarray(
-                        [event['environment_step'] for event in events],
-                        dtype=np.int32,
-                    )
-                    predicted_paths = (
-                        np.stack([event['predicted_path'] for event in events])
-                        if events
-                        else np.empty((0, 0, 0), dtype=np.float32)
-                    )
-                    imagined_paths = (
-                        np.stack([event['imagined_path'] for event in events])
-                        if events
-                        else np.empty((0, 0, 0), dtype=np.float32)
-                    )
-                    current_embeddings = (
-                        np.stack([event['current_embedding'] for event in events])
-                        if events
-                        else np.empty((0, 0), dtype=np.float32)
-                    )
-                    normalized_action_blocks = (
-                        np.stack(
-                            [event['normalized_action_blocks'] for event in events]
-                        )
-                        if events
-                        else np.empty((0, 0, 0), dtype=np.float32)
-                    )
-                    environment_action_blocks = (
-                        np.stack(
-                            [event['environment_action_blocks'] for event in events]
-                        )
-                        if events
-                        else np.empty((0, 0, 0, 0), dtype=np.float32)
-                    )
-                    np.savez_compressed(
-                        output / f'episode_{index:03d}.npz',
-                        frames=np.stack(episode_frames),
-                        goal=goals[index],
-                        episode=np.asarray(episodes[index]),
-                        start=np.asarray(starts[index]),
-                        seed=np.asarray(-1 if seeds[index] is None else seeds[index]),
-                        success=np.asarray(successes[index]),
-                        plan_steps=plan_steps,
-                        current_embeddings=current_embeddings,
-                        predicted_paths=predicted_paths,
-                        imagined_paths=imagined_paths,
-                        normalized_action_blocks=normalized_action_blocks,
-                        environment_action_blocks=environment_action_blocks,
-                    )
+            output = Path(video_dir)
+            output.mkdir(parents=True, exist_ok=True)
+            for index, episode_frames in enumerate(frames):
+                iio.imwrite(
+                    output / f'episode_{index}.mp4',
+                    np.stack(episode_frames),
+                    fps=10,
+                )
         return {
             'success_rate': float(successes.mean() * 100.0),
             'episode_successes': successes,

@@ -8,12 +8,12 @@ import flax
 import jax
 import jax.numpy as jnp
 import optax
-
-from agents.gciql_chunk import GCIQLChunkAgent
-from agents.gciql_chunk import get_config as get_gciql_chunk_config
 from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState
 from utils.networks import GCActor, GCValue
+
+from agents.gciql_chunk import GCIQLChunkAgent
+from agents.gciql_chunk import get_config as get_gciql_chunk_config
 
 
 class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
@@ -34,17 +34,11 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
 
     def value_loss(self, batch, grad_params):
         q_observations, q_goals = self._inputs(batch, 'q', 'value')
-        q1, q2 = self.network.select('target_critic')(
-            q_observations, q_goals, batch['actions']
-        )
+        q1, q2 = self.network.select('target_critic')(q_observations, q_goals, batch['actions'])
         q = jnp.minimum(q1, q2)
         v_observations, v_goals = self._inputs(batch, 'v', 'value')
-        v = self.network.select('value')(
-            v_observations, v_goals, params=grad_params
-        )
-        value_loss = self.expectile_loss(
-            q - v, q - v, self.config['expectile']
-        ).mean()
+        v = self.network.select('value')(v_observations, v_goals, params=grad_params)
+        value_loss = self.expectile_loss(q - v, q - v, self.config['expectile']).mean()
         return value_loss, {
             'value_loss': value_loss,
             'v_mean': v.mean(),
@@ -53,9 +47,7 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
         }
 
     def critic_loss(self, batch, grad_params):
-        next_v_observations, v_goals = self._inputs(
-            batch, 'v', 'value', next_state=True
-        )
+        next_v_observations, v_goals = self._inputs(batch, 'v', 'value', next_state=True)
         next_v = self.network.select('value')(next_v_observations, v_goals)
         chunk_discount = self.config['discount'] ** self.config['chunk_size']
         target = batch['rewards'] + chunk_discount * batch['masks'] * next_v
@@ -83,14 +75,10 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
 
         if self.config['actor_loss'] == 'awr':
             v = self.network.select('value')(v_observations, v_goals)
-            q1, q2 = self.network.select('critic')(
-                q_observations, q_goals, batch['actions']
-            )
+            q1, q2 = self.network.select('critic')(q_observations, q_goals, batch['actions'])
             adv = jnp.minimum(q1, q2) - v
             weights = jnp.minimum(jnp.exp(adv * self.config['alpha']), 100.0)
-            dist = self.network.select('actor')(
-                pi_observations, pi_goals, params=grad_params
-            )
+            dist = self.network.select('actor')(pi_observations, pi_goals, params=grad_params)
             log_prob = dist.log_prob(batch['actions'])
             actor_loss = -(weights * log_prob).mean()
             return actor_loss, {
@@ -102,22 +90,12 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
             }
 
         if self.config['actor_loss'] == 'ddpgbc':
-            dist = self.network.select('actor')(
-                pi_observations, pi_goals, params=grad_params
-            )
-            q_actions = (
-                dist.mode()
-                if self.config['const_std']
-                else dist.sample(seed=rng)
-            )
+            dist = self.network.select('actor')(pi_observations, pi_goals, params=grad_params)
+            q_actions = dist.mode() if self.config['const_std'] else dist.sample(seed=rng)
             q_actions = jnp.clip(q_actions, -1, 1)
-            q1, q2 = self.network.select('critic')(
-                q_observations, q_goals, q_actions
-            )
+            q1, q2 = self.network.select('critic')(q_observations, q_goals, q_actions)
             q = jnp.minimum(q1, q2)
-            q_loss = -q.mean() / jax.lax.stop_gradient(
-                jnp.abs(q).mean() + 1e-6
-            )
+            q_loss = -q.mean() / jax.lax.stop_gradient(jnp.abs(q).mean() + 1e-6)
             log_prob = dist.log_prob(batch['actions'])
             bc_loss = -(self.config['alpha'] * log_prob).mean()
             actor_loss = q_loss + bc_loss
@@ -138,9 +116,7 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
     def create(cls, seed, ex_pixels, ex_latents, ex_actions, config):
         if config['discrete']:
             raise ValueError('LeWMGCIQLChunkAgent supports continuous actions only.')
-        if config['encoder'] is None and not all(
-            config[f'share_{module}_encoder'] for module in ('q', 'v', 'pi')
-        ):
+        if config['encoder'] is None and not all(config[f'share_{module}_encoder'] for module in ('q', 'v', 'pi')):
             raise ValueError('Non-shared modules require a pixel encoder.')
 
         rng = jax.random.PRNGKey(seed)
@@ -173,9 +149,7 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
         )
 
         def examples(module):
-            observations = (
-                ex_latents if config[f'share_{module}_encoder'] else ex_pixels
-            )
+            observations = ex_latents if config[f'share_{module}_encoder'] else ex_pixels
             return observations, observations
 
         network_info = {
@@ -187,9 +161,7 @@ class LeWMGCIQLChunkAgent(GCIQLChunkAgent):
             ),
             'actor': (actor_def, examples('pi')),
         }
-        network_def = ModuleDict(
-            {name: definition for name, (definition, _) in network_info.items()}
-        )
+        network_def = ModuleDict({name: definition for name, (definition, _) in network_info.items()})
         network_params = network_def.init(
             init_rng,
             **{name: args for name, (_, args) in network_info.items()},

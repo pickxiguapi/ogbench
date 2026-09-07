@@ -6,9 +6,9 @@ from typing import Any
 
 import flax.linen as nn
 import jax.numpy as jnp
-
-from lewm_jax.modules import ARPredictor, ActionEmbedder, ProjectionMLP
 from utils.encoders import encoder_modules
+
+from lewm_jax.modules import ActionEmbedder, ARPredictor, ProjectionMLP
 
 
 class LeWM(nn.Module):
@@ -30,9 +30,7 @@ class LeWM(nn.Module):
 
     def setup(self):
         self.encoder = encoder_modules['impala_small']()
-        self.projector = ProjectionMLP(
-            self.embed_dim, hidden_dim=self.projector_hidden_dim, dtype=self.dtype
-        )
+        self.projector = ProjectionMLP(self.embed_dim, hidden_dim=self.projector_hidden_dim, dtype=self.dtype)
         self.action_encoder = ActionEmbedder(
             self.embed_dim,
             smoothed_dim=self.action_smoothed_dim,
@@ -50,9 +48,7 @@ class LeWM(nn.Module):
             emb_dropout=self.predictor_emb_dropout,
             dtype=self.dtype,
         )
-        self.pred_projector = ProjectionMLP(
-            self.embed_dim, hidden_dim=self.projector_hidden_dim, dtype=self.dtype
-        )
+        self.pred_projector = ProjectionMLP(self.embed_dim, hidden_dim=self.projector_hidden_dim, dtype=self.dtype)
 
     def encode_pixels(self, pixels, *, train):
         leading_shape = pixels.shape[:-3]
@@ -65,9 +61,7 @@ class LeWM(nn.Module):
         action_embeddings = self.action_encoder(actions)
         predictions = self.predictor(embeddings, action_embeddings, train=train)
         leading_shape = predictions.shape[:-1]
-        predictions = self.pred_projector(
-            predictions.reshape(-1, self.embed_dim), train=train
-        )
+        predictions = self.pred_projector(predictions.reshape(-1, self.embed_dim), train=train)
         return predictions.reshape(*leading_shape, self.embed_dim)
 
     def __call__(self, pixels, actions, *, train):
@@ -100,34 +94,22 @@ class LeWM(nn.Module):
         batch_size = embeddings.shape[0]
         rollout_predictions = []
         for step in range(horizon - history):
-            flat_embeddings = embeddings.reshape(
-                batch_size * num_samples, embeddings.shape[2], self.embed_dim
-            )
-            flat_actions = actions.reshape(
-                batch_size * num_samples, actions.shape[2], actions.shape[3]
-            )
+            flat_embeddings = embeddings.reshape(batch_size * num_samples, embeddings.shape[2], self.embed_dim)
+            flat_actions = actions.reshape(batch_size * num_samples, actions.shape[2], actions.shape[3])
             prediction = self.predict_embeddings(
                 flat_embeddings[:, -self.history_size :],
                 flat_actions[:, -self.history_size :],
                 train=False,
             )[:, -1]
-            rollout_predictions.append(
-                prediction.reshape(batch_size, num_samples, self.embed_dim)
-            )
+            rollout_predictions.append(prediction.reshape(batch_size, num_samples, self.embed_dim))
             embeddings = jnp.concatenate(
                 [embeddings, prediction.reshape(batch_size, num_samples, 1, self.embed_dim)],
                 axis=2,
             )
-            actions = jnp.concatenate(
-                [actions, future_actions[:, :, step : step + 1]], axis=2
-            )
+            actions = jnp.concatenate([actions, future_actions[:, :, step : step + 1]], axis=2)
 
-        flat_embeddings = embeddings.reshape(
-            batch_size * num_samples, embeddings.shape[2], self.embed_dim
-        )
-        flat_actions = actions.reshape(
-            batch_size * num_samples, actions.shape[2], actions.shape[3]
-        )
+        flat_embeddings = embeddings.reshape(batch_size * num_samples, embeddings.shape[2], self.embed_dim)
+        flat_actions = actions.reshape(batch_size * num_samples, actions.shape[2], actions.shape[3])
         prediction = self.predict_embeddings(
             flat_embeddings[:, -self.history_size :],
             flat_actions[:, -self.history_size :],
@@ -139,13 +121,9 @@ class LeWM(nn.Module):
 
     def rollout_cost(self, pixels, goals, action_candidates):
         """Score candidates by final predicted-to-goal embedding distance."""
-        goal_embeddings, predictions = self._rollout_predictions(
-            pixels, goals, action_candidates
-        )
+        goal_embeddings, predictions = self._rollout_predictions(pixels, goals, action_candidates)
         final_prediction = predictions[:, :, -1]
-        return jnp.sum(
-            (final_prediction - goal_embeddings[:, None]) ** 2, axis=-1
-        )
+        return jnp.sum((final_prediction - goal_embeddings[:, None]) ** 2, axis=-1)
 
     def rollout_cost_min_over_horizon(self, pixels, goals, action_candidates):
         """Score by the closest predicted rollout checkpoint to the goal.
@@ -154,10 +132,6 @@ class LeWM(nn.Module):
         horizon/action block of 5/5, the checkpoints correspond to 5, 10, 15,
         20, and 25 future atomic actions.  The current observation is excluded.
         """
-        goal_embeddings, predictions = self._rollout_predictions(
-            pixels, goals, action_candidates
-        )
-        distances = jnp.sum(
-            (predictions - goal_embeddings[:, None, None]) ** 2, axis=-1
-        )
+        goal_embeddings, predictions = self._rollout_predictions(pixels, goals, action_candidates)
+        distances = jnp.sum((predictions - goal_embeddings[:, None, None]) ** 2, axis=-1)
         return jnp.min(distances, axis=-1)

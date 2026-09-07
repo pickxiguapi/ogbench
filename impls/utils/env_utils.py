@@ -22,21 +22,16 @@ class DatasetSpecEnv(gymnasium.Env):
             shape=tuple(observation_shape),
             dtype=observation_dtype,
         )
-        self.action_space = Box(
-            low=-1.0, high=1.0, shape=(int(action_dim),), dtype=np.float32
-        )
+        self.action_space = Box(low=-1.0, high=1.0, shape=(int(action_dim),), dtype=np.float32)
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        observation = np.zeros(
-            self.observation_space.shape, dtype=self.observation_space.dtype
-        )
+        observation = np.zeros(self.observation_space.shape, dtype=self.observation_space.dtype)
         return observation, {'goal': observation.copy()}
 
     def step(self, action):
         raise RuntimeError(
-            'DatasetSpecEnv is training-only. Use the separate dataset-goal '
-            'evaluator for Stable WM environments.'
+            'DatasetSpecEnv is training-only. Use the separate dataset-goal evaluator for Stable WM environments.'
         )
 
 
@@ -123,9 +118,7 @@ def make_env_and_datasets(
     if dataset_path is not None and dataset_path.endswith('.lance'):
         from utils.lewm_dataset import make_lewm_lance_datasets
 
-        train_dataset, val_dataset = make_lewm_lance_datasets(
-            dataset_path, validation_fraction=validation_fraction
-        )
+        train_dataset, val_dataset = make_lewm_lance_datasets(dataset_path, validation_fraction=validation_fraction)
         env = DatasetSpecEnv(
             train_dataset.observations.shape[1:],
             train_dataset.observations.dtype,

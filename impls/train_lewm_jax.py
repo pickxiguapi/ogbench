@@ -17,7 +17,6 @@ import numpy as np
 import optax
 from flax.training import train_state
 from lewm_jax import ARCHITECTURE, LeWM, lewm_loss
-from utils.lewm_npz_sequence_dataset import LeWMNPZSequenceDataset
 from utils.lewm_sequence_dataset import LeWMSequenceDataset
 
 
@@ -63,8 +62,6 @@ class LeWMTrainState(train_state.TrainState):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dataset_path', required=True)
-    parser.add_argument('--validation_dataset_path')
-    parser.add_argument('--dataset_format', choices=('auto', 'lance', 'npz'), default='auto')
     parser.add_argument('--save_dir', required=True)
     parser.add_argument('--exp_name', required=True)
     parser.add_argument('--decode_workers', type=int, default=6)
@@ -178,31 +175,18 @@ def main():
         sigreg_knots=args.sigreg_knots,
         sigreg_num_proj=args.sigreg_num_proj,
     )
-    dataset_format = args.dataset_format
-    if dataset_format == 'auto':
-        dataset_format = 'npz' if args.dataset_path.endswith('.npz') else 'lance'
-    validation_path = args.validation_dataset_path
     dataset_kwargs = {
         'num_steps': config.history_size + config.num_preds,
         'frameskip': config.frameskip,
         'seed': config.seed,
     }
-    if dataset_format == 'npz':
-        if validation_path is None:
-            validation_path = args.dataset_path.removesuffix('.npz') + '-val.npz'
-        dataset = LeWMNPZSequenceDataset(
-            args.dataset_path,
-            validation_path,
-            **dataset_kwargs,
-        )
-    else:
-        dataset = LeWMSequenceDataset(
-            args.dataset_path,
-            train_fraction=config.train_fraction,
-            decode_workers=config.decode_workers,
-            normalize_pixels=False,
-            **dataset_kwargs,
-        )
+    dataset = LeWMSequenceDataset(
+        args.dataset_path,
+        train_fraction=config.train_fraction,
+        decode_workers=config.decode_workers,
+        normalize_pixels=False,
+        **dataset_kwargs,
+    )
     output_dir = Path(args.save_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / 'config.json').open('w') as file:
@@ -210,8 +194,7 @@ def main():
             {
                 'exp_name': args.exp_name,
                 'dataset_path': args.dataset_path,
-                'validation_dataset_path': validation_path,
-                'dataset_format': dataset_format,
+                'dataset_format': 'lance',
                 **asdict(config),
             },
             file,
@@ -226,11 +209,7 @@ def main():
         raise ValueError('train_steps must be positive.')
     if config.save_interval_steps <= 0:
         raise ValueError('save_interval_steps must be positive.')
-    total_steps = (
-        config.train_steps
-        if config.train_steps is not None
-        else config.epochs * steps_per_epoch
-    )
+    total_steps = config.train_steps if config.train_steps is not None else config.epochs * steps_per_epoch
     num_epochs = (total_steps + steps_per_epoch - 1) // steps_per_epoch
     lr_schedule, warmup_steps = warmup_cosine_schedule(config.learning_rate, total_steps)
     optimizer = optax.chain(
@@ -274,9 +253,7 @@ def main():
         batch_stats=variables['batch_stats'],
         tx=optimizer,
     )
-    train_step, validation_step = make_steps(
-        model, loss_function, lr_schedule, config
-    )
+    train_step, validation_step = make_steps(model, loss_function, lr_schedule, config)
     parameter_count = sum(value.size for value in jax.tree_util.tree_leaves(state.params))
 
     print(f'exp_name={args.exp_name}')
@@ -313,17 +290,14 @@ def main():
             shuffled = shuffled[: epoch_steps * config.batch_size]
             train_rows = []
             for batch_start in range(0, len(shuffled), config.batch_size):
-                batch_np = dataset.get_batch(
-                    shuffled[batch_start : batch_start + config.batch_size]
-                )
+                batch_np = dataset.get_batch(shuffled[batch_start : batch_start + config.batch_size])
                 batch = jax.tree_util.tree_map(jnp.asarray, batch_np)
                 rng, dropout_key, sigreg_key = jax.random.split(rng, 3)
                 state, metrics = train_step(state, batch, dropout_key, sigreg_key)
                 train_rows.append(jax.device_get(metrics))
                 global_step += 1
                 if config.train_steps is not None and (
-                    global_step % config.save_interval_steps == 0
-                    or global_step == total_steps
+                    global_step % config.save_interval_steps == 0 or global_step == total_steps
                 ):
                     save_model(
                         state,

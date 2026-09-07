@@ -1,8 +1,6 @@
 import unittest
 
-import jax
 import jax.numpy as jnp
-
 from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent, get_config
 
 
@@ -21,9 +19,7 @@ class LeWMGCIQLChunkAgentTest(unittest.TestCase):
         pixels = jnp.zeros((2, 16, 16, 3), dtype=jnp.uint8)
         latents = jnp.zeros((2, config.latent_dim), dtype=jnp.float32)
         actions = jnp.zeros((2, 4), dtype=jnp.float32)
-        agent = LeWMGCIQLChunkAgent.create(
-            0, pixels[:1], latents[:1], actions[:1], config
-        )
+        agent = LeWMGCIQLChunkAgent.create(0, pixels[:1], latents[:1], actions[:1], config)
         batch = {
             'observations': pixels,
             'next_observations': pixels,

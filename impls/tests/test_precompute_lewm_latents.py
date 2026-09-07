@@ -1,6 +1,5 @@
 import h5py
 import numpy as np
-
 from precompute_lewm_latents import compute_episode_layout, copy_non_pixel_hdf5
 
 
@@ -16,9 +15,7 @@ def test_copy_non_pixel_hdf5_preserves_metadata_and_excludes_images(tmp_path):
     with h5py.File(source_path, 'w') as source:
         source.attrs['name'] = 'tiny'
         source.create_dataset('pixels', data=np.zeros((3, 4, 4, 3), dtype=np.uint8))
-        action = source.create_dataset(
-            'action', data=np.asarray([[1.0], [np.nan], [3.0]], dtype=np.float32)
-        )
+        action = source.create_dataset('action', data=np.asarray([[1.0], [np.nan], [3.0]], dtype=np.float32))
         action.attrs['units'] = 'normalized'
         nested = source.create_group('nested')
         nested.create_dataset('pixels', data=np.ones((3, 2, 2, 3), dtype=np.uint8))
@@ -31,8 +28,6 @@ def test_copy_non_pixel_hdf5_preserves_metadata_and_excludes_images(tmp_path):
         assert destination.attrs['name'] == 'tiny'
         assert 'pixels' not in destination
         assert 'pixels' not in destination['nested']
-        np.testing.assert_allclose(
-            destination['action'][...], [[1.0], [np.nan], [3.0]], equal_nan=True
-        )
+        np.testing.assert_allclose(destination['action'][...], [[1.0], [np.nan], [3.0]], equal_nan=True)
         assert destination['action'].attrs['units'] == 'normalized'
         np.testing.assert_array_equal(destination['nested/state'][...], np.arange(6).reshape(3, 2))

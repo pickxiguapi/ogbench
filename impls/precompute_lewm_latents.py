@@ -24,7 +24,6 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-
 FORMAT_VERSION = 1
 
 
@@ -62,9 +61,7 @@ def compute_episode_layout(episode_ids):
         raise ValueError('episode_idx must be a non-empty one-dimensional array.')
     changes = np.flatnonzero(np.diff(episode_ids) != 0) + 1
     offsets = np.concatenate(([0], changes)).astype(np.int64, copy=False)
-    lengths = np.diff(np.concatenate((offsets, [len(episode_ids)]))).astype(
-        np.int64, copy=False
-    )
+    lengths = np.diff(np.concatenate((offsets, [len(episode_ids)]))).astype(np.int64, copy=False)
     return offsets, lengths
 
 
@@ -124,9 +121,7 @@ def _fixed_list_to_numpy(column):
     import pyarrow as pa
 
     if pa.types.is_fixed_size_list(column.type):
-        return column.flatten().to_numpy(zero_copy_only=False).reshape(
-            len(column), column.type.list_size
-        )
+        return column.flatten().to_numpy(zero_copy_only=False).reshape(len(column), column.type.list_size)
     return np.asarray(column.to_pylist())
 
 
@@ -156,9 +151,7 @@ def read_lance_metadata(table):
     arrays['ep_offset'] = offsets
     arrays['ep_len'] = lengths
 
-    expected_steps = np.concatenate(
-        [np.arange(length, dtype=np.int64) for length in lengths]
-    )
+    expected_steps = np.concatenate([np.arange(length, dtype=np.int64) for length in lengths])
     if 'step_idx' in arrays:
         source_steps = arrays['step_idx'].astype(np.int64, copy=False)
         if not np.array_equal(source_steps, expected_steps):
@@ -184,11 +177,7 @@ class LancePixelReader:
             raise ValueError(f'Lance source has no pixels column: {self.path}')
         self.row_count = int(self.table.count_rows())
         self.schema = str(self.table.schema)
-        self._rows = (
-            Permutation.identity(self.table)
-            .select_columns(['pixels'])
-            .with_format('arrow')
-        )
+        self._rows = Permutation.identity(self.table).select_columns(['pixels']).with_format('arrow')
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(decode_workers)))
 
     @staticmethod
@@ -246,9 +235,7 @@ def initialize_partial_cache(
         output.attrs['checkpoint_path'] = str(checkpoint_path)
         output.attrs['checkpoint_sha256'] = checkpoint_sha256
         output.attrs['checkpoint_epoch'] = int(checkpoint_metadata['epoch'])
-        output.attrs['checkpoint_config_json'] = json.dumps(
-            checkpoint_metadata['config'], sort_keys=True, default=str
-        )
+        output.attrs['checkpoint_config_json'] = json.dumps(checkpoint_metadata['config'], sort_keys=True, default=str)
         output.attrs['architecture'] = str(checkpoint_metadata['config']['architecture'])
         output.attrs['embed_dim'] = embed_dim
         output.attrs['image_size'] = int(checkpoint_metadata['config']['image_size'])
@@ -301,10 +288,7 @@ def validate_existing_cache(
         }
         for key, value in expected.items():
             if file.attrs.get(key) != value:
-                raise ValueError(
-                    f'Existing cache metadata mismatch for {key}: '
-                    f'{file.attrs.get(key)!r} != {value!r}'
-                )
+                raise ValueError(f'Existing cache metadata mismatch for {key}: {file.attrs.get(key)!r} != {value!r}')
         if 'z' not in file or file['z'].shape != (reader.row_count, embed_dim):
             raise ValueError(f'Existing cache has an invalid z dataset: {path}')
         status = str(file.attrs.get('status', ''))
@@ -322,17 +306,11 @@ def encode_rows(reader, encode_pixels, *, start, stop, batch_size, on_batch):
     for batch_start in range(start, stop, batch_size):
         batch_stop = min(batch_start + batch_size, stop)
         pixels = reader.fetch(batch_start, batch_stop)
-        latents = np.asarray(
-            jax.device_get(encode_pixels(jnp.asarray(pixels))), dtype=np.float32
-        )
+        latents = np.asarray(jax.device_get(encode_pixels(jnp.asarray(pixels))), dtype=np.float32)
         if latents.ndim != 2 or len(latents) != len(pixels):
-            raise ValueError(
-                f'Encoder returned shape {latents.shape} for pixels {pixels.shape}.'
-            )
+            raise ValueError(f'Encoder returned shape {latents.shape} for pixels {pixels.shape}.')
         if not np.isfinite(latents).all():
-            raise FloatingPointError(
-                f'Encoder produced non-finite latents for rows [{batch_start}, {batch_stop}).'
-            )
+            raise FloatingPointError(f'Encoder produced non-finite latents for rows [{batch_start}, {batch_stop}).')
         on_batch(batch_start, batch_stop, pixels, latents)
 
 
@@ -392,11 +370,7 @@ def main():
 
     import jax
 
-    encode_pixels = jax.jit(
-        lambda pixels: model.apply(
-            variables, pixels, train=False, method=model.encode_pixels
-        )
-    )
+    encode_pixels = jax.jit(lambda pixels: model.apply(variables, pixels, train=False, method=model.encode_pixels))
     print(
         f'JAX backend={jax.default_backend()} devices={jax.devices()} '
         f'embed_dim={embed_dim} checkpoint_sha256={checkpoint_sha256}',
@@ -450,8 +424,7 @@ def main():
                 require_complete=True,
             )
             print(
-                f'Complete cache already exists; skipping: {output_path} '
-                f'(status={status}, rows={encoded_rows})',
+                f'Complete cache already exists; skipping: {output_path} (status={status}, rows={encoded_rows})',
                 flush=True,
             )
             return
@@ -475,8 +448,7 @@ def main():
             lance_arrays = read_lance_metadata(reader.table)
             if len(lance_arrays['episode_idx']) != reader.row_count:
                 raise ValueError(
-                    f'Lance metadata has {len(lance_arrays["episode_idx"])} rows, '
-                    f'but pixels have {reader.row_count}.'
+                    f'Lance metadata has {len(lance_arrays["episode_idx"])} rows, but pixels have {reader.row_count}.'
                 )
             initialize_partial_cache(
                 partial_path,

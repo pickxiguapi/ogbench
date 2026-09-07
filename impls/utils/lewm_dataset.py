@@ -26,12 +26,8 @@ def _compact_boundary_arrays(size, final_rows):
 
 def _standardize_actions(actions, reference_actions):
     """Match eval_ff.py's dataset-wide StandardScaler convention."""
-    mean = np.nanmean(reference_actions, axis=0, dtype=np.float64).astype(
-        np.float32
-    )
-    std = np.nanstd(reference_actions, axis=0, dtype=np.float64).astype(
-        np.float32
-    )
+    mean = np.nanmean(reference_actions, axis=0, dtype=np.float64).astype(np.float32)
+    std = np.nanstd(reference_actions, axis=0, dtype=np.float64).astype(np.float32)
     std = np.where(std > 0, std, 1.0).astype(np.float32)
     normalized = (actions.astype(np.float32, copy=False) - mean) / std
     return np.nan_to_num(normalized, nan=0.0), mean, std
@@ -45,11 +41,7 @@ class LazyLancePixelArray:
 
         self.start = int(start)
         self.stop = int(stop)
-        self._permutation = (
-            Permutation.identity(table)
-            .select_columns(['pixels'])
-            .with_format('arrow')
-        )
+        self._permutation = Permutation.identity(table).select_columns(['pixels']).with_format('arrow')
         first = self._decode(self._fetch([self.start])[0])
         self.shape = (self.stop - self.start, *first.shape)
         self.dtype = first.dtype
@@ -103,32 +95,26 @@ class LeWMLanceDataset:
 
         episode_chunks = []
         action_chunks = []
-        reader = table.to_lance().scanner(
-            columns=['episode_idx', 'action']
-        ).to_reader()
+        reader = table.to_lance().scanner(columns=['episode_idx', 'action']).to_reader()
         for batch in reader:
-            episode_col = batch.column(
-                batch.schema.get_field_index('episode_idx')
-            )
+            episode_col = batch.column(batch.schema.get_field_index('episode_idx'))
             episode_chunks.append(episode_col.to_numpy(zero_copy_only=False))
             action_col = batch.column(batch.schema.get_field_index('action'))
             if pa.types.is_fixed_size_list(action_col.type):
-                actions = action_col.flatten().to_numpy(
-                    zero_copy_only=False
-                ).reshape(len(action_col), action_col.type.list_size)
+                actions = (
+                    action_col.flatten()
+                    .to_numpy(zero_copy_only=False)
+                    .reshape(len(action_col), action_col.type.list_size)
+                )
             else:
                 actions = np.asarray(action_col.to_pylist(), dtype=np.float32)
             action_chunks.append(actions.astype(np.float32, copy=False))
 
-        episode_ids = np.concatenate(episode_chunks).astype(
-            np.int64, copy=False
-        )
+        episode_ids = np.concatenate(episode_chunks).astype(np.int64, copy=False)
         all_actions = np.concatenate(action_chunks)
         changes = np.flatnonzero(np.diff(episode_ids) != 0) + 1
         episode_offsets = np.concatenate([[0], changes]).astype(np.int64)
-        episode_lengths = np.diff(
-            np.concatenate([episode_offsets, [len(episode_ids)]])
-        ).astype(np.int64)
+        episode_lengths = np.diff(np.concatenate([episode_offsets, [len(episode_ids)]])).astype(np.int64)
 
         split_episode = int(len(episode_offsets) * (1 - validation_fraction))
         split_episode = min(max(split_episode, 1), len(episode_offsets) - 1)
@@ -153,22 +139,15 @@ class LeWMLanceDataset:
         # converted Lance table contains unused zero placeholders there.
         source_hdf5 = path.with_suffix('.h5')
         if not source_hdf5.is_file():
-            raise FileNotFoundError(
-                f'Original HDF5 dataset is required for action statistics: '
-                f'{source_hdf5}'
-            )
+            raise FileNotFoundError(f'Original HDF5 dataset is required for action statistics: {source_hdf5}')
         with h5py.File(source_hdf5, 'r') as h5_file:
-            reference_actions = h5_file['action'][...].astype(
-                np.float32, copy=False
-            )
+            reference_actions = h5_file['action'][...].astype(np.float32, copy=False)
         self.actions, self.action_mean, self.action_std = _standardize_actions(
             all_actions[start:stop], reference_actions
         )
 
         final_rows = selected_offsets + selected_lengths - 1 - start
-        self.terminals, self.valids = _compact_boundary_arrays(
-            self.size, final_rows
-        )
+        self.terminals, self.valids = _compact_boundary_arrays(self.size, final_rows)
         (self.valid_idxs,) = np.nonzero(self.valids > 0)
         self._fields = {
             'observations': self.observations,
@@ -195,9 +174,7 @@ class LeWMLanceDataset:
             idxs = self.get_random_idxs(batch_size)
         idxs = np.asarray(idxs)
         result = {key: value[idxs] for key, value in self._fields.items()}
-        result['next_observations'] = self.observations[
-            np.minimum(idxs + 1, self.size - 1)
-        ]
+        result['next_observations'] = self.observations[np.minimum(idxs + 1, self.size - 1)]
         return result
 
 

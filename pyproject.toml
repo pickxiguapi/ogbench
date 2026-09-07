@@ -29,7 +29,7 @@ dynamic = ["description"]
 
 [project.optional-dependencies]
 train = [
-    "jax[cuda12] == 0.4.33",
+    "jax == 0.4.33",
     "flax == 0.8.5",
     "distrax == 0.1.5",
     "ml_collections",
@@ -44,7 +44,11 @@ train = [
     "pillow",
 ]
 dev = [
+    "pytest",
     "ruff",
+]
+cuda12 = [
+    "jax[cuda12] == 0.4.33; platform_system == 'Linux'",
 ]
 all = [
     "ogbench[train,dev]",
@@ -57,5 +61,11 @@ Home = "https://github.com/pickxiguapi/ogbench"
 target-version = "py310"
 line-length = 120
 
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
 [tool.ruff.format]
 quote-style = "single"
+
+[tool.pytest.ini_options]
+pythonpath = [".", "impls"]

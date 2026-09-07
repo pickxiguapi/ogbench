@@ -1,8 +1,6 @@
-from types import SimpleNamespace
-
 import h5py
 import numpy as np
-from gciql_chunk_policy import GCIQLChunkPolicy, LeWMEncodedAgent
+from action_prior import FinalGoalActionPrior, FinalGoalPolicy
 from utils.evaluation import evaluate
 
 from ogbench.lewm_envs.evaluation import (
@@ -84,30 +82,6 @@ def test_tworoom_dataset_goal_evaluation_smoke():
     assert result['seeds'] == [None]
 
 
-class _ChunkAgent:
-    action_horizon = 2
-
-    def sample_actions(self, observations, goals, seed, temperature):
-        assert observations.shape == (2, 8, 8, 3)
-        assert goals.shape == observations.shape
-        assert temperature == 0.0
-        assert seed.shape == (2,)
-        return np.array([[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0]], dtype=np.float32)
-
-
-def test_gciql_chunk_policy_uses_explicit_action_horizon():
-    scaler = StandardActionScaler(np.array([[-1.0, -2.0], [1.0, 2.0]], dtype=np.float32))
-    policy = GCIQLChunkPolicy(_ChunkAgent(), scaler, seed=0)
-    policy.reset(SimpleNamespace(shape=(2,)), num_envs=2)
-    pixels = np.zeros((2, 1, 8, 8, 3), dtype=np.uint8)
-    goals = np.ones_like(pixels)
-    first = policy.get_actions(pixels, goals, np.array([True, True]))
-    second = policy.get_actions(pixels, goals, np.array([True, False]))
-    np.testing.assert_allclose(first, [[0.0, 2.0], [4.0, 10.0]])
-    np.testing.assert_allclose(second[0], [2.0, 6.0])
-    assert np.isnan(second[1]).all()
-
-
 class _LatentChunkAgent:
     action_horizon = 2
 
@@ -116,16 +90,40 @@ class _LatentChunkAgent:
         np.testing.assert_allclose(goals, [[12.0], [12.0]])
         return np.zeros((2, 4), dtype=np.float32)
 
+
 def test_lewm_encoded_agent_encodes_actor_pixels_and_goals():
     def encode_pixels(pixels):
         return np.asarray(pixels).mean(axis=(1, 2, 3), keepdims=False)[:, None]
 
-    agent = LeWMEncodedAgent(_LatentChunkAgent(), encode_pixels, share_pi_encoder=True)
+    agent = FinalGoalActionPrior(_LatentChunkAgent(), encode_pixels, lewm_checkpoint='/tmp/lewm.msgpack')
     observations = np.full((2, 2, 2, 3), 3.0, dtype=np.float32)
     goals = np.full((2, 2, 2, 3), 12.0, dtype=np.float32)
     actions = agent.sample_actions(observations, goals, seed=None, temperature=0.0)
     assert agent.action_horizon == 2
     assert actions.shape == (2, 4)
+
+
+class _FinalGoalPrior:
+    action_horizon = 2
+
+    def sample_actions(self, observations, goals, seed, temperature):
+        del observations, seed, temperature
+        np.testing.assert_array_equal(goals, np.full((1, 2, 2, 3), 7, dtype=np.uint8))
+        return np.zeros((1, 4), dtype=np.float32)
+
+
+class _ActionSpace:
+    shape = (2,)
+
+
+def test_direct_chunk_policy_always_uses_final_goal_pixels():
+    scaler = StandardActionScaler(np.array([[-1.0, -1.0], [1.0, 1.0]]))
+    policy = FinalGoalPolicy(_FinalGoalPrior(), scaler, seed=0)
+    policy.reset(_ActionSpace(), num_envs=1)
+    pixels = np.zeros((1, 1, 2, 2, 3), dtype=np.uint8)
+    goals = np.full_like(pixels, 7)
+    actions = policy.get_actions(pixels, goals, np.array([True]))
+    assert actions.shape == (1, 2)
 
 
 class _AtomicAgentWithUnrelatedChunkConfig:

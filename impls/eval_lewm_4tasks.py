@@ -1,4 +1,4 @@
-"""Evaluate policy-only, LeWM-only, and guided control on LeWM-4Tasks."""
+"""Evaluate LeWM++, its ablations, LeWM, and GCIQL-Chunk on LeWM-4Tasks."""
 
 from __future__ import annotations
 
@@ -7,13 +7,9 @@ import json
 import time
 from pathlib import Path
 
-from gciql_chunk_policy import (
-    GCIQLChunkPolicy,
-    LatentSubgoalGCIQLChunkPolicy,
-    load_agent_config,
-    load_lance_policy,
-)
-from lewm_jax.planner import JAXLeWMCEMPolicy, StagedLeWMCEMPolicy
+from action_prior import FinalGoalPolicy, load_action_prior
+from lewm_jax.planner import LeWMPPController
+from subgoal_generators import GENERATOR_ARCHITECTURES
 
 from ogbench.lewm_envs.evaluation import (
     HDF5EvaluationDataset,
@@ -23,151 +19,125 @@ from ogbench.lewm_envs.evaluation import (
     task_paths,
 )
 
+VARIANTS = ('full', 'no_subgoal', 'no_action_prior', 'no_moh', 'lewm', 'gciql_chunk')
+DEFAULT_CEM_SAMPLES = 300
+DEFAULT_CEM_ITERATIONS = 5
+DEFAULT_FLOW_STEPS = 16
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--task', choices=('cube', 'pusht', 'reacher', 'tworoom'), required=True)
+    parser.add_argument('--variant', choices=VARIANTS, required=True)
+    parser.add_argument('--experiment-group', required=True)
     parser.add_argument(
-        '--controller', choices=('direct_policy', 'lewm_cem'), required=True
+        '--generator-family',
+        choices=('goalmax25', 'general_uniform_future', 'no_generator'),
+        required=True,
     )
-    parser.add_argument(
-        '--policy-guidance',
-        choices=(
-            'none',
-            'mode',
-            'mode_anchor',
-            'population',
-            'lewm_select',
-            'lewm_elite',
-        ),
-        default='none',
-    )
-    parser.add_argument('--guidance-population-size', type=int, default=0)
-    parser.add_argument('--guidance-temperature', type=float, default=1.0)
-    parser.add_argument('--guidance-elite-size', type=int, default=8)
-    parser.add_argument('--guidance-first-block-std', type=float)
-    parser.add_argument(
-        '--guidance-goal-mode',
-        choices=('subgoal', 'final'),
-        default='subgoal',
-    )
-    parser.add_argument('--use-subgoal', action='store_true')
+    parser.add_argument('--generator-type', choices=tuple(GENERATOR_ARCHITECTURES), default='latent_path_flow')
     parser.add_argument('--data-root', required=True)
-    parser.add_argument('--lewm-checkpoint')
-    parser.add_argument('--policy-checkpoint-dir')
-    parser.add_argument('--policy-checkpoint-step', type=int, default=100_000)
+    parser.add_argument('--lewm-checkpoint', required=True)
+    parser.add_argument('--action-prior-checkpoint-dir')
+    parser.add_argument('--action-prior-checkpoint-step', type=int, default=100_000)
+    parser.add_argument(
+        '--action-prior-mode',
+        choices=('zero', 'policy_mode', 'policy_mode_anchor'),
+        default='policy_mode',
+    )
+    parser.add_argument('--subgoal-generator-checkpoint')
+    parser.add_argument('--flow-sampling-steps', type=int, default=DEFAULT_FLOW_STEPS)
+    parser.add_argument('--generator-num-samples', type=int, default=1)
     parser.add_argument('--num-eval', type=int, default=50)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--goal-offset-steps', type=int, default=25)
     parser.add_argument('--eval-budget', type=int, default=50)
-    parser.add_argument('--cem-horizon', type=int, default=5)
+    parser.add_argument('--cem-horizon', type=int, default=2)
     parser.add_argument('--cem-receding-horizon', type=int, default=1)
     parser.add_argument('--action-block', type=int, default=5)
-    parser.add_argument('--cem-num-samples', type=int, default=300)
-    parser.add_argument('--cem-iterations', type=int, default=30)
+    parser.add_argument('--cem-num-samples', type=int, default=DEFAULT_CEM_SAMPLES)
+    parser.add_argument('--cem-iterations', type=int, default=DEFAULT_CEM_ITERATIONS)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
-    parser.add_argument('--latent-subgoal-checkpoint')
-    parser.add_argument('--flow-sampling-steps', type=int)
-    parser.add_argument('--num-samples', type=int, default=1)
-    parser.add_argument('--final-goal-switch-steps', type=int)
-    parser.add_argument(
-        '--cem-cost-mode',
-        choices=('last', 'moh', 'path_mean'),
-        default='moh',
-    )
+    parser.add_argument('--cem-min-std', type=float, default=1e-3)
+    parser.add_argument('--cem-cost-mode', choices=('last', 'moh'), default='moh')
     parser.add_argument('--video-dir')
-    parser.add_argument('--trace-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
 
 
+def expected_components(variant):
+    """Return (subgoal, action prior, CEM cost, direct policy)."""
+    return {
+        'full': (True, True, 'moh', False),
+        'no_subgoal': (False, True, 'moh', False),
+        'no_action_prior': (True, False, 'moh', False),
+        'no_moh': (True, True, 'last', False),
+        'lewm': (False, False, 'last', False),
+        'gciql_chunk': (False, True, None, True),
+    }[variant]
+
+
+def validate_args(args):
+    for name in (
+        'action_prior_checkpoint_step',
+        'flow_sampling_steps',
+        'generator_num_samples',
+        'num_eval',
+        'goal_offset_steps',
+        'eval_budget',
+        'cem_horizon',
+        'cem_receding_horizon',
+        'action_block',
+        'cem_num_samples',
+        'cem_iterations',
+        'cem_topk',
+    ):
+        if getattr(args, name) <= 0:
+            raise ValueError(f'--{name.replace("_", "-")} must be positive.')
+    if args.cem_var_scale <= 0 or args.cem_min_std <= 0:
+        raise ValueError('CEM variance scale and minimum std must be positive.')
+
+    use_subgoal, use_prior, cost_mode, direct_policy = expected_components(args.variant)
+    if use_subgoal != (args.subgoal_generator_checkpoint is not None):
+        raise ValueError(f'Variant {args.variant} has an invalid subgoal-generator setting.')
+    if use_prior != (args.action_prior_checkpoint_dir is not None):
+        raise ValueError(f'Variant {args.variant} has an invalid action-prior checkpoint setting.')
+    if use_prior != (args.action_prior_mode != 'zero'):
+        raise ValueError(f'Variant {args.variant} has an invalid action-prior mode.')
+    if direct_policy and args.action_prior_mode != 'policy_mode':
+        raise ValueError('Direct GCIQL-Chunk evaluation requires action_prior_mode=policy_mode.')
+    if not direct_policy and args.cem_cost_mode != cost_mode:
+        raise ValueError(f'Variant {args.variant} requires CEM cost {cost_mode}.')
+    if use_subgoal == (args.generator_family == 'no_generator'):
+        raise ValueError('Generator-family label does not match the selected variant.')
+    if not use_subgoal and args.generator_num_samples != 1:
+        raise ValueError('--generator-num-samples only applies to a subgoal generator.')
+
+
 def main():
     args = parse_args()
-    needs_lewm = args.controller == 'lewm_cem'
-    needs_policy = args.controller == 'direct_policy' or args.policy_guidance != 'none'
-    needs_subgoal = args.use_subgoal
-    if args.controller == 'direct_policy' and args.policy_guidance != 'none':
-        raise ValueError('Policy guidance only applies to the lewm_cem controller.')
-    if needs_lewm != (args.lewm_checkpoint is not None):
-        raise ValueError('Invalid controller/--lewm-checkpoint combination.')
-    if needs_policy != (args.policy_checkpoint_dir is not None):
-        raise ValueError('Invalid controller/guidance policy-checkpoint combination.')
-    if needs_subgoal != (args.latent_subgoal_checkpoint is not None):
-        raise ValueError(
-            'Invalid use-subgoal/--latent-subgoal-checkpoint combination.'
-        )
-    if args.num_samples <= 0:
-        raise ValueError('--num-samples must be positive.')
-    if args.flow_sampling_steps is not None:
-        if not needs_subgoal or args.controller != 'lewm_cem':
-            raise ValueError(
-                '--flow-sampling-steps requires lewm_cem with --use-subgoal.'
-            )
-        if args.flow_sampling_steps <= 0:
-            raise ValueError('--flow-sampling-steps must be positive.')
-    if not needs_subgoal and args.num_samples != 1:
-        raise ValueError('--num-samples only applies when --use-subgoal is set.')
-    if args.final_goal_switch_steps is not None:
-        if args.controller != 'lewm_cem' or not needs_subgoal:
-            raise ValueError(
-                '--final-goal-switch-steps requires lewm_cem with --use-subgoal.'
-            )
-        if args.final_goal_switch_steps < 0:
-            raise ValueError('--final-goal-switch-steps must be non-negative.')
-    if args.guidance_population_size < 0:
-        raise ValueError('--guidance-population-size must be non-negative.')
-    if args.guidance_temperature < 0:
-        raise ValueError('--guidance-temperature must be non-negative.')
-    if args.guidance_elite_size <= 0:
-        raise ValueError('--guidance-elite-size must be positive.')
-    if (
-        args.guidance_first_block_std is not None
-        and args.guidance_first_block_std <= 0
-    ):
-        raise ValueError('--guidance-first-block-std must be positive.')
-
+    validate_args(args)
+    use_subgoal, use_prior, _, direct_policy = expected_components(args.variant)
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
     try:
-        episodes, starts = dataset.sample_starts(
-            args.num_eval, args.goal_offset_steps, args.seed
-        )
+        episodes, starts = dataset.sample_starts(args.num_eval, args.goal_offset_steps, args.seed)
         scaler = StandardActionScaler(dataset.get_column('action'))
-        policy_agent = None
-        representation_mode = None
-        if needs_policy:
-            _, _, policy_flags = load_agent_config(args.policy_checkpoint_dir)
-            representation_mode = policy_flags.get('representation', {}).get(
-                'mode', 'independent'
-            )
-            policy_agent = load_lance_policy(
+        action_prior = (
+            load_action_prior(
                 lance_path,
-                args.policy_checkpoint_dir,
-                args.policy_checkpoint_step,
+                args.action_prior_checkpoint_dir,
+                args.action_prior_checkpoint_step,
+                args.lewm_checkpoint,
             )
-            if (
-                needs_subgoal
-                and args.policy_guidance != 'none'
-                and representation_mode not in ('pi', 'all')
-            ):
-                raise ValueError(
-                    'Subgoal-guided CEM requires a pi/all checkpoint whose actor '
-                    'accepts frozen LeWM latent goals.'
-                )
-        if args.controller == 'direct_policy':
-            if needs_subgoal:
-                policy = LatentSubgoalGCIQLChunkPolicy(
-                    policy_agent,
-                    scaler,
-                    args.seed,
-                    args.latent_subgoal_checkpoint,
-                    args.num_samples,
-                    args.action_block,
-                )
-            else:
-                policy = GCIQLChunkPolicy(policy_agent, scaler, args.seed)
+            if use_prior
+            else None
+        )
+        if direct_policy:
+            controller = FinalGoalPolicy(action_prior, scaler, args.seed)
         else:
-            planner_kwargs = dict(
+            controller = LeWMPPController(
                 checkpoint=args.lewm_checkpoint,
                 scaler=scaler,
                 seed=args.seed,
@@ -178,34 +148,23 @@ def main():
                 iterations=args.cem_iterations,
                 topk=args.cem_topk,
                 var_scale=args.cem_var_scale,
+                min_std=args.cem_min_std,
                 cost_mode=args.cem_cost_mode,
-                guidance_policy=policy_agent,
-                guidance_mode=args.policy_guidance,
-                guidance_population_size=args.guidance_population_size,
-                guidance_temperature=args.guidance_temperature,
-                guidance_elite_size=args.guidance_elite_size,
-                guidance_first_block_std=args.guidance_first_block_std,
-                guidance_goal_mode=args.guidance_goal_mode,
+                action_prior=action_prior,
+                action_prior_mode=args.action_prior_mode,
                 paired_plan_keys=True,
+                subgoal_generator_checkpoint=args.subgoal_generator_checkpoint,
+                subgoal_generator_num_samples=args.generator_num_samples,
+                flow_sampling_steps=args.flow_sampling_steps,
             )
-            local_policy = JAXLeWMCEMPolicy(
-                **planner_kwargs,
-                latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
-                latent_subgoal_num_samples=args.num_samples,
-                latent_subgoal_flow_sampling_steps=args.flow_sampling_steps,
-            )
-            if args.final_goal_switch_steps is None:
-                policy = local_policy
-            else:
-                final_policy = JAXLeWMCEMPolicy(
-                    **planner_kwargs,
-                    latent_subgoal_checkpoint=None,
-                )
-                policy = StagedLeWMCEMPolicy(
-                    local_policy,
-                    final_policy,
-                    args.final_goal_switch_steps,
-                )
+            if use_subgoal:
+                actual = controller.subgoal_generator.config['architecture']
+                expected = GENERATOR_ARCHITECTURES[args.generator_type]
+                if actual not in expected:
+                    raise ValueError(
+                        f'Generator type mismatch: checkpoint has {actual!r}, expected one of {expected!r}.'
+                    )
+
         started = time.time()
         metrics = evaluate_dataset_goals(
             task=args.task,
@@ -214,79 +173,59 @@ def main():
             starts=starts,
             goal_offset=args.goal_offset_steps,
             eval_budget=args.eval_budget,
-            policy=policy,
+            policy=controller,
             video_dir=args.video_dir,
-            trace_dir=args.trace_dir,
         )
     finally:
         dataset.close()
 
+    generator = None if direct_policy else controller.subgoal_generator
     result = {
         'suite': 'lewm_4tasks',
         'task': args.task,
-        'controller': args.controller,
-        'policy_guidance': args.policy_guidance,
-        'policy_guidance_config': {
-            'population_size': args.guidance_population_size,
-            'temperature': args.guidance_temperature,
-            'elite_size': args.guidance_elite_size,
-            'first_block_std': args.guidance_first_block_std,
-            'goal_mode': args.guidance_goal_mode,
-            'uses_q': False,
-            'uses_v': False,
+        'variant': args.variant,
+        'experiment_group': args.experiment_group,
+        'generator_family': args.generator_family,
+        'generator_type': args.generator_type if use_subgoal else None,
+        'components': {
+            'subgoal_generator': use_subgoal,
+            'action_prior_mode': args.action_prior_mode,
+            'min_over_horizon': None if direct_policy else args.cem_cost_mode == 'moh',
+            'direct_policy': direct_policy,
         },
-        'use_subgoal': args.use_subgoal,
-        'representation_mode': representation_mode,
-        'lewm_checkpoint': args.lewm_checkpoint,
-        'policy_checkpoint_dir': args.policy_checkpoint_dir,
-        'policy_checkpoint_step': args.policy_checkpoint_step if needs_policy else None,
-        'latent_subgoal': (
+        'lewm_checkpoint': str(Path(args.lewm_checkpoint).expanduser().resolve()),
+        'action_prior_checkpoint_dir': args.action_prior_checkpoint_dir,
+        'action_prior_checkpoint_step': args.action_prior_checkpoint_step if use_prior else None,
+        'subgoal_generator': (
             None
-            if not needs_subgoal
+            if generator is None
             else {
-                'checkpoint': policy.latent_subgoal_checkpoint,
-                'lewm_checkpoint': policy.lewm_checkpoint,
-                'checkpoint_step': policy.latent_subgoal_checkpoint_step,
-                'num_samples': policy.latent_subgoal_num_samples,
-                'sample_selection': policy.latent_subgoal_sample_selection,
-                'configured_flow_sampling_steps': policy.latent_subgoal_config.get(
-                    'flow_sampling_steps'
-                ),
-                'flow_sampling_steps': policy.latent_subgoal_flow_sampling_steps,
-                'training_subgoal_steps': int(
-                    policy.latent_subgoal_config['subgoal_steps']
-                ),
-                'training_action_block': int(
-                    policy.latent_subgoal_config['action_block']
-                ),
-                'selected_waypoint_index': policy.latent_subgoal_waypoint_index,
-                'selected_waypoint_step': policy.latent_subgoal_waypoint_step,
-                'history_size': policy.latent_subgoal_history_size,
-                'generation_counts': policy.latent_subgoal_generation_counts,
+                'checkpoint': generator.checkpoint,
+                'checkpoint_step': generator.checkpoint_step,
+                'num_samples': generator.num_samples,
+                'flow_sampling_steps': generator.flow_sampling_steps,
+                'config': generator.config,
+                'generation_counts': generator.generation_counts,
             }
         ),
-        'seed': args.seed,
-        'num_eval': args.num_eval,
-        'goal_offset_steps': args.goal_offset_steps,
-        'eval_budget': args.eval_budget,
-        'trace_dir': args.trace_dir,
-        'cem': (
-            None
-            if args.controller == 'direct_policy'
-            else {
-                'requested_horizon': args.cem_horizon,
-                'horizon': policy.horizon,
-                'receding_horizon': args.cem_receding_horizon,
-                'action_block': args.action_block,
-                'num_samples': args.cem_num_samples,
-                'iterations': args.cem_iterations,
-                'topk': args.cem_topk,
-                'var_scale': args.cem_var_scale,
-                'cost_mode': args.cem_cost_mode,
-                'final_goal_switch_steps': args.final_goal_switch_steps,
-                'final_goal_horizon': getattr(policy, 'final_goal_horizon', None),
-            }
-        ),
+        'protocol': {
+            'num_eval': args.num_eval,
+            'seed': args.seed,
+            'goal_offset_steps': args.goal_offset_steps,
+            'eval_budget': args.eval_budget,
+            'cem_horizon': None if direct_policy else controller.horizon,
+            'cem_receding_horizon': None if direct_policy else args.cem_receding_horizon,
+            'action_block': args.action_block,
+            'cem_num_samples': None if direct_policy else args.cem_num_samples,
+            'cem_iterations': None if direct_policy else args.cem_iterations,
+            'cem_topk': None if direct_policy else args.cem_topk,
+            'cem_var_scale': None if direct_policy else args.cem_var_scale,
+            'cem_min_std': None if direct_policy else args.cem_min_std,
+            'cem_cost_mode': None if direct_policy else args.cem_cost_mode,
+            'flow_sampling_steps': args.flow_sampling_steps if use_subgoal else None,
+            'policy_goal': 'final_goal',
+            'paired_plan_keys': not direct_policy,
+        },
         'metrics': metrics,
         'success_rate': metrics['success_rate'],
         'evaluation_time': time.time() - started,

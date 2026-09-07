@@ -99,7 +99,10 @@ class PredictorAttention(nn.Module):
         x = nn.LayerNorm(epsilon=1e-5, dtype=self.dtype, name='norm')(x)
         qkv = TorchLinear(self.heads * self.dim_head * 3, use_bias=False, dtype=self.dtype, name='to_qkv')(x)
         q, k, v = jnp.split(qkv, 3, axis=-1)
-        reshape = lambda z: z.reshape(z.shape[0], z.shape[1], self.heads, self.dim_head).transpose(0, 2, 1, 3)
+
+        def reshape(value):
+            return value.reshape(value.shape[0], value.shape[1], self.heads, self.dim_head).transpose(0, 2, 1, 3)
+
         q, k, v = reshape(q), reshape(k), reshape(v)
         logits = jnp.einsum('bhqd,bhkd->bhqk', q, k) * (self.dim_head**-0.5)
         causal = jnp.tril(jnp.ones((x.shape[1], x.shape[1]), dtype=bool))
@@ -138,22 +141,24 @@ class ConditionalBlock(nn.Module):
 
     @nn.compact
     def __call__(self, x, condition, *, train):
-        modulation = nn.Dense(6 * self.dim, kernel_init=nn.initializers.zeros,
-                              bias_init=nn.initializers.zeros, dtype=self.dtype,
-                              name='adaLN_modulation')(nn.silu(condition))
+        modulation = nn.Dense(
+            6 * self.dim,
+            kernel_init=nn.initializers.zeros,
+            bias_init=nn.initializers.zeros,
+            dtype=self.dtype,
+            name='adaLN_modulation',
+        )(nn.silu(condition))
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = jnp.split(modulation, 6, axis=-1)
-        y = nn.LayerNorm(epsilon=1e-6, use_scale=False, use_bias=False,
-                         dtype=self.dtype, name='norm_1')(x)
+        y = nn.LayerNorm(epsilon=1e-6, use_scale=False, use_bias=False, dtype=self.dtype, name='norm_1')(x)
         y = y * (1 + scale_msa) + shift_msa
-        x = x + gate_msa * PredictorAttention(self.dim, self.heads, self.dim_head,
-                                               self.dropout, self.dtype,
-                                               name='attention')(y, train=train)
-        y = nn.LayerNorm(epsilon=1e-6, use_scale=False, use_bias=False,
-                         dtype=self.dtype, name='norm_2')(x)
+        x = x + gate_msa * PredictorAttention(
+            self.dim, self.heads, self.dim_head, self.dropout, self.dtype, name='attention'
+        )(y, train=train)
+        y = nn.LayerNorm(epsilon=1e-6, use_scale=False, use_bias=False, dtype=self.dtype, name='norm_2')(x)
         y = y * (1 + scale_mlp) + shift_mlp
-        return x + gate_mlp * PredictorFeedForward(self.dim, self.mlp_dim,
-                                                    self.dropout, self.dtype,
-                                                    name='feed_forward')(y, train=train)
+        return x + gate_mlp * PredictorFeedForward(
+            self.dim, self.mlp_dim, self.dropout, self.dtype, name='feed_forward'
+        )(y, train=train)
 
 
 class ARPredictor(nn.Module):
@@ -169,13 +174,11 @@ class ARPredictor(nn.Module):
 
     @nn.compact
     def __call__(self, embeddings, action_embeddings, *, train):
-        position = self.param('position_embedding', nn.initializers.normal(1.0),
-                              (1, self.num_frames, self.dim))
+        position = self.param('position_embedding', nn.initializers.normal(1.0), (1, self.num_frames, self.dim))
         x = embeddings + position[:, : embeddings.shape[1]].astype(self.dtype)
         x = nn.Dropout(rate=self.emb_dropout, name='embedding_dropout')(x, deterministic=not train)
         for index in range(self.depth):
-            x = ConditionalBlock(self.dim, self.heads, self.dim_head, self.mlp_dim,
-                                 self.dropout, self.dtype, name=f'block_{index}')(
-                x, action_embeddings, train=train
-            )
+            x = ConditionalBlock(
+                self.dim, self.heads, self.dim_head, self.mlp_dim, self.dropout, self.dtype, name=f'block_{index}'
+            )(x, action_embeddings, train=train)
         return nn.LayerNorm(epsilon=1e-5, dtype=self.dtype, name='final_norm')(x)
