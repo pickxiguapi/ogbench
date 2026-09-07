@@ -29,7 +29,38 @@ METRICS = (
     'first_block_realization_mse_at_50pct_acid_coverage',
     'first_block_realization_mse_at_75pct_acid_coverage',
     'first_block_realization_mse_at_100pct_acid_coverage',
+    'episode_balanced_acid_error_mean',
+    'episode_balanced_acid_first_block_error_mean',
+    'episode_balanced_relative_min_subgoal_mse_mean',
+    'episode_balanced_reach_at_0.50',
+    'episode_balanced_reach_at_0.25',
+    'episode_balanced_first_block_realization_mse_mean',
 )
+
+EPISODE_BALANCED_EVENT_METRICS = {
+    'episode_balanced_acid_error_mean': 'acid_error',
+    'episode_balanced_acid_first_block_error_mean': 'acid_first_block_error',
+    'episode_balanced_relative_min_subgoal_mse_mean': 'relative_min_subgoal_mse',
+    'episode_balanced_reach_at_0.50': 'reach_at_0.50',
+    'episode_balanced_reach_at_0.25': 'reach_at_0.25',
+    'episode_balanced_first_block_realization_mse_mean': (
+        'first_block_realization_mse'
+    ),
+}
+
+
+def episode_balanced_metrics(events_path):
+    with np.load(events_path) as events:
+        episode_indices = np.asarray(events['episode_index'], dtype=np.int64)
+        output = {}
+        for output_name, event_name in EPISODE_BALANCED_EVENT_METRICS.items():
+            values = np.asarray(events[event_name], dtype=np.float64)
+            episode_values = [
+                float(np.nanmean(values[episode_indices == episode]))
+                for episode in np.unique(episode_indices)
+            ]
+            output[output_name] = float(np.nanmean(episode_values))
+    return output
 
 
 def parse_args():
@@ -66,9 +97,13 @@ def main():
                         missing.append(str(path))
                         continue
                     payload = json.loads(path.read_text())
-                    cells[(architecture, train_seed, eval_seed, task)] = payload[
-                        'metrics'
-                    ]
+                    metrics = dict(payload['metrics'])
+                    events_path = path.with_suffix('.events.npz')
+                    if not events_path.is_file():
+                        missing.append(str(events_path))
+                        continue
+                    metrics.update(episode_balanced_metrics(events_path))
+                    cells[(architecture, train_seed, eval_seed, task)] = metrics
     if missing:
         raise FileNotFoundError(
             f'Missing {len(missing)} reachability results; first: {missing[0]}'
