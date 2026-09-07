@@ -26,7 +26,7 @@ cd "$REPO_ROOT/impls"
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
-  save_dir="$ACTION_PRIOR_RUN_ROOT/$task"
+  save_dir="$EXPERIMENT_ROOT/open-source-retrain/action-prior-chunk/$task"
   log_file="$save_dir/train.log"
   mkdir -p "$save_dir"
 

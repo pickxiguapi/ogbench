@@ -22,7 +22,7 @@ pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
   seed=${SEEDS[$index]}
-  save_dir="$LEWM_RUN_ROOT/$task"
+  save_dir="$EXPERIMENT_ROOT/open-source-retrain/lewm/$task"
   log_file="$save_dir/train.log"
   mkdir -p "$save_dir"
 

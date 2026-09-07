@@ -34,7 +34,7 @@ for index in "${!TASKS[@]}"; do
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
     for seed in "${EVAL_SEEDS[@]}"; do
-      result_dir="$OUTPUT_ROOT/paper_main_lewmpp_h75/general_uniform_future/latent_path_flow/H75/full/policy_mode/seed${seed}/$task"
+      result_dir="$EXPERIMENT_ROOT/evals/lewm-4tasks/paper_main_lewmpp_h75/general_uniform_future/latent_path_flow/H75/full/policy_mode/seed${seed}/$task"
       mkdir -p "$result_dir"
       test ! -e "$result_dir/result.json"
       args=(

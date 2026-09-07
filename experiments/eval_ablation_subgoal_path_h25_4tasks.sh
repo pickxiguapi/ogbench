@@ -35,8 +35,8 @@ for index in "${!TASKS[@]}"; do
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
     for seed in "${EVAL_SEEDS[@]}"; do
-      full_dir="$OUTPUT_ROOT/paper_h25_subgoal_path_block/goalmax25/latent_path_flow/H25/full/policy_mode/seed${seed}/$task"
-      ablation_dir="$OUTPUT_ROOT/paper_h25_subgoal_path_block/goalmax25_protocol/no_generator/H25/no_subgoal/policy_mode/seed${seed}/$task"
+      full_dir="$EXPERIMENT_ROOT/evals/lewm-4tasks/paper_h25_subgoal_path_block/goalmax25/latent_path_flow/H25/full/policy_mode/seed${seed}/$task"
+      ablation_dir="$EXPERIMENT_ROOT/evals/lewm-4tasks/paper_h25_subgoal_path_block/goalmax25_protocol/no_generator/H25/no_subgoal/policy_mode/seed${seed}/$task"
       mkdir -p "$full_dir" "$ablation_dir"
       test ! -e "$full_dir/result.json"
       test ! -e "$ablation_dir/result.json"

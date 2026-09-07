@@ -60,6 +60,26 @@ def test_release_has_only_paper_experiment_launchers():
 def test_release_has_complete_config_templates():
     names = {path.name for path in (ROOT / 'configs').glob('*.example.env')}
     assert names == {'lewmpp_paths.example.env'}
+    text = (ROOT / 'configs' / 'lewmpp_paths.example.env').read_text()
+    for variable in ('LEWM_DATA_ROOT', 'EXPERIMENT_ROOT', 'PYTHON_BIN'):
+        assert f'export {variable}=' in text
+    for retired in (
+        'OUTPUT_ROOT',
+        'LEWM_RUN_ROOT',
+        'LEWM_LATENT_ROOT',
+        'ACTION_PRIOR_RUN_ROOT',
+        'SUBGOAL_RUN_ROOT',
+    ):
+        assert retired not in text
+
+
+def test_launchers_derive_generated_paths_from_common_roots():
+    scripts = '\n'.join(path.read_text() for path in (ROOT / 'experiments').glob('*.sh'))
+    assert '$EXPERIMENT_ROOT/open-source-retrain/lewm/' in scripts
+    assert '$EXPERIMENT_ROOT/open-source-retrain/action-prior-chunk/' in scripts
+    assert '$EXPERIMENT_ROOT/open-source-retrain/subgoal-generators/' in scripts
+    assert '$EXPERIMENT_ROOT/evals/lewm-4tasks/' in scripts
+    assert '$LEWM_DATA_ROOT/lewm-latents/' in scripts
 
 
 def test_action_prior_training_launcher_records_release_hyperparameters():

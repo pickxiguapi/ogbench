@@ -26,9 +26,9 @@ cd "$REPO_ROOT/impls"
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
-  output="$LEWM_LATENT_ROOT/$task.h5"
-  log_file="$LEWM_LATENT_ROOT/$task.log"
-  mkdir -p "$LEWM_LATENT_ROOT"
+  output="$LEWM_DATA_ROOT/lewm-latents/$task.h5"
+  log_file="$LEWM_DATA_ROOT/lewm-latents/$task.log"
+  mkdir -p "$LEWM_DATA_ROOT/lewm-latents"
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}

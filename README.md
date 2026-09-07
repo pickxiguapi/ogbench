@@ -81,6 +81,8 @@ source configs/lewmpp_paths.env
 
 `configs/lewmpp_paths.env` is ignored by Git. Checkpoints are not committed.
 
+Only three common settings are needed: `LEWM_DATA_ROOT`, `EXPERIMENT_ROOT`, and `PYTHON_BIN`. Launchers derive all generated paths from them. Training outputs are written below `$EXPERIMENT_ROOT/open-source-retrain/`, evaluation results below `$EXPERIMENT_ROOT/evals/lewm-4tasks/`, and precomputed latent datasets beside the source data under `$LEWM_DATA_ROOT/lewm-latents/`. The remaining entries in the file identify task-specific pretrained checkpoints and cannot be inferred from a common directory when using the released paper artifacts.
+
 The horizon-to-family mapping is strict:
 
 | Evaluation horizon | Family | Required `goal_sampling` | Required `max_goal_steps` |
@@ -148,8 +150,8 @@ Aggregate completed JSON files without pooling groups, families, architectures, 
 
 ```bash
 uv run python impls/aggregate_lewmpp_results.py \
-  --results-root "$OUTPUT_ROOT" \
-  --output "$OUTPUT_ROOT/summary.csv"
+  --results-root "$EXPERIMENT_ROOT/evals/lewm-4tasks" \
+  --output "$EXPERIMENT_ROOT/evals/lewm-4tasks/summary.csv"
 ```
 
 ## Reported H25 ablations

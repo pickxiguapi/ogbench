@@ -13,12 +13,12 @@ cd "$REPO_ROOT/impls"
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
-  save_dir="$SUBGOAL_RUN_ROOT/general_uniform_future/endpoint_flow/$task"
+  save_dir="$EXPERIMENT_ROOT/open-source-retrain/subgoal-generators/general_uniform_future/endpoint_flow/$task"
   mkdir -p "$save_dir"
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
     "$PYTHON_BIN" train_subgoal_generator.py \
-      --latent-dataset="$LEWM_LATENT_ROOT/$task.h5" \
+      --latent-dataset="$LEWM_DATA_ROOT/lewm-latents/$task.h5" \
       --save-dir="$save_dir" \
       --exp-name="lewmpp_general_uniform_future_endpoint_flow_${task}_seed0" \
       --generator-family=general_uniform_future \

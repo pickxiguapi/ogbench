@@ -48,7 +48,7 @@ for index in "${!TASKS[@]}"; do
       generator_type=${GENERATOR_TYPES[$generator_index]}
       checkpoint_index=$((index * 3 + generator_index))
       for seed in "${EVAL_SEEDS[@]}"; do
-        result_dir="$OUTPUT_ROOT/subgoal_generator_comparison_h25/goalmax25/${generator_type}/H25/full/policy_mode/seed${seed}/$task"
+        result_dir="$EXPERIMENT_ROOT/evals/lewm-4tasks/subgoal_generator_comparison_h25/goalmax25/${generator_type}/H25/full/policy_mode/seed${seed}/$task"
       mkdir -p "$result_dir"
       test ! -e "$result_dir/result.json"
         args=(
