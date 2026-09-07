@@ -3,8 +3,8 @@ set -euo pipefail
 
 # LeWM++ local-subgoal-horizon ablation for an already trained general
 # LatentPathFlow generator. K=15 remains the default for compatibility; callers
-# may set SUBGOAL_STEPS (for example, the tracked K=25 wrapper). Per the explicit
-# experiment request, both H25 and H50 use the general uniform-future family.
+# may set SUBGOAL_STEPS and GOAL_OFFSETS. Per the explicit experiment request,
+# every horizon in this local-horizon ablation uses general uniform-future.
 
 CLIENT_ID=${CLIENT_ID:-node3}
 GPU_ID=${GPU_ID:?Set GPU_ID}
@@ -21,10 +21,11 @@ POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chu
 SUBGOAL_STEPS=${SUBGOAL_STEPS:-15}
 SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k${SUBGOAL_STEPS}}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/lewm-4tasks}
-TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260907-lewmpp-general-k${SUBGOAL_STEPS}-h25-h50}
-LOG_ROOT=${LOG_ROOT:-$EVAL_ROOT/20260907_lewmpp_general_k${SUBGOAL_STEPS}_h25_h50_launchers}
 EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
 GOAL_OFFSETS=${GOAL_OFFSETS:-"25 50"}
+horizon_tag=${GOAL_OFFSETS// /-}
+TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260907-lewmpp-general-k${SUBGOAL_STEPS}-h${horizon_tag}}
+LOG_ROOT=${LOG_ROOT:-$EVAL_ROOT/20260907_lewmpp_general_k${SUBGOAL_STEPS}_h${horizon_tag}_launchers}
 NUM_EVAL=${NUM_EVAL:-50}
 SKIP_COMPLETED=${SKIP_COMPLETED:-1}
 POLICY_SEED=777
@@ -80,10 +81,16 @@ if (( ${#eval_seeds[@]} != 3 )); then
   echo "EVAL_SEEDS must contain exactly three values." >&2
   exit 2
 fi
-if [[ " ${goal_offsets[*]} " != " 25 50 " ]]; then
-  echo "This launcher is restricted to GOAL_OFFSETS='25 50'." >&2
+if (( ${#goal_offsets[@]} == 0 )); then
+  echo "GOAL_OFFSETS must contain at least one value." >&2
   exit 2
 fi
+for goal_offset in "${goal_offsets[@]}"; do
+  if [[ ! "$goal_offset" =~ ^[0-9]+$ ]] || (( goal_offset < SUBGOAL_STEPS )); then
+    echo "Each GOAL_OFFSETS value must be an integer >= SUBGOAL_STEPS=$SUBGOAL_STEPS." >&2
+    exit 2
+  fi
+done
 
 mkdir -p "$LOG_ROOT" "$TMP_ROOT"
 

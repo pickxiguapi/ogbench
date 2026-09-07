@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build compact, protocol-equivalent LeWM evaluation datasets for H25/H50 and
-# eval seeds 0/1/42. The compact HDF5 files preserve full episode metadata and
-# action statistics, but materialize state/pixel rows only for the exact starts
-# and goals used by this evaluation matrix. Tiny Lance tables provide the shape
-# sample needed to restore the frozen GCIQL policy without copying full tables.
+# Build compact, protocol-equivalent LeWM evaluation datasets. The defaults are
+# H25/H50 and eval seeds 0/1/42; callers may override GOAL_OFFSETS, EVAL_SEEDS,
+# NUM_EVAL, and OUTPUT_ROOT. Full episode metadata and action statistics are
+# preserved, while state/pixel rows are materialized only for exact starts and
+# goals. Tiny Lance tables provide the frozen GCIQL policy's shape sample.
 
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -14,7 +14,12 @@ source "$OGBENCH_ROOT/scripts/client_env.sh"
 
 PYTHON_BIN=${PYTHON_BIN_OVERRIDE:-/data-training/yyf/envs/ogbench/bin/python}
 SOURCE_ROOT=${SOURCE_ROOT:-/data-training/yyf/datasets/latent-geometry}
-OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/datasets/lewm-eval-compact-h25-h50-seeds0-1-42-v1}
+EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
+GOAL_OFFSETS=${GOAL_OFFSETS:-"25 50"}
+NUM_EVAL=${NUM_EVAL:-50}
+seed_tag=${EVAL_SEEDS// /-}
+horizon_tag=${GOAL_OFFSETS// /-}
+OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/datasets/lewm-eval-compact-h${horizon_tag}-seeds${seed_tag}-v1}
 
 if [[ -e "$OUTPUT_ROOT" ]]; then
   echo "Refusing to overwrite existing OUTPUT_ROOT: $OUTPUT_ROOT" >&2
@@ -25,7 +30,7 @@ building_root="${OUTPUT_ROOT}.building.$$"
 mkdir -p "$building_root"
 
 PYTHONPATH="$OGBENCH_ROOT:$OGBENCH_ROOT/impls" "$PYTHON_BIN" - \
-  "$SOURCE_ROOT" "$building_root" <<'PY'
+  "$SOURCE_ROOT" "$building_root" "$EVAL_SEEDS" "$GOAL_OFFSETS" "$NUM_EVAL" <<'PY'
 import io
 import json
 import pathlib
@@ -39,9 +44,13 @@ from PIL import Image
 
 source_root = pathlib.Path(sys.argv[1])
 output_root = pathlib.Path(sys.argv[2])
-seeds = (0, 1, 42)
-horizons = (25, 50)
-num_eval = 50
+seeds = tuple(int(value) for value in sys.argv[3].split())
+horizons = tuple(int(value) for value in sys.argv[4].split())
+num_eval = int(sys.argv[5])
+if not seeds or not horizons or num_eval <= 0:
+    raise SystemExit('EVAL_SEEDS and GOAL_OFFSETS must be nonempty; NUM_EVAL must be positive.')
+if any(horizon <= 0 for horizon in horizons):
+    raise SystemExit(f'GOAL_OFFSETS must be positive: {horizons!r}')
 
 tasks = {
     'tworoom': ('tworoom.h5', ('proprio',)),
