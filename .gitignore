@@ -12,4 +12,5 @@ dist/
 /logs/
 /wandb/
 /reports/
-/configs/lewmpp_paths.env
+/configs/*.env
+!/configs/*.example.env

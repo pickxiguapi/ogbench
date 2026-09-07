@@ -58,7 +58,14 @@ On Linux with CUDA 12:
 uv sync --extra train --extra cuda12 --extra dev
 ```
 
-All training and evaluation jobs are launched through the Bash files in `exp/lewmpp/`. Activate `.venv`, or invoke a launcher as `uv run bash exp/lewmpp/<script>.sh`.
+The two public launchers are deliberately small and live at the repository root:
+
+```text
+train.sh   Read one training config and run its Python entrypoint.
+eval.sh    Read one evaluation config, validate it, and run evaluation.
+```
+
+Activate `.venv`, or invoke them through `uv run bash`.
 
 ## Data and path configuration
 
@@ -78,122 +85,63 @@ The horizon-to-family mapping is strict:
 | H25 | `goalmax25` | `uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25` | `25` |
 | H50/H75/H100 | `general_uniform_future` | `hiql_uniform_future_same_trajectory` | unset / `null` |
 
-Before evaluation, the Bash launcher reads the `config.json` adjacent to every generator checkpoint and aborts on a family or architecture mismatch. Output paths contain experiment group, generator family, generator type, horizon, variant, prior mode, seed, and task, so incompatible results cannot overwrite or silently pool.
+Before evaluation, `eval.sh` asks the evaluator to perform a validation-only pass. It reads the `config.json` adjacent to the generator checkpoint and aborts on a family, sampling protocol, maximum-goal distance, architecture, data, or checkpoint mismatch. Output paths in the provided configs contain experiment group, generator family, generator type, horizon, variant, prior mode, seed, and task, so incompatible results do not overwrite or silently pool.
 
-## Train the components
+## Config-driven training
 
-Train the frozen LeWM:
+Every path, hyperparameter, GPU assignment, entrypoint, and output location is written in a config. The Bash launcher contains no experiment-specific branches.
 
-```bash
-DATASET_PATH=/data/cube.lance \
-OUTPUT_DIR=/runs/lewm/cube \
-TRAIN_SEED=3072 \
-bash exp/lewmpp/train_lewm.sh
-```
+| Config template | Purpose |
+|---|---|
+| `configs/train_lewm.example.env` | Train the frozen LeWM |
+| `configs/precompute_latents.example.env` | Build the checkpoint-bound latent cache |
+| `configs/train_action_prior.example.env` | Train final-goal GCIQL-AWR-Chunk |
+| `configs/train_subgoal_generator.example.env` | Train MLP, Endpoint Flow, or LatentPath Flow |
 
-Build the checkpoint-bound latent cache:
-
-```bash
-TASK=cube \
-LANCE_PATH=/data/cube.lance \
-LEWM_CHECKPOINT=/runs/lewm/cube/weights_epoch_10.msgpack \
-OUTPUT_PATH=/data/latents/cube.h5 \
-bash exp/lewmpp/precompute_latents.sh
-```
-
-Train any generator type and family by changing two variables:
+Copy the desired template, fill its paths, and run it:
 
 ```bash
-TASK=cube \
-GENERATOR_TYPE=latent_path_flow \
-FAMILY=goalmax25 \
-LATENT_DATASET=/data/latents/cube.h5 \
-OUTPUT_ROOT=/runs/subgoal-generators \
-bash exp/lewmpp/train_subgoal_generator.sh
+cp configs/train_lewm.example.env configs/train_lewm.env
+bash train.sh configs/train_lewm.env
 ```
 
-Valid generator types are `mlp`, `endpoint_flow`, and `latent_path_flow`; valid families are `goalmax25` and `general_uniform_future`. Flow models train and sample with 16 Euler steps by default.
-
-Train the final-goal GCIQL-AWR-Chunk model:
+The same launcher runs every training stage:
 
 ```bash
-TASK=cube \
-DATASET_PATH=/data/cube.lance \
-LEWM_CHECKPOINT=/runs/lewm/cube/weights_epoch_10.msgpack \
-OUTPUT_ROOT=/runs/action-prior \
-bash exp/lewmpp/train_action_prior.sh
+bash train.sh configs/precompute_latents.env
+bash train.sh configs/train_action_prior.env
+bash train.sh configs/train_subgoal_generator.env
 ```
 
-The release configuration uses chunk size 5, AWR, seed 777, and a shared frozen LeWM representation for Q, V, and policy.
+In the subgoal config, select `GENERATOR_TYPE` from `mlp`, `endpoint_flow`, and `latent_path_flow`, and select `GENERATOR_FAMILY` from `goalmax25` and `general_uniform_future`. The released flow configuration uses 16 Euler steps. The action-prior config fixes chunk size 5, AWR, training seed 777, and the shared frozen LeWM representation used by Q, V, and policy.
 
-## Run one evaluation
+## Config-driven evaluation
 
-The default planner uses 300 candidates, 5 CEM iterations, 30 elites, planning horizon `P=2`, receding horizon `R=1`, action chunk `c=5`, and 16 flow steps.
+Copy the path file and one complete evaluation config:
 
 ```bash
-TASK=cube \
-VARIANT=full \
-EXPERIMENT_GROUP=main_h25 \
-GOAL_OFFSET_STEPS=25 \
-EVAL_SEED=0 \
-GENERATOR_TYPE=latent_path_flow \
-ACTION_PRIOR_MODE=policy_mode \
-LEWM_CHECKPOINT="$LEWM_CUBE_CHECKPOINT" \
-POLICY_CHECKPOINT_DIR="$POLICY_CUBE_CHECKPOINT_DIR" \
-SUBGOAL_GENERATOR_CHECKPOINT="$GOALMAX25_CUBE_CHECKPOINT" \
-bash exp/lewmpp/evaluate.sh
+cp configs/lewmpp_paths.example.env configs/lewmpp_paths.env
+cp configs/eval_lewmpp_h25.example.env configs/eval_lewmpp_h25.env
+bash eval.sh configs/eval_lewmpp_h25.env
 ```
 
-Useful switches are:
+The provided evaluation configs are directly runnable after their paths are filled:
 
-```bash
-# Same model with the anchored policy mode.
-ACTION_PRIOR_MODE=policy_mode_anchor bash exp/lewmpp/evaluate.sh
+| Config template | Experiment |
+|---|---|
+| `eval_lewmpp_h25.example.env` | Full LeWM++ with the H25 `goalmax25` generator |
+| `eval_lewmpp_general.example.env` | Full LeWM++ at H50/H75/H100 with the general generator |
+| `eval_no_subgoal.example.env` | LeWM++ w/o Subgoal Path |
+| `eval_no_action_prior.example.env` | LeWM++ w/o Action Prior, zero initialization |
+| `eval_no_moh.example.env` | LeWM++ w/o MoH, terminal cost |
+| `eval_lewm_baseline.example.env` | Standalone LeWM |
+| `eval_gciql_chunk.example.env` | Standalone GCIQL-AWR-Chunk |
 
-# Use another trained subgoal model.
-GENERATOR_TYPE=endpoint_flow \
-SUBGOAL_GENERATOR_CHECKPOINT=/runs/endpoint_flow/checkpoint_200000.msgpack \
-bash exp/lewmpp/evaluate.sh
+Each file contains the complete command arguments rather than relying on hidden defaults. To use `policy_mode_anchor`, change the action-prior mode and its corresponding output-directory component in a copied config. To evaluate an MLP or Endpoint Flow checkpoint, change `--generator-type` and `--subgoal-generator-checkpoint` together. The Python preflight rejects inconsistent combinations.
 
-# The three ablations and two baselines.
-VARIANT=no_subgoal bash exp/lewmpp/evaluate.sh
-VARIANT=no_action_prior bash exp/lewmpp/evaluate.sh
-VARIANT=no_moh bash exp/lewmpp/evaluate.sh
-VARIANT=lewm bash exp/lewmpp/evaluate.sh
-VARIANT=gciql_chunk bash exp/lewmpp/evaluate.sh
-```
+The paper planner settings are explicit in every LeWM++ config: 300 candidates, 5 CEM iterations, 30 elites, planning horizon `P=2`, receding horizon `R=1`, action chunk `c=5`, and 16 flow steps. The policy is always conditioned on the original final goal.
 
-For variants that do not use a component, its checkpoint variable may remain set; the launcher omits it from the Python command and records the component as disabled.
-
-## Reproduce the paper matrix
-
-After filling and sourcing `configs/lewmpp_paths.env`:
-
-```bash
-bash exp/lewmpp/reproduce_paper.sh
-```
-
-To reproduce only the full LeWM++ H25/H50/H75/H100 main result with one
-evaluation seed, use the focused launcher:
-
-```bash
-EVAL_SEED=42 \
-GPU_IDS="0 1 2 3" \
-bash exp/lewmpp/evaluate_main_one_seed.sh
-```
-
-The launcher validates all 16 task/horizon jobs before dispatch. H25 must use
-the bounded `goalmax25` generator, while H50/H75/H100 must use the
-`general_uniform_future` generator. Set `VALIDATE_ONLY=1` to check paths and
-checkpoint metadata without starting evaluation.
-
-The wrapper runs:
-
-- full LeWM++ at H25/H50/H75/H100;
-- the H25 `no_subgoal`, `no_action_prior`, and `no_moh` matched ablation blocks;
-- standalone LeWM and GCIQL-AWR-Chunk baselines at all four offsets.
-
-Set `RUN_LONG_HORIZON=0` or `RUN_BASELINES=0` to skip those groups. The H25 action-prior and subgoal blocks use evaluation seeds `{0,1,42}`; the MoH block uses `{0,1,666}`, matching the reported runs. Each full-model rerun remains in its own experiment group.
+To reproduce a matrix, create one config per task, horizon, and evaluation seed, then launch those config files with `eval.sh`. Keeping each run explicit makes its checkpoint family, GPU, seed, and output provenance reviewable without reading launcher logic.
 
 Aggregate completed JSON files without pooling groups, families, architectures, or prior modes:
 
@@ -221,7 +169,9 @@ The deviations are population standard deviations over evaluation seeds with fix
 uv run pytest -q
 uv run ruff check impls
 uv run ruff format --check impls
-for script in exp/lewmpp/*.sh; do bash -n "$script"; done
+bash -n train.sh
+bash -n eval.sh
+for config in configs/*.example.env; do bash -n "$config"; done
 ```
 
 Tests cover the three generator shapes, family validation, consecutive-frame history, zero/policy/policy-anchor initialization, final-goal-only policy conditioning, MoH/terminal scoring, direct GCIQL chunk execution, and the reduced release surface.
@@ -229,8 +179,9 @@ Tests cover the three generator shapes, family validation, consecutive-frame his
 ## Repository layout
 
 ```text
-configs/                    Local path template
-exp/lewmpp/                 Public training/evaluation launchers
+train.sh                    Config-driven training launcher
+eval.sh                     Config-driven evaluation launcher and preflight
+configs/                    Complete train/eval config templates
 impls/action_prior.py       GCIQL-AWR-Chunk loader and direct policy
 impls/subgoal_generators.py MLP, Endpoint Flow, and LatentPath Flow
 impls/lewm_jax/planner.py   Canonical LeWM++ controller

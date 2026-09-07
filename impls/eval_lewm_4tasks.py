@@ -63,6 +63,7 @@ def parse_args():
     parser.add_argument('--cem-cost-mode', choices=('last', 'moh'), default='moh')
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
+    parser.add_argument('--validate-only', action='store_true')
     return parser.parse_args()
 
 
@@ -115,9 +116,80 @@ def validate_args(args):
         raise ValueError('--generator-num-samples only applies to a subgoal generator.')
 
 
+def require_file(path, label):
+    path = Path(path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f'{label} not found: {path}')
+    return path
+
+
+def require_path(path, label):
+    path = Path(path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f'{label} not found: {path}')
+    return path
+
+
+def validate_release_files(args):
+    """Validate all data and checkpoint metadata before allocating an environment."""
+    use_subgoal, use_prior, _, _ = expected_components(args.variant)
+    require_file(args.lewm_checkpoint, 'LeWM checkpoint')
+    hdf5_path, lance_path = task_paths(args.task, args.data_root)
+    require_file(hdf5_path, 'evaluation HDF5 dataset')
+
+    if use_prior:
+        require_path(lance_path, 'action-prior Lance dataset')
+        checkpoint_dir = Path(args.action_prior_checkpoint_dir).expanduser().resolve()
+        require_file(checkpoint_dir / 'flags.json', 'action-prior flags')
+        require_file(
+            checkpoint_dir / f'params_{args.action_prior_checkpoint_step}.pkl',
+            'action-prior checkpoint',
+        )
+
+    if not use_subgoal:
+        return
+
+    checkpoint = require_file(args.subgoal_generator_checkpoint, 'subgoal-generator checkpoint')
+    config_path = require_file(checkpoint.parent / 'config.json', 'adjacent generator config')
+    config = json.loads(config_path.read_text())
+
+    if args.goal_offset_steps == 25:
+        expected_family = 'goalmax25'
+        expected_sampling = 'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25'
+        expected_max_goal_steps = 25
+    elif args.goal_offset_steps > 25:
+        expected_family = 'general_uniform_future'
+        expected_sampling = 'hiql_uniform_future_same_trajectory'
+        expected_max_goal_steps = None
+    else:
+        raise ValueError('The release protocol supports H25 and H>25 only.')
+
+    if args.generator_family != expected_family:
+        raise ValueError(f'H{args.goal_offset_steps} requires {expected_family}, got {args.generator_family}.')
+    if config.get('goal_sampling') != expected_sampling:
+        raise ValueError(
+            f'{expected_family} goal_sampling mismatch: {config.get("goal_sampling")!r} != {expected_sampling!r}'
+        )
+    if config.get('max_goal_steps') != expected_max_goal_steps:
+        raise ValueError(
+            f'{expected_family} max_goal_steps mismatch: '
+            f'{config.get("max_goal_steps")!r} != {expected_max_goal_steps!r}'
+        )
+    expected_architectures = GENERATOR_ARCHITECTURES[args.generator_type]
+    if config.get('architecture') not in expected_architectures:
+        raise ValueError(
+            f'{args.generator_type} architecture mismatch: '
+            f'{config.get("architecture")!r} not in {expected_architectures!r}'
+        )
+
+
 def main():
     args = parse_args()
     validate_args(args)
+    validate_release_files(args)
+    if args.validate_only:
+        print(f'Validated {args.variant} task={args.task} H={args.goal_offset_steps} family={args.generator_family}.')
+        return
     use_subgoal, use_prior, _, direct_policy = expected_components(args.variant)
     hdf5_path, lance_path = task_paths(args.task, args.data_root)
     dataset = HDF5EvaluationDataset(hdf5_path)
