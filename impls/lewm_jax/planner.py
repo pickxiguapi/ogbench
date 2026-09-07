@@ -59,6 +59,7 @@ class JAXLeWMCEMPolicy:
         guidance_action_space='planner',
         paired_plan_keys=False,
         trace_candidates=False,
+        collect_traces=True,
         action_low=None,
         action_high=None,
         latent_subgoal_checkpoint=None,
@@ -164,6 +165,7 @@ class JAXLeWMCEMPolicy:
         self.guidance_action_space = str(guidance_action_space)
         self.paired_plan_keys = bool(paired_plan_keys)
         self.trace_candidates = bool(trace_candidates)
+        self.collect_traces = bool(collect_traces)
 
         self._encode_pixels = jax.jit(
             lambda pixels: self.model.apply(
@@ -737,7 +739,7 @@ class JAXLeWMCEMPolicy:
             )
             normalized_blocks = plan_output[0]
             normalized_blocks = np.asarray(normalized_blocks)
-            if self.subgoal_generator is not None:
+            if self.subgoal_generator is not None and self.collect_traces:
                 current_embedding = np.asarray(
                     self.encode_pixels(np.asarray(pixels[env_index, -1:]))[0],
                     dtype=np.float32,

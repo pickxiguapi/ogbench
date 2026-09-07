@@ -13,6 +13,7 @@ from gciql_chunk_policy import (
     load_agent_config,
     load_lance_policy,
 )
+from inference_timing import LeWMInferenceProfiler
 from lewm_jax.planner import JAXLeWMCEMPolicy, StagedLeWMCEMPolicy
 
 from ogbench.lewm_envs.evaluation import (
@@ -77,6 +78,7 @@ def parse_args():
     )
     parser.add_argument('--video-dir')
     parser.add_argument('--trace-dir')
+    parser.add_argument('--profile-inference', action='store_true')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
 
@@ -187,6 +189,7 @@ def main():
                 guidance_first_block_std=args.guidance_first_block_std,
                 guidance_goal_mode=args.guidance_goal_mode,
                 paired_plan_keys=True,
+                collect_traces=args.trace_dir is not None,
             )
             local_policy = JAXLeWMCEMPolicy(
                 **planner_kwargs,
@@ -206,6 +209,11 @@ def main():
                     final_policy,
                     args.final_goal_switch_steps,
                 )
+        inference_profiler = None
+        if args.profile_inference:
+            if args.controller != 'lewm_cem':
+                raise ValueError('--profile-inference currently requires lewm_cem.')
+            inference_profiler = LeWMInferenceProfiler(policy)
         started = time.time()
         metrics = evaluate_dataset_goals(
             task=args.task,
@@ -290,6 +298,9 @@ def main():
         'metrics': metrics,
         'success_rate': metrics['success_rate'],
         'evaluation_time': time.time() - started,
+        'inference_timing': (
+            None if inference_profiler is None else inference_profiler.summary()
+        ),
     }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
