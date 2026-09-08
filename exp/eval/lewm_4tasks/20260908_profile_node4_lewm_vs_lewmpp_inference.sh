@@ -16,6 +16,7 @@ METHODS=${METHODS:-"lewm lewmpp"}
 GOAL_OFFSETS=${GOAL_OFFSETS:-"25 50"}
 EVAL_SEED=${EVAL_SEED:-42}
 NUM_EVAL=${NUM_EVAL:-16}
+LEWM_CEM_ITERATIONS=${LEWM_CEM_ITERATIONS:-30}
 POLICY_SEED=777
 POLICY_STEPS=100000
 SKIP_COMPLETED=${SKIP_COMPLETED:-1}
@@ -67,7 +68,7 @@ for horizon in "${goal_offsets[@]}"; do
     exit 2
   fi
 done
-for value in "$NUM_EVAL" "$EVAL_SEED" "${gpus[@]}"; do
+for value in "$NUM_EVAL" "$EVAL_SEED" "$LEWM_CEM_ITERATIONS" "${gpus[@]}"; do
   if [[ ! "$value" =~ ^[0-9]+$ ]]; then
     echo "NUM_EVAL, EVAL_SEED, and GPU IDs must be non-negative integers." >&2
     exit 2
@@ -75,6 +76,10 @@ for value in "$NUM_EVAL" "$EVAL_SEED" "${gpus[@]}"; do
 done
 if (( NUM_EVAL == 0 )); then
   echo "NUM_EVAL must be positive." >&2
+  exit 2
+fi
+if (( LEWM_CEM_ITERATIONS == 0 )); then
+  echo "LEWM_CEM_ITERATIONS must be positive." >&2
   exit 2
 fi
 
@@ -156,6 +161,7 @@ echo "started_at=$(date --iso-8601=seconds)"
 echo "host=$(hostname)"
 echo "gpu_ids=$GPU_IDS methods=$METHODS horizons=$GOAL_OFFSETS"
 echo "num_eval=$NUM_EVAL eval_seed=$EVAL_SEED"
+echo "lewm_cem_num_samples=300 lewm_cem_iterations=$LEWM_CEM_ITERATIONS lewm_cem_horizon=5"
 
 run_task() {
   local gpu=$1
@@ -199,7 +205,8 @@ run_task() {
   )
   if [[ "$method" == lewm ]]; then
     command+=(
-      --policy-guidance=none --cem-horizon=5 --cem-iterations=30
+      --policy-guidance=none --cem-horizon=5
+      --cem-iterations="$LEWM_CEM_ITERATIONS"
     )
   else
     local policy_dir="$POLICY_ROOT/gc4_${task}_all_n100000_b256_a0.0_sd${POLICY_SEED}"

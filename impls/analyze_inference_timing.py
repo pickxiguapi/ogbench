@@ -47,8 +47,15 @@ def load_rows(root):
         timing = result.get('inference_timing')
         if not timing:
             continue
+        cem_config = result['cem']
         if not result['use_subgoal']:
-            method = 'LeWM'
+            if int(cem_config['iterations']) == 30:
+                method = 'LeWM'
+            else:
+                method = (
+                    f"LeWM (CEM{int(cem_config['num_samples'])}×"
+                    f"{int(cem_config['iterations'])})"
+                )
         elif result['cem']['cost_mode'] == 'moh':
             method = 'LeWM++'
         else:
@@ -67,6 +74,9 @@ def load_rows(root):
             'eval_budget': int(result['eval_budget']),
             'num_eval': int(result['num_eval']),
             'eval_seed': int(result['seed']),
+            'cem_num_samples': int(cem_config['num_samples']),
+            'cem_iterations': int(cem_config['iterations']),
+            'cem_horizon': int(cem_config['horizon']),
             'plan_events': int(
                 timing['counts'].get(
                     'plan_events', timing['counts'].get('replan_events')
@@ -141,6 +151,13 @@ def aggregate(rows):
             'horizon': horizon,
             'num_tasks': len(group),
         }
+        for config_key in ('cem_num_samples', 'cem_iterations', 'cem_horizon'):
+            values = {row[config_key] for row in group}
+            if len(values) != 1:
+                raise RuntimeError(
+                    f'Mixed {config_key} in group: {method}, {family}, H{horizon}'
+                )
+            item[config_key] = values.pop()
         keys = (
             'steady_plan_ms',
             'cold_plan_ms',
@@ -186,19 +203,21 @@ def build_report(rows, aggregate_rows):
         '## Protocol',
         '',
         '- Hardware: one exclusive NVIDIA A800-SXM4-80GB per task process; GPU work is explicitly synchronized before each timer stops.',
-        '- LeWM: canonical CEM300x30, planner H5/RH1, action block 5, MoH.',
-        '- LeWM++: LatentPathFlow Euler16, shared-all Action Prior, CEM300x5, planner H2/RH1, action block 5, MoH. A matched terminal-cost run isolates the MoH timing increment.',
+        '- Exact CEM sample/iteration counts and planner horizons are read from each result file and shown below.',
+        '- LeWM++ additionally uses LatentPathFlow Euler16 and a shared-all Action Prior. A matched terminal-cost run isolates the MoH timing increment.',
         '- H25 uses `goalmax25`; H50 uses `general_uniform_future`. H75/H100 use the same general-family inference graph and therefore have the same per-decision compute shape as H50.',
         '- Steady-state numbers exclude JAX compilation. `±` below is sample standard deviation across the four tasks, not uncertainty across random seeds.',
         '',
         '## Macro results',
         '',
-        '| Method | Family | Goal H | Steady plan (ms/plan) | Cold first plan (ms/plan) |',
-        '|---|---|---:|---:|---:|',
+        '| Method | Family | Goal H | CEM config | Planner H | Steady plan (ms/plan) | Cold first plan (ms/plan) |',
+        '|---|---|---:|---:|---:|---:|---:|',
     ]
     for row in aggregate_rows:
         lines.append(
             f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
+            f"{row['cem_num_samples']}×{row['cem_iterations']} | "
+            f"{row['cem_horizon']} | "
             f"{_fmt(row['steady_plan_ms_macro_mean'])} ± {_fmt(row['steady_plan_ms_across_task_std'])} | "
             f"{_fmt(row['cold_plan_ms_macro_mean'])} |"
         )
