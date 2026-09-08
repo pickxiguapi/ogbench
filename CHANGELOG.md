@@ -2,7 +2,7 @@
 
 ## Unreleased (2026-08-23)
 
-- Add synchronized, cold-start-aware inference profiling for LeWM and LeWM++, using one complete plan as the comparison unit and reporting module-level latency.
+- Add synchronized, cold-start-aware inference profiling for LeWM and LeWM++, using one complete plan as the comparison unit and an exhaustive Subgoal Generator / Policy / Planning breakdown.
 - Consolidate method training into `train_lewm_jax.py` and `train_gciql_chunk.py`.
 - Add four explicit GCIQL-Chunk representation modes: `independent`, `pi`, `qv`, and `all`.
 - Apply optional image augmentation before both pixel and frozen-LeWM encoding so representation comparisons use the same observations.

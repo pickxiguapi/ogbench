@@ -113,6 +113,12 @@ def load_rows(root):
             for module in ('subgoal_total', 'action_prior', 'cem')
         )
         row['other_plan_ms'] = row['steady_plan_ms'] - component_sum
+        row['subgoal_generator_ms'] = row['subgoal_total_mean_ms']
+        row['policy_ms'] = row['action_prior_mean_ms']
+        row['planning_ms'] = row['steady_plan_ms'] - sum(
+            value or 0.0
+            for value in (row['subgoal_generator_ms'], row['policy_ms'])
+        )
         rows.append(row)
     if not rows:
         raise SystemExit(f'No profiled result.json files under {root}.')
@@ -138,6 +144,9 @@ def aggregate(rows):
         keys = (
             'steady_plan_ms',
             'cold_plan_ms',
+            'subgoal_generator_ms',
+            'policy_ms',
+            'planning_ms',
             'subgoal_encoder_mean_ms',
             'latent_path_flow_mean_ms',
             'subgoal_total_mean_ms',
@@ -199,8 +208,32 @@ def build_report(rows, aggregate_rows):
             '',
             '## LeWM++ module breakdown',
             '',
-        '| Variant | Family | Goal H | Subgoal encoder | LatentPathFlow | Subgoal total | Action Prior | CEM | Other | Total plan |',
-        '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|',
+            'The three top-level modules below are mutually exclusive and sum to the complete plan time.',
+            '',
+            '| Variant | Family | Goal H | Subgoal Generator | Policy | Planning | Total plan |',
+            '|---|---|---:|---:|---:|---:|---:|',
+        ]
+    )
+    for row in aggregate_rows:
+        if not row['method'].startswith('LeWM++'):
+            continue
+        lines.append(
+            f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
+            f"{_fmt(row['subgoal_generator_ms_macro_mean'])} | "
+            f"{_fmt(row['policy_ms_macro_mean'])} | "
+            f"{_fmt(row['planning_ms_macro_mean'])} | "
+            f"{_fmt(row['steady_plan_ms_macro_mean'])} |"
+        )
+
+    lines.extend(
+        [
+            '',
+            'Subgoal Generator includes history/goal encoding, LatentPathFlow, and generator-side runtime. Policy is the Action Prior actor call. Planning includes the CEM core plus planner-side key construction, warm start, array conversion, and action scaling.',
+            '',
+            '### Diagnostic sub-breakdown',
+            '',
+            '| Variant | Family | Goal H | Subgoal encoder | LatentPathFlow | CEM core | Planner runtime |',
+            '|---|---|---:|---:|---:|---:|---:|',
         ]
     )
     for row in aggregate_rows:
@@ -210,17 +243,12 @@ def build_report(rows, aggregate_rows):
             f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
             f"{_fmt(row['subgoal_encoder_mean_ms_macro_mean'])} | "
             f"{_fmt(row['latent_path_flow_mean_ms_macro_mean'])} | "
-            f"{_fmt(row['subgoal_total_mean_ms_macro_mean'])} | "
-            f"{_fmt(row['action_prior_mean_ms_macro_mean'])} | "
             f"{_fmt(row['cem_mean_ms_macro_mean'])} | "
-            f"{_fmt(row['other_plan_ms_macro_mean'])} | "
-            f"{_fmt(row['steady_plan_ms_macro_mean'])} |"
+            f"{_fmt(row['other_plan_ms_macro_mean'])} |"
         )
 
     lines.extend(
         [
-            '',
-            'The encoder and LatentPathFlow rows below are nested inside `Subgoal total`; they must not be added to it again.',
             '',
             '## LeWM++ steady-state distributions',
             '',
@@ -251,17 +279,16 @@ def build_report(rows, aggregate_rows):
             '',
             '## Raw task-level data',
             '',
-            '| Method | Family | H | Task | Plan (ms/plan) | CEM (ms/plan) | Subgoal total (ms/plan) | Action Prior (ms/plan) | Plans |',
+            '| Method | Family | H | Task | Subgoal Generator | Policy | Planning | Total plan | Plans |',
             '|---|---|---:|---|---:|---:|---:|---:|---:|',
         ]
     )
     for row in sorted(rows, key=lambda item: (item['horizon'], item['method'], item['task'])):
         lines.append(
             f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
-            f"{row['task']} | {_fmt(row['steady_plan_ms'])} | "
-            f"{_fmt(row['cem_mean_ms'])} | "
-            f"{_fmt(row['subgoal_total_mean_ms'])} | "
-            f"{_fmt(row['action_prior_mean_ms'])} | {row['plan_events']} |"
+            f"{row['task']} | {_fmt(row['subgoal_generator_ms'])} | "
+            f"{_fmt(row['policy_ms'])} | {_fmt(row['planning_ms'])} | "
+            f"{_fmt(row['steady_plan_ms'])} | {row['plan_events']} |"
         )
 
     findings = []
@@ -274,20 +301,26 @@ def build_report(rows, aggregate_rows):
             lewm['steady_plan_ms_macro_mean']
             / lewmpp['steady_plan_ms_macro_mean']
         )
-        flow_share = (
-            lewmpp['latent_path_flow_mean_ms_macro_mean']
+        subgoal_share = (
+            lewmpp['subgoal_generator_ms_macro_mean']
             / lewmpp['steady_plan_ms_macro_mean']
             * 100.0
         )
-        cem_share = (
-            lewmpp['cem_mean_ms_macro_mean']
+        policy_share = (
+            lewmpp['policy_ms_macro_mean']
+            / lewmpp['steady_plan_ms_macro_mean']
+            * 100.0
+        )
+        planning_share = (
+            lewmpp['planning_ms_macro_mean']
             / lewmpp['steady_plan_ms_macro_mean']
             * 100.0
         )
         findings.append(
             f"H{horizon}: LeWM++ is {speedup:.2f}× faster per plan than LeWM. "
-            f"Within LeWM++, LatentPathFlow is {flow_share:.1f}% and CEM is "
-            f"{cem_share:.1f}% of plan wall time."
+            f"Within LeWM++, Subgoal Generator, Policy, and Planning are "
+            f"{subgoal_share:.1f}%, {policy_share:.1f}%, and "
+            f"{planning_share:.1f}% of plan wall time."
         )
         no_moh = lookup.get(('LeWM++ w/o MoH', family, horizon))
         if no_moh is not None:
@@ -313,7 +346,7 @@ def build_report(rows, aggregate_rows):
             '',
             '- This compares each method in its canonical paper configuration; it is not an equal-FLOP comparison because LeWM uses 30 CEM iterations/H5 while LeWM++ uses 5 iterations/H2 plus learned modules.',
             '- The comparison unit is one complete planning call (`ms/plan`); no action-level amortization or throughput is reported. Environment rendering and stepping are excluded.',
-            '- `Other` is measured steady-state Python/JAX glue, key construction, array conversion, warm-start update, and action inverse-scaling overhead.',
+            '- The three reported modules are exhaustive by definition: `Planning = Total plan - Subgoal Generator - Policy`. Its diagnostic sub-breakdown is CEM core plus measured planner runtime.',
             '- Cold-start latency is the first vectorized plan batch divided by its number of plan calls; it documents compilation cost but is not a single-environment startup benchmark.',
             '- The four task processes use identical GPU models and isolated devices. Across-task variation includes task action dimensionality and environment-specific policy/model execution differences.',
             '',
