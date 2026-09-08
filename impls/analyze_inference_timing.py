@@ -363,7 +363,7 @@ def build_report(rows, aggregate_rows):
             '',
             '## Interpretation boundaries',
             '',
-            '- This compares each method in its canonical paper configuration; it is not an equal-FLOP comparison because LeWM uses 30 CEM iterations/H5 while LeWM++ uses 5 iterations/H2 plus learned modules.',
+            '- This report compares the exact measured configurations shown in the macro table. A LeWM CEM-iteration ablation changes inference compute and is not a new canonical method configuration.',
             '- The comparison unit is one complete planning call (`ms/plan`); no action-level amortization or throughput is reported. Environment rendering and stepping are excluded.',
             '- The three reported modules are exhaustive by definition: `Planning = Total plan - Subgoal Generator - Policy`. Its diagnostic sub-breakdown is CEM core plus measured planner runtime.',
             '- Cold-start latency is the first vectorized plan batch divided by its number of plan calls; it documents compilation cost but is not a single-environment startup benchmark.',
