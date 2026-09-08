@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # A800 node4: evaluate c=1 and c=10 GCIQL-Chunk-AWR policies as guidance
-# initializers for the fixed-c=5 H25 LeWM++ stack on PushT, Reacher, TwoRoom.
+# initializers for the fixed-c=5 H25 LeWM++ stack on all four benchmark tasks.
 #
 # Adapter definition:
 #   c=1  -> first predicted action + four zero normalized-action means.
@@ -14,7 +14,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 
 EVAL_SEEDS=${EVAL_SEEDS:-"0 1 42"}
-GPU_IDS=${GPU_IDS:-"1 2 3 5 6 7"}
+GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5 6 7"}
 NUM_EVAL=${NUM_EVAL:-50}
 POLICY_SEED=${POLICY_SEED:-777}
 POLICY_STEPS=100000
@@ -34,14 +34,16 @@ TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260908-ac
 
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 
-tasks=(pusht reacher tworoom)
+tasks=(cube pusht reacher tworoom)
 chunk_sizes=(1 10)
 lewm_checkpoints=(
+  /data-training/yyf/models/lewm-jax-seed3072/LeWMJAX_impala_lance_cube_single_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack
   /data-training/yyf/models/lewm-jax-seed666/2026-08-19_23_LeWMJAX_impala_lance_pusht_expert_bs128_e10_seed666/weights_epoch_10.msgpack
   /data-training/yyf/models/lewm-jax-seed3072/LeWMJAX_impala_lance_reacher_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack
   /data-training/yyf/models/lewm-jax-seed3072/LeWMJAX_impala_lance_tworoom_bs128_e10_seed3072_fs5_h3_sigreg009_jpeg95/weights_epoch_10.msgpack
 )
 subgoal_checkpoints=(
+  "$SUBGOAL_ROOT/latent_pathflow_cube_lewm3072_hist3_sg10_ab5_goalstride5_goalmax25_cfm_ns8_n200000_b1024_s0/checkpoint_200000.msgpack"
   "$SUBGOAL_ROOT/latent_pathflow_pusht_lewm666_hist3_sg10_ab5_goalstride5_goalmax25_cfm_ns8_n200000_b1024_s0/checkpoint_200000.msgpack"
   "$SUBGOAL_ROOT/latent_pathflow_reacher_lewm3072_hist3_sg10_ab5_goalstride5_goalmax25_cfm_ns8_n200000_b1024_s0/checkpoint_200000.msgpack"
   "$SUBGOAL_ROOT/latent_pathflow_tworoom_lewm3072_hist3_sg10_ab5_goalstride5_goalmax25_cfm_ns8_n200000_b1024_s0/checkpoint_200000.msgpack"
@@ -50,7 +52,7 @@ subgoal_checkpoints=(
 read -r -a eval_seeds <<< "$EVAL_SEEDS"
 read -r -a gpus <<< "$GPU_IDS"
 if (( ${#gpus[@]} != ${#tasks[@]} * ${#chunk_sizes[@]} )); then
-  echo "GPU_IDS must contain exactly six whitespace-separated GPU IDs." >&2
+  echo "GPU_IDS must contain exactly eight whitespace-separated GPU IDs." >&2
   exit 2
 fi
 if (( ${#eval_seeds[@]} == 0 )); then
@@ -73,7 +75,7 @@ policy_steps = int(sys.argv[3])
 separator = sys.argv.index('--')
 subgoal_checkpoints = [pathlib.Path(value) for value in sys.argv[4:separator]]
 lewm_checkpoints = [pathlib.Path(value) for value in sys.argv[separator + 1:]]
-tasks = ('pusht', 'reacher', 'tworoom')
+tasks = ('cube', 'pusht', 'reacher', 'tworoom')
 expected_sampling = (
     'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25'
 )
