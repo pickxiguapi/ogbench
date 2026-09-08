@@ -29,7 +29,7 @@ def test_distribution_separates_cold_start():
     assert summary['steady_median_ms'] == 1.5
 
 
-def test_profiler_reports_per_environment_replan_and_buffer_costs():
+def test_profiler_reports_plan_costs():
     policy = _FakePolicy()
     profiler = LeWMInferenceProfiler(policy)
     pixels = np.zeros((3, 1, 2), dtype=np.float32)
@@ -44,10 +44,8 @@ def test_profiler_reports_per_environment_replan_and_buffer_costs():
     policy.get_actions(pixels, goals, alive)
 
     summary = profiler.summary()
-    assert summary['counts']['replan_events'] == 6
-    assert summary['counts']['steady_replan_events'] == 5
-    assert summary['counts']['alive_actions'] == 9
+    assert summary['counts']['plan_events'] == 6
+    assert summary['counts']['steady_plan_events'] == 5
     assert summary['modules']['cem']['count'] == 6
-    assert summary['end_to_end']['steady_replan_ms_per_environment'] >= 0.0
-    assert summary['end_to_end']['other_replan_ms_per_environment'] >= 0.0
-    assert summary['end_to_end']['buffer_action_ms_per_environment'] >= 0.0
+    assert summary['end_to_end']['steady_plan_ms'] >= 0.0
+    assert summary['end_to_end']['other_plan_ms'] >= 0.0

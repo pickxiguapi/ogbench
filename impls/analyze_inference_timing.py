@@ -55,7 +55,10 @@ def load_rows(root):
             method = 'LeWM++ w/o MoH'
         end_to_end = timing['end_to_end']
         modules = timing['modules']
-        first_replan = end_to_end['replan_step_samples'][0]
+        plan_steps = end_to_end.get(
+            'plan_step_samples', end_to_end.get('replan_step_samples')
+        )
+        first_plan = plan_steps[0]
         row = {
             'method': method,
             'generator_family': _family(result),
@@ -64,20 +67,21 @@ def load_rows(root):
             'eval_budget': int(result['eval_budget']),
             'num_eval': int(result['num_eval']),
             'eval_seed': int(result['seed']),
-            'replan_events': int(timing['counts']['replan_events']),
-            'steady_replan_ms': float(
-                end_to_end['steady_replan_ms_per_environment']
+            'plan_events': int(
+                timing['counts'].get(
+                    'plan_events', timing['counts'].get('replan_events')
+                )
             ),
-            'buffer_action_ms': float(
-                end_to_end['buffer_action_ms_per_environment']
+            # Backward-compatible read of result JSON written before the
+            # reporting unit was standardized to one complete plan.
+            'steady_plan_ms': float(
+                end_to_end['steady_plan_ms']
+                if 'steady_plan_ms' in end_to_end
+                else end_to_end['steady_replan_ms_per_environment']
             ),
-            'amortized_action_ms': float(
-                end_to_end['steady_amortized_ms_per_environment_action']
-            ),
-            'actions_per_second': float(end_to_end['steady_actions_per_second']),
-            'cold_replan_ms': (
-                float(first_replan['elapsed_seconds']) * 1_000.0
-                / int(first_replan['replans'])
+            'cold_plan_ms': (
+                float(first_plan['elapsed_seconds']) * 1_000.0
+                / int(first_plan.get('plans', first_plan.get('replans')))
             ),
             'evaluation_time_s': float(result['evaluation_time']),
             'success_rate': float(result['success_rate']),
@@ -108,7 +112,7 @@ def load_rows(root):
             row[f'{module}_mean_ms'] or 0.0
             for module in ('subgoal_total', 'action_prior', 'cem')
         )
-        row['other_replan_ms'] = row['steady_replan_ms'] - component_sum
+        row['other_plan_ms'] = row['steady_plan_ms'] - component_sum
         rows.append(row)
     if not rows:
         raise SystemExit(f'No profiled result.json files under {root}.')
@@ -132,16 +136,14 @@ def aggregate(rows):
             'num_tasks': len(group),
         }
         keys = (
-            'steady_replan_ms',
-            'amortized_action_ms',
-            'actions_per_second',
-            'cold_replan_ms',
+            'steady_plan_ms',
+            'cold_plan_ms',
             'subgoal_encoder_mean_ms',
             'latent_path_flow_mean_ms',
             'subgoal_total_mean_ms',
             'action_prior_mean_ms',
             'cem_mean_ms',
-            'other_replan_ms',
+            'other_plan_ms',
         )
         keys += tuple(
             f'{module}_{stat}_ms'
@@ -182,16 +184,14 @@ def build_report(rows, aggregate_rows):
         '',
         '## Macro results',
         '',
-        '| Method | Family | Goal H | Replan (ms) | Amortized/action (ms) | Actions/s | Cold first replan (ms) |',
-        '|---|---|---:|---:|---:|---:|---:|',
+        '| Method | Family | Goal H | Steady plan (ms/plan) | Cold first plan (ms/plan) |',
+        '|---|---|---:|---:|---:|',
     ]
     for row in aggregate_rows:
         lines.append(
             f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
-            f"{_fmt(row['steady_replan_ms_macro_mean'])} ± {_fmt(row['steady_replan_ms_across_task_std'])} | "
-            f"{_fmt(row['amortized_action_ms_macro_mean'])} ± {_fmt(row['amortized_action_ms_across_task_std'])} | "
-            f"{_fmt(row['actions_per_second_macro_mean'], 1)} | "
-            f"{_fmt(row['cold_replan_ms_macro_mean'])} |"
+            f"{_fmt(row['steady_plan_ms_macro_mean'])} ± {_fmt(row['steady_plan_ms_across_task_std'])} | "
+            f"{_fmt(row['cold_plan_ms_macro_mean'])} |"
         )
 
     lines.extend(
@@ -199,7 +199,7 @@ def build_report(rows, aggregate_rows):
             '',
             '## LeWM++ module breakdown',
             '',
-        '| Variant | Family | Goal H | Subgoal encoder | LatentPathFlow | Subgoal total | Action Prior | CEM | Other | Total replan |',
+        '| Variant | Family | Goal H | Subgoal encoder | LatentPathFlow | Subgoal total | Action Prior | CEM | Other | Total plan |',
         '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|',
         ]
     )
@@ -213,8 +213,8 @@ def build_report(rows, aggregate_rows):
             f"{_fmt(row['subgoal_total_mean_ms_macro_mean'])} | "
             f"{_fmt(row['action_prior_mean_ms_macro_mean'])} | "
             f"{_fmt(row['cem_mean_ms_macro_mean'])} | "
-            f"{_fmt(row['other_replan_ms_macro_mean'])} | "
-            f"{_fmt(row['steady_replan_ms_macro_mean'])} |"
+            f"{_fmt(row['other_plan_ms_macro_mean'])} | "
+            f"{_fmt(row['steady_plan_ms_macro_mean'])} |"
         )
 
     lines.extend(
@@ -251,17 +251,17 @@ def build_report(rows, aggregate_rows):
             '',
             '## Raw task-level data',
             '',
-            '| Method | Family | H | Task | Replan (ms) | Amortized/action (ms) | CEM (ms) | Subgoal total (ms) | Action Prior (ms) | Events |',
-            '|---|---|---:|---|---:|---:|---:|---:|---:|---:|',
+            '| Method | Family | H | Task | Plan (ms/plan) | CEM (ms/plan) | Subgoal total (ms/plan) | Action Prior (ms/plan) | Plans |',
+            '|---|---|---:|---|---:|---:|---:|---:|---:|',
         ]
     )
     for row in sorted(rows, key=lambda item: (item['horizon'], item['method'], item['task'])):
         lines.append(
             f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
-            f"{row['task']} | {_fmt(row['steady_replan_ms'])} | "
-            f"{_fmt(row['amortized_action_ms'])} | {_fmt(row['cem_mean_ms'])} | "
+            f"{row['task']} | {_fmt(row['steady_plan_ms'])} | "
+            f"{_fmt(row['cem_mean_ms'])} | "
             f"{_fmt(row['subgoal_total_mean_ms'])} | "
-            f"{_fmt(row['action_prior_mean_ms'])} | {row['replan_events']} |"
+            f"{_fmt(row['action_prior_mean_ms'])} | {row['plan_events']} |"
         )
 
     findings = []
@@ -271,23 +271,23 @@ def build_report(rows, aggregate_rows):
         if lewm is None or lewmpp is None:
             continue
         speedup = (
-            lewm['amortized_action_ms_macro_mean']
-            / lewmpp['amortized_action_ms_macro_mean']
+            lewm['steady_plan_ms_macro_mean']
+            / lewmpp['steady_plan_ms_macro_mean']
         )
         flow_share = (
             lewmpp['latent_path_flow_mean_ms_macro_mean']
-            / lewmpp['steady_replan_ms_macro_mean']
+            / lewmpp['steady_plan_ms_macro_mean']
             * 100.0
         )
         cem_share = (
             lewmpp['cem_mean_ms_macro_mean']
-            / lewmpp['steady_replan_ms_macro_mean']
+            / lewmpp['steady_plan_ms_macro_mean']
             * 100.0
         )
         findings.append(
-            f"H{horizon}: LeWM++ is {speedup:.2f}× faster per "
-            f"amortized action than LeWM. Within LeWM++, LatentPathFlow is "
-            f"{flow_share:.1f}% and CEM is {cem_share:.1f}% of replan wall time."
+            f"H{horizon}: LeWM++ is {speedup:.2f}× faster per plan than LeWM. "
+            f"Within LeWM++, LatentPathFlow is {flow_share:.1f}% and CEM is "
+            f"{cem_share:.1f}% of plan wall time."
         )
         no_moh = lookup.get(('LeWM++ w/o MoH', family, horizon))
         if no_moh is not None:
@@ -297,7 +297,7 @@ def build_report(rows, aggregate_rows):
             )
             findings.append(
                 f"H{horizon}: the matched MoH reduction changes "
-                f"CEM latency by {moh_delta:+.3f} ms per replan relative to "
+                f"CEM latency by {moh_delta:+.3f} ms per plan relative to "
                 'terminal cost; values at this scale should be interpreted as '
                 'fused-kernel timing, not an additive standalone module.'
             )
@@ -312,9 +312,9 @@ def build_report(rows, aggregate_rows):
             '## Interpretation boundaries',
             '',
             '- This compares each method in its canonical paper configuration; it is not an equal-FLOP comparison because LeWM uses 30 CEM iterations/H5 while LeWM++ uses 5 iterations/H2 plus learned modules.',
-            '- Per-action latency is the decision cost amortized over the five executed actions in each chunk; environment rendering and stepping are excluded.',
+            '- The comparison unit is one complete planning call (`ms/plan`); no action-level amortization or throughput is reported. Environment rendering and stepping are excluded.',
             '- `Other` is measured steady-state Python/JAX glue, key construction, array conversion, warm-start update, and action inverse-scaling overhead.',
-            '- Cold-start latency is the first vectorized replan batch divided by its number of active environments; it documents compilation cost but is not a single-environment startup benchmark.',
+            '- Cold-start latency is the first vectorized plan batch divided by its number of plan calls; it documents compilation cost but is not a single-environment startup benchmark.',
             '- The four task processes use identical GPU models and isolated devices. Across-task variation includes task action dimensionality and environment-specific policy/model execution differences.',
             '',
         ]

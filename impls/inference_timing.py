@@ -110,7 +110,6 @@ class LeWMInferenceProfiler:
 
         @functools.wraps(get_actions)
         def timed_get_actions(pixels, goals, alive):
-            alive_count = int(np.count_nonzero(alive))
             cem_before = self._cem_calls
             component_labels = ('subgoal_total', 'action_prior', 'cem')
             sample_counts_before = {
@@ -128,8 +127,7 @@ class LeWMInferenceProfiler:
             self.control_steps.append(
                 {
                     'elapsed_seconds': elapsed,
-                    'alive_actions': alive_count,
-                    'replans': self._cem_calls - cem_before,
+                    'plans': self._cem_calls - cem_before,
                     'profiled_component_seconds': component_seconds,
                 }
             )
@@ -146,7 +144,7 @@ class LeWMInferenceProfiler:
             for label, values in sorted(self.samples.items())
         }
 
-        replan_steps = [step for step in self.control_steps if step['replans']]
+        plan_steps = [step for step in self.control_steps if step['plans']]
         top_level_labels = ('subgoal_total', 'action_prior', 'cem')
         steady_component_ms = sum(
             module_summary[label]['steady_mean_ms']
@@ -158,37 +156,24 @@ class LeWMInferenceProfiler:
         # Random-key helpers and other Python/JAX glue can also compile during
         # the first replan batch, outside the individually wrapped modules.
         # Drop that batch when estimating steady-state bookkeeping overhead.
-        steady_other_steps = replan_steps[1:]
-        other_replan_seconds = sum(
+        steady_other_steps = plan_steps[1:]
+        other_plan_seconds = sum(
             max(
                 0.0,
                 step['elapsed_seconds'] - step['profiled_component_seconds'],
             )
             for step in steady_other_steps
         )
-        steady_other_replans = sum(step['replans'] for step in steady_other_steps)
-        other_replan_ms = (
-            other_replan_seconds * 1_000.0 / steady_other_replans
-            if steady_other_replans
+        steady_other_plans = sum(step['plans'] for step in steady_other_steps)
+        other_plan_ms = (
+            other_plan_seconds * 1_000.0 / steady_other_plans
+            if steady_other_plans
             else 0.0
         )
 
-        buffer_steps = [step for step in self.control_steps if not step['replans']]
-        buffer_seconds = sum(step['elapsed_seconds'] for step in buffer_steps)
-        buffer_actions = sum(step['alive_actions'] for step in buffer_steps)
-
         replan_ms = (
-            steady_component_ms + other_replan_ms
+            steady_component_ms + other_plan_ms
             if steady_replans
-            else None
-        )
-        buffer_action_ms = (
-            buffer_seconds * 1_000.0 / buffer_actions if buffer_actions else 0.0
-        )
-        action_block = int(self.policy.action_block)
-        amortized_action_ms = (
-            (replan_ms + (action_block - 1) * buffer_action_ms) / action_block
-            if replan_ms is not None
             else None
         )
 
@@ -214,25 +199,14 @@ class LeWMInferenceProfiler:
             },
             'counts': {
                 'control_step_calls': len(self.control_steps),
-                'alive_actions': sum(
-                    step['alive_actions'] for step in self.control_steps
-                ),
-                'replan_events': self._cem_calls,
-                'steady_replan_events': steady_replans,
+                'plan_events': self._cem_calls,
+                'steady_plan_events': steady_replans,
             },
             'end_to_end': {
-                'steady_replan_ms_per_environment': replan_ms,
-                'steady_component_ms_per_environment': steady_component_ms,
-                'other_replan_ms_per_environment': other_replan_ms,
-                'buffer_action_ms_per_environment': buffer_action_ms,
-                'steady_amortized_ms_per_environment_action': amortized_action_ms,
-                'steady_actions_per_second': (
-                    1_000.0 / amortized_action_ms
-                    if amortized_action_ms not in (None, 0.0)
-                    else None
-                ),
-                'replan_step_samples': replan_steps,
-                'buffer_step_samples': buffer_steps,
+                'steady_plan_ms': replan_ms,
+                'steady_component_ms': steady_component_ms,
+                'other_plan_ms': other_plan_ms,
+                'plan_step_samples': plan_steps,
             },
             'modules': module_summary,
         }
