@@ -47,7 +47,12 @@ def load_rows(root):
         timing = result.get('inference_timing')
         if not timing:
             continue
-        method = 'LeWM++' if result['use_subgoal'] else 'LeWM'
+        if not result['use_subgoal']:
+            method = 'LeWM'
+        elif result['cem']['cost_mode'] == 'moh':
+            method = 'LeWM++'
+        else:
+            method = 'LeWM++ w/o MoH'
         end_to_end = timing['end_to_end']
         modules = timing['modules']
         first_replan = end_to_end['replan_step_samples'][0]
@@ -93,6 +98,12 @@ def load_rows(root):
         row['subgoal_total_mean_ms'] = (
             None if subgoal is None else subgoal['steady_mean_ms']
         )
+        row['subgoal_total_median_ms'] = (
+            None if subgoal is None else subgoal['steady_median_ms']
+        )
+        row['subgoal_total_p95_ms'] = (
+            None if subgoal is None else subgoal['steady_p95_ms']
+        )
         component_sum = sum(
             row[f'{module}_mean_ms'] or 0.0
             for module in ('subgoal_total', 'action_prior', 'cem')
@@ -132,6 +143,12 @@ def aggregate(rows):
             'cem_mean_ms',
             'other_replan_ms',
         )
+        keys += tuple(
+            f'{module}_{stat}_ms'
+            for module in MODULES
+            for stat in ('median', 'p95')
+        )
+        keys += ('subgoal_total_median_ms', 'subgoal_total_p95_ms')
         for key in keys:
             values = [row[key] for row in group if row[key] is not None]
             item[f'{key}_macro_mean'] = _mean(values)
@@ -159,7 +176,7 @@ def build_report(rows, aggregate_rows):
         '',
         '- Hardware: one exclusive NVIDIA A800-SXM4-80GB per task process; GPU work is explicitly synchronized before each timer stops.',
         '- LeWM: canonical CEM300x30, planner H5/RH1, action block 5, MoH.',
-        '- LeWM++: LatentPathFlow Euler16, shared-all Action Prior, CEM300x5, planner H2/RH1, action block 5, MoH.',
+        '- LeWM++: LatentPathFlow Euler16, shared-all Action Prior, CEM300x5, planner H2/RH1, action block 5, MoH. A matched terminal-cost run isolates the MoH timing increment.',
         '- H25 uses `goalmax25`; H50 uses `general_uniform_future`. H75/H100 use the same general-family inference graph and therefore have the same per-decision compute shape as H50.',
         '- Steady-state numbers exclude JAX compilation. `±` below is sample standard deviation across the four tasks, not uncertainty across random seeds.',
         '',
@@ -182,15 +199,15 @@ def build_report(rows, aggregate_rows):
             '',
             '## LeWM++ module breakdown',
             '',
-            '| Family | Goal H | Subgoal encoder | LatentPathFlow | Subgoal total | Action Prior | CEM | Other | Total replan |',
-            '|---|---:|---:|---:|---:|---:|---:|---:|---:|',
+        '| Variant | Family | Goal H | Subgoal encoder | LatentPathFlow | Subgoal total | Action Prior | CEM | Other | Total replan |',
+        '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|',
         ]
     )
     for row in aggregate_rows:
-        if row['method'] != 'LeWM++':
+        if not row['method'].startswith('LeWM++'):
             continue
         lines.append(
-            f"| {row['generator_family']} | {row['horizon']} | "
+            f"| {row['method']} | {row['generator_family']} | {row['horizon']} | "
             f"{_fmt(row['subgoal_encoder_mean_ms_macro_mean'])} | "
             f"{_fmt(row['latent_path_flow_mean_ms_macro_mean'])} | "
             f"{_fmt(row['subgoal_total_mean_ms_macro_mean'])} | "
@@ -239,12 +256,27 @@ def build_report(rows, aggregate_rows):
             * 100.0
         )
         findings.append(
-            f"{horizon}. H{horizon}: LeWM++ is {speedup:.2f}× faster per "
+            f"H{horizon}: LeWM++ is {speedup:.2f}× faster per "
             f"amortized action than LeWM. Within LeWM++, LatentPathFlow is "
             f"{flow_share:.1f}% and CEM is {cem_share:.1f}% of replan wall time."
         )
+        no_moh = lookup.get(('LeWM++ w/o MoH', family, horizon))
+        if no_moh is not None:
+            moh_delta = (
+                lewmpp['cem_mean_ms_macro_mean']
+                - no_moh['cem_mean_ms_macro_mean']
+            )
+            findings.append(
+                f"H{horizon}: the matched MoH reduction changes "
+                f"CEM latency by {moh_delta:+.3f} ms per replan relative to "
+                'terminal cost; values at this scale should be interpreted as '
+                'fused-kernel timing, not an additive standalone module.'
+            )
     lines.extend(['', '## Key findings', ''])
-    lines.extend(findings or ['Timing groups are incomplete; no paired finding computed.'])
+    lines.extend(
+        [f'{index}. {finding}' for index, finding in enumerate(findings, 1)]
+        or ['Timing groups are incomplete; no paired finding computed.']
+    )
     lines.extend(
         [
             '',

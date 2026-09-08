@@ -56,8 +56,8 @@ if (( ${#gpus[@]} == 0 )); then
   exit 2
 fi
 for method in "${methods[@]}"; do
-  if [[ "$method" != lewm && "$method" != lewmpp ]]; then
-    echo "METHODS only accepts lewm and lewmpp; got $method." >&2
+  if [[ "$method" != lewm && "$method" != lewmpp && "$method" != lewmpp_last ]]; then
+    echo "METHODS only accepts lewm, lewmpp, and lewmpp_last; got $method." >&2
     exit 2
   fi
 done
@@ -166,7 +166,7 @@ run_task() {
   local eval_budget=$((goal_offset * 2))
   local generator_family=none
   local subgoal_checkpoint=
-  if [[ "$method" == lewmpp ]]; then
+  if [[ "$method" != lewm ]]; then
     if (( goal_offset == 25 )); then
       generator_family=goalmax25
       subgoal_checkpoint=${goalmax25_checkpoints[$task_index]}
@@ -184,6 +184,8 @@ run_task() {
   fi
   mkdir -p "$output_dir" "$task_tmp"
 
+  local cost_mode=moh
+  if [[ "$method" == lewmpp_last ]]; then cost_mode=last; fi
   local -a command=(
     "$PYTHON_BIN" eval_lewm_4tasks.py
     --task="$task" --controller=lewm_cem
@@ -193,7 +195,7 @@ run_task() {
     --goal-offset-steps="$goal_offset" --eval-budget="$eval_budget"
     --cem-receding-horizon=1 --action-block=5
     --cem-num-samples=300 --cem-topk=30 --cem-var-scale=1.0
-    --cem-cost-mode=moh --profile-inference --output="$output"
+    --cem-cost-mode="$cost_mode" --profile-inference --output="$output"
   )
   if [[ "$method" == lewm ]]; then
     command+=(
