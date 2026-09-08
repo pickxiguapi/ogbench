@@ -10,6 +10,7 @@ from pathlib import Path
 from gciql_chunk_policy import (
     GCIQLChunkPolicy,
     LatentSubgoalGCIQLChunkPolicy,
+    PlannerBlockPolicyAdapter,
     load_agent_config,
     load_lance_policy,
 )
@@ -46,6 +47,16 @@ def parse_args():
     parser.add_argument('--guidance-temperature', type=float, default=1.0)
     parser.add_argument('--guidance-elite-size', type=int, default=8)
     parser.add_argument('--guidance-first-block-std', type=float)
+    parser.add_argument(
+        '--policy-guidance-action-adapter',
+        choices=('exact', 'prefix_zero_pad_truncate'),
+        default='exact',
+        help=(
+            'How to align a guidance policy action horizon with the fixed LeWM '
+            'action block. The ablation adapter truncates a longer prefix and '
+            'zero-pads a shorter one in normalized action space.'
+        ),
+    )
     parser.add_argument(
         '--guidance-goal-mode',
         choices=('subgoal', 'final'),
@@ -123,6 +134,13 @@ def main():
     if args.guidance_elite_size <= 0:
         raise ValueError('--guidance-elite-size must be positive.')
     if (
+        args.policy_guidance_action_adapter != 'exact'
+        and (args.controller != 'lewm_cem' or args.policy_guidance == 'none')
+    ):
+        raise ValueError(
+            '--policy-guidance-action-adapter requires policy-guided lewm_cem.'
+        )
+    if (
         args.guidance_first_block_std is not None
         and args.guidance_first_block_std <= 0
     ):
@@ -136,6 +154,7 @@ def main():
         )
         scaler = StandardActionScaler(dataset.get_column('action'))
         policy_agent = None
+        source_policy_action_horizon = None
         representation_mode = None
         if needs_policy:
             _, _, policy_flags = load_agent_config(args.policy_checkpoint_dir)
@@ -147,6 +166,16 @@ def main():
                 args.policy_checkpoint_dir,
                 args.policy_checkpoint_step,
             )
+            source_policy_action_horizon = int(policy_agent.action_horizon)
+            if (
+                args.controller == 'lewm_cem'
+                and args.policy_guidance != 'none'
+                and args.policy_guidance_action_adapter
+                == 'prefix_zero_pad_truncate'
+            ):
+                policy_agent = PlannerBlockPolicyAdapter(
+                    policy_agent, args.action_block
+                )
             if (
                 needs_subgoal
                 and args.policy_guidance != 'none'
@@ -248,6 +277,10 @@ def main():
         'lewm_checkpoint': args.lewm_checkpoint,
         'policy_checkpoint_dir': args.policy_checkpoint_dir,
         'policy_checkpoint_step': args.policy_checkpoint_step if needs_policy else None,
+        'policy_guidance_action_adapter': (
+            args.policy_guidance_action_adapter if needs_policy else None
+        ),
+        'source_policy_action_horizon': source_policy_action_horizon,
         'latent_subgoal': (
             None
             if not needs_subgoal

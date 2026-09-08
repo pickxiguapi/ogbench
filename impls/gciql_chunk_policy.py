@@ -13,6 +13,65 @@ import numpy as np
 from latent_subgoal_runtime import LatentSubgoalGenerator
 
 
+class PlannerBlockPolicyAdapter:
+    """Resize a policy action prefix to the fixed LeWM planner block.
+
+    Longer policy chunks are truncated to the planner prefix. Shorter chunks
+    are zero-padded in normalized action space; the padded values only seed
+    the CEM mean and are not hard execution constraints.
+    """
+
+    def __init__(self, agent, target_action_horizon):
+        self.agent = agent
+        self.source_action_horizon = int(agent.action_horizon)
+        self.action_horizon = int(target_action_horizon)
+        if self.source_action_horizon < 1 or self.action_horizon < 1:
+            raise ValueError('Source and target action horizons must be positive.')
+
+    def _adapt(self, actions):
+        actions = jnp.asarray(actions)
+        if actions.ndim != 2:
+            raise ValueError(
+                f'Policy actions must have rank 2, got shape {actions.shape}.'
+            )
+        width = int(actions.shape[-1])
+        if width % self.source_action_horizon:
+            raise ValueError(
+                f'Policy action width {width} is not divisible by source horizon '
+                f'{self.source_action_horizon}.'
+            )
+        action_dim = width // self.source_action_horizon
+        chunks = actions.reshape(
+            actions.shape[0], self.source_action_horizon, action_dim
+        )
+        if self.source_action_horizon >= self.action_horizon:
+            chunks = chunks[:, : self.action_horizon]
+        else:
+            padding = jnp.zeros(
+                (
+                    actions.shape[0],
+                    self.action_horizon - self.source_action_horizon,
+                    action_dim,
+                ),
+                dtype=actions.dtype,
+            )
+            chunks = jnp.concatenate((chunks, padding), axis=1)
+        return chunks.reshape(actions.shape[0], self.action_horizon * action_dim)
+
+    def sample_actions(self, *args, **kwargs):
+        return self._adapt(self.agent.sample_actions(*args, **kwargs))
+
+    def __getattr__(self, name):
+        if name == 'sample_actions_with_latent_goal':
+            source_method = getattr(self.agent, name)
+
+            def adapted(*args, **kwargs):
+                return self._adapt(source_method(*args, **kwargs))
+
+            return adapted
+        return getattr(self.agent, name)
+
+
 def load_agent_config(checkpoint_dir):
     """Restore the saved configuration for a final GCIQL-Chunk checkpoint."""
     checkpoint_dir = Path(checkpoint_dir)
