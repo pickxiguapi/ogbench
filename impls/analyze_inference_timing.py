@@ -220,6 +220,35 @@ def build_report(rows, aggregate_rows):
     lines.extend(
         [
             '',
+            'The encoder and LatentPathFlow rows below are nested inside `Subgoal total`; they must not be added to it again.',
+            '',
+            '## LeWM++ steady-state distributions',
+            '',
+            '| Family | Module | Mean (ms) | Median (ms) | P95 (ms) |',
+            '|---|---|---:|---:|---:|',
+        ]
+    )
+    module_labels = (
+        ('subgoal_encoder', 'Subgoal LeWM encoder'),
+        ('latent_path_flow', 'LatentPathFlow'),
+        ('subgoal_total', 'Subgoal total'),
+        ('action_prior', 'Action Prior'),
+        ('cem', 'CEM incl. MoH'),
+    )
+    for row in aggregate_rows:
+        if row['method'] != 'LeWM++':
+            continue
+        for key, label in module_labels:
+            lines.append(
+                f"| {row['generator_family']} | {label} | "
+                f"{_fmt(row[f'{key}_mean_ms_macro_mean'])} | "
+                f"{_fmt(row[f'{key}_median_ms_macro_mean'])} | "
+                f"{_fmt(row[f'{key}_p95_ms_macro_mean'])} |"
+            )
+
+    lines.extend(
+        [
+            '',
             '## Raw task-level data',
             '',
             '| Method | Family | H | Task | Replan (ms) | Amortized/action (ms) | CEM (ms) | Subgoal total (ms) | Action Prior (ms) | Events |',
@@ -284,6 +313,8 @@ def build_report(rows, aggregate_rows):
             '',
             '- This compares each method in its canonical paper configuration; it is not an equal-FLOP comparison because LeWM uses 30 CEM iterations/H5 while LeWM++ uses 5 iterations/H2 plus learned modules.',
             '- Per-action latency is the decision cost amortized over the five executed actions in each chunk; environment rendering and stepping are excluded.',
+            '- `Other` is measured steady-state Python/JAX glue, key construction, array conversion, warm-start update, and action inverse-scaling overhead.',
+            '- Cold-start latency is the first vectorized replan batch divided by its number of active environments; it documents compilation cost but is not a single-environment startup benchmark.',
             '- The four task processes use identical GPU models and isolated devices. Across-task variation includes task action dimensionality and environment-specific policy/model execution differences.',
             '',
         ]
