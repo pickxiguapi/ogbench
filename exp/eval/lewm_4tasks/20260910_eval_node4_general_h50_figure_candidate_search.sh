@@ -20,7 +20,9 @@ POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chu
 SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10}
 DECODER_ROOT=${DECODER_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder/20260905_mixed666_3072_official_cnn_image_decoder_aligned_epoch10_snapshot}
 OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder-eval/20260910_general_uniform_future_h50_figure_candidate_search_ep${NUM_EVAL}_seed${EVAL_SEED}}
-CURATED_ROOT=${CURATED_ROOT:-$OUTPUT_ROOT/curated_continuous6}
+WINDOW=${WINDOW:-6}
+TOPK=${TOPK:-12}
+CURATED_ROOT=${CURATED_ROOT:-$OUTPUT_ROOT/curated_continuous${WINDOW}}
 MODE=${MODE:-launch}
 
 specs=(
@@ -86,7 +88,7 @@ case "$MODE" in
     test -s "$OUTPUT_ROOT/pusht/figures/manifest.json"
     "$TORCH_PYTHON_BIN" "$OGBENCH_ROOT/impls/rank_lewm_figure_candidates.py" \
       --input-root="$OUTPUT_ROOT" --output-root="$CURATED_ROOT" \
-      --tasks cube pusht --window=6 --topk=12
+      --tasks cube pusht --window="$WINDOW" --topk="$TOPK"
     ;;
   *)
     echo "MODE must be launch, status, or rank" >&2
