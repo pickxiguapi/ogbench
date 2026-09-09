@@ -20,9 +20,42 @@ POLICY_STEPS=100000
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/gciql-chunk-4tasks-node3-mirror}
 SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-k10}
 DECODER_ROOT=${DECODER_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder/20260905_mixed666_3072_official_cnn_image_decoder_aligned_epoch10_snapshot}
-OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder-eval/20260906_general_h50_real_imagination_subgoal_3col}
+OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visual-decoder-eval/20260906_general_uniform_future_h50_real_imagination_subgoal_3col}
 MODE=${MODE:-launch}
 mkdir -p "$OUTPUT_ROOT/logs"
+
+validate_general_generator() {
+  local checkpoint=$1
+  if (( GOAL_OFFSET <= 25 )); then
+    echo "general_uniform_future visualization requires GOAL_OFFSET>25; got $GOAL_OFFSET" >&2
+    return 2
+  fi
+  "$PYTHON_BIN" - "$checkpoint" <<'PY'
+import json
+import pathlib
+import sys
+
+checkpoint = pathlib.Path(sys.argv[1])
+config_path = checkpoint.parent / 'config.json'
+if not checkpoint.is_file():
+    raise SystemExit(f'missing general generator checkpoint: {checkpoint}')
+if not config_path.is_file():
+    raise SystemExit(f'missing general generator config: {config_path}')
+config = json.loads(config_path.read_text())
+expected = 'hiql_uniform_future_same_trajectory'
+if config.get('goal_sampling') != expected:
+    raise SystemExit(
+        f'wrong generator family at {checkpoint.parent}: '
+        f'goal_sampling={config.get("goal_sampling")!r}, expected {expected!r}'
+    )
+if config.get('max_goal_steps') is not None:
+    raise SystemExit(
+        f'bounded generator is invalid for H>25 at {checkpoint.parent}: '
+        f'max_goal_steps={config.get("max_goal_steps")!r}'
+    )
+print(f'verified general_uniform_future generator: {checkpoint.parent}')
+PY
+}
 
 run_task() {
   local task=$1 gpu=$2 lewm_seed=$3 lewm_checkpoint=$4
@@ -36,6 +69,7 @@ run_task() {
   test -s "$lewm_checkpoint"
   test -s "$subgoal"
   test -s "$decoder"
+  validate_general_generator "$subgoal"
 
   cd "$OGBENCH_ROOT/impls"
   TMPDIR="$output_dir/tmp" CUDA_VISIBLE_DEVICES="$gpu" \
