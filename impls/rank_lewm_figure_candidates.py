@@ -88,14 +88,14 @@ def best_window(episode, window):
 def render_candidate(source, candidate, output, task, rank):
     composite = Image.open(source).convert('RGB')
     window = candidate['end_row'] - candidate['start_row']
-    label_width = 150
+    label_width = 230
     cell = SOURCE_CELL
     top_height = 66
     bottom_height = 52
     canvas = Image.new('RGB', (label_width + window * cell, top_height + 3 * cell + bottom_height), 'white')
     draw = ImageDraw.Draw(canvas)
     title_font = load_font(25, bold=True)
-    label_font = load_font(24, bold=True)
+    label_font = load_font(22, bold=True)
     step_font = load_font(20)
     draw.text((10, 13), f'{task.upper()} candidate #{rank}', fill='black', font=title_font)
     labels = [('Real', 'black'), ('LeWM imagined', (20, 95, 205)), ('Predicted subgoal', (215, 30, 40))]
@@ -109,7 +109,15 @@ def render_candidate(source, candidate, output, task, rank):
     for column, (plan_step, target_step) in enumerate(zip(candidate['plan_steps'], candidate['target_steps'])):
         x = label_width + column * cell
         text = f't={target_step}\n(from {plan_step})'
-        draw.multiline_text((x + 60, top_height + 3 * cell + 5), text, fill='black', font=step_font, spacing=1)
+        draw.multiline_text(
+            (x + cell // 2, top_height + 3 * cell + 5),
+            text,
+            fill='black',
+            font=step_font,
+            spacing=1,
+            anchor='ma',
+            align='center',
+        )
     canvas.save(output, quality=95)
 
 
