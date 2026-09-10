@@ -68,7 +68,16 @@ def add_cell(fig, bounds, image, border_color, blank=False):
     axis.set_yticks([])
     if blank:
         axis.set_facecolor('#FAFAFA')
-        axis.text(0.5, 0.5, '—', ha='center', va='center', color='#999999', fontsize=9)
+        axis.text(
+            0.5,
+            0.5,
+            'N/A\n(context)',
+            ha='center',
+            va='center',
+            color='#777777',
+            fontsize=6.2,
+            linespacing=0.9,
+        )
     else:
         axis.imshow(image, interpolation='nearest')
     for spine in axis.spines.values():
@@ -138,10 +147,10 @@ def main():
             fontsize=9.0,
             fontweight='bold',
         )
-        goal_width = 0.040
+        goal_width = cell_width * 0.78
         goal_height = goal_width * 7.35 / 2.34
         goal_left = panel_left + panel_width - goal_width
-        goal_bottom = 0.827
+        goal_bottom = 0.806
         goal_axis = figure.add_axes([goal_left, goal_bottom, goal_width, goal_height])
         goal_axis.imshow(goal, interpolation='nearest')
         goal_axis.set_xticks([])
@@ -152,7 +161,7 @@ def main():
         figure.text(
             goal_left - 0.006,
             goal_bottom + goal_height / 2,
-            'Goal',
+            'Task goal',
             ha='right',
             va='center',
             fontsize=7.2,
