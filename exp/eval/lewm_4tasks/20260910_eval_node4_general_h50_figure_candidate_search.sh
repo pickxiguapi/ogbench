@@ -23,6 +23,9 @@ OUTPUT_ROOT=${OUTPUT_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-visu
 WINDOW=${WINDOW:-6}
 TOPK=${TOPK:-12}
 CURATED_ROOT=${CURATED_ROOT:-$OUTPUT_ROOT/curated_continuous${WINDOW}}
+ZERO_TOPK=${ZERO_TOPK:-12}
+PUSHT_MIN_DISPLACEMENT=${PUSHT_MIN_DISPLACEMENT:-30}
+CURATED_ZERO_ROOT=${CURATED_ZERO_ROOT:-$OUTPUT_ROOT/curated_from_t0_to_t50_moving_pusht}
 MODE=${MODE:-launch}
 
 specs=(
@@ -90,8 +93,16 @@ case "$MODE" in
       --input-root="$OUTPUT_ROOT" --output-root="$CURATED_ROOT" \
       --tasks cube pusht --window="$WINDOW" --topk="$TOPK"
     ;;
+  rank_from_zero)
+    test -s "$OUTPUT_ROOT/cube/figures/manifest.json"
+    test -s "$OUTPUT_ROOT/pusht/figures/manifest.json"
+    "$TORCH_PYTHON_BIN" "$OGBENCH_ROOT/impls/rank_lewm_figure_candidates.py" \
+      --input-root="$OUTPUT_ROOT" --output-root="$CURATED_ZERO_ROOT" \
+      --tasks cube pusht --topk="$ZERO_TOPK" --from-zero --display-step=5 \
+      --pusht-min-displacement="$PUSHT_MIN_DISPLACEMENT"
+    ;;
   *)
-    echo "MODE must be launch, status, or rank" >&2
+    echo "MODE must be launch, status, rank, or rank_from_zero" >&2
     exit 2
     ;;
 esac
