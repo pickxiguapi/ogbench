@@ -26,6 +26,9 @@ CURATED_ROOT=${CURATED_ROOT:-$OUTPUT_ROOT/curated_continuous${WINDOW}}
 ZERO_TOPK=${ZERO_TOPK:-12}
 PUSHT_MIN_DISPLACEMENT=${PUSHT_MIN_DISPLACEMENT:-30}
 CURATED_ZERO_ROOT=${CURATED_ZERO_ROOT:-$OUTPUT_ROOT/curated_from_t0_to_t50_moving_pusht}
+PAPER_FIGURE_ROOT=${PAPER_FIGURE_ROOT:-$OUTPUT_ROOT/paper_figure_compact}
+PUSHT_FIGURE_RANK=${PUSHT_FIGURE_RANK:-2}
+CUBE_FIGURE_RANK=${CUBE_FIGURE_RANK:-2}
 MODE=${MODE:-launch}
 
 specs=(
@@ -101,8 +104,16 @@ case "$MODE" in
       --tasks cube pusht --topk="$ZERO_TOPK" --from-zero --display-step=10 \
       --pusht-min-displacement="$PUSHT_MIN_DISPLACEMENT"
     ;;
+  compose_figure)
+    test -s "$CURATED_ZERO_ROOT/cube/ranking.json"
+    test -s "$CURATED_ZERO_ROOT/pusht/ranking.json"
+    "$TORCH_PYTHON_BIN" "$OGBENCH_ROOT/impls/compose_lewm_h50_paper_figure.py" \
+      --input-root="$OUTPUT_ROOT" --ranking-root="$CURATED_ZERO_ROOT" \
+      --output-root="$PAPER_FIGURE_ROOT" \
+      --pusht-rank="$PUSHT_FIGURE_RANK" --cube-rank="$CUBE_FIGURE_RANK"
+    ;;
   *)
-    echo "MODE must be launch, status, rank, or rank_from_zero" >&2
+    echo "MODE must be launch, status, rank, rank_from_zero, or compose_figure" >&2
     exit 2
     ;;
 esac
