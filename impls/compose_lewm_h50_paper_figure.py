@@ -67,12 +67,12 @@ def add_cell(fig, bounds, image, border_color, blank=False):
     axis.set_xticks([])
     axis.set_yticks([])
     if blank:
-        axis.set_facecolor('#FAFAFA')
+        axis.set_axis_off()
     else:
         axis.imshow(image, interpolation='nearest')
-    for spine in axis.spines.values():
-        spine.set_color(border_color)
-        spine.set_linewidth(1.15)
+        for spine in axis.spines.values():
+            spine.set_color(border_color)
+            spine.set_linewidth(1.15)
     return axis
 
 
@@ -107,7 +107,7 @@ def main():
 
     row_specs = [
         ('Real', 'real'),
-        ('LeWM\nImagined', 'imagined'),
+        ('LeWM++\nImagined', 'imagined'),
         ('Predicted\nSubgoal', 'subgoal'),
     ]
     for row_index, (label, color_name) in enumerate(row_specs):
@@ -119,7 +119,7 @@ def main():
             ha='left',
             va='center',
             fontsize=8.2,
-            fontweight=('bold' if row_index else 'normal'),
+            fontweight='bold',
             color=COLORS[color_name],
             linespacing=0.9,
         )
@@ -173,8 +173,6 @@ def main():
         for column, step in enumerate(candidate['display_steps']):
             x = panel_left + (column + 0.5) * cell_width
             label = f'$t={step}$'
-            if step == 0:
-                label += '\nContext'
             figure.text(x, 0.093, label, ha='center', va='top', fontsize=6.7, linespacing=0.9)
 
         panel_metadata[task] = {
@@ -220,7 +218,7 @@ def main():
         '  \\centering\n'
         f'  \\includegraphics[width=0.95\\textwidth]{{figures/{pdf_path.name}}}\n'
         '  \\caption{Qualitative H50 predictions for PushT and Cube. The top row '
-        'shows real observations, the middle row LeWM imagination, and the bottom '
+        'shows real observations, the middle row LeWM++ imagination, and the bottom '
         'row decoded predicted subgoals. The first column is observed context; each '
         'later prediction is made ten steps earlier. Insets show the fixed goal.}\n'
         '  \\label{fig:lewm_h50_qualitative}\n'
