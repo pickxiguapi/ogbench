@@ -98,7 +98,7 @@ case "$MODE" in
     test -s "$OUTPUT_ROOT/pusht/figures/manifest.json"
     "$TORCH_PYTHON_BIN" "$OGBENCH_ROOT/impls/rank_lewm_figure_candidates.py" \
       --input-root="$OUTPUT_ROOT" --output-root="$CURATED_ZERO_ROOT" \
-      --tasks cube pusht --topk="$ZERO_TOPK" --from-zero --display-step=5 \
+      --tasks cube pusht --topk="$ZERO_TOPK" --from-zero --display-step=10 \
       --pusht-min-displacement="$PUSHT_MIN_DISPLACEMENT"
     ;;
   *)

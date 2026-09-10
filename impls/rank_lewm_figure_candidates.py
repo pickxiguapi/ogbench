@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument('--window', type=int, default=6)
     parser.add_argument('--topk', type=int, default=12)
     parser.add_argument('--from-zero', action='store_true')
-    parser.add_argument('--display-step', type=int, default=5)
+    parser.add_argument('--display-step', type=int, default=10)
     parser.add_argument('--pusht-min-displacement', type=float, default=30.0)
     return parser.parse_args()
 
@@ -48,6 +48,14 @@ def crop_cell(composite, row, column):
     top = HEADER_HEIGHT + COLUMN_HEADER_HEIGHT + row * SOURCE_ROW_HEIGHT + ROW_LABEL_HEIGHT
     left = column * SOURCE_CELL
     return composite.crop((left, top, left + SOURCE_CELL, top + SOURCE_CELL))
+
+
+def outlined(array, color, width=4):
+    image = Image.fromarray(array)
+    ImageDraw.Draw(image).rectangle(
+        (1, 1, image.width - 2, image.height - 2), outline=color, width=width
+    )
+    return image
 
 
 def blue_centroid(frame):
