@@ -3,7 +3,7 @@ set -euo pipefail
 
 # A800 node4：评测 OGBench 视觉 8 Tasks。每个任务使用各自的 node3 seed3072/epoch10 LeWM，
 # 使用 seed0、500K 的 GCIQL-Chunk-AWR policy mode 初始化 CEM，目标始终为最终任务目标，
-# 禁用 subgoal generator，使用 MoH、CEM300x30、H5/RH1、action block 5；默认每任务 20 episodes。
+# 禁用 subgoal generator，使用 MoH、CEM300x5、H5/RH1、action block 5；默认每任务 20 episodes。
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -20,7 +20,7 @@ CEM_HORIZON=${CEM_HORIZON:-5}
 CEM_RECEDING_HORIZON=${CEM_RECEDING_HORIZON:-1}
 ACTION_BLOCK=${ACTION_BLOCK:-5}
 CEM_NUM_SAMPLES=${CEM_NUM_SAMPLES:-300}
-CEM_ITERATIONS=${CEM_ITERATIONS:-30}
+CEM_ITERATIONS=${CEM_ITERATIONS:-5}
 CEM_TOPK=${CEM_TOPK:-30}
 LEWM_ROOT=${LEWM_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-ogbench8-node3-evaluated-mirror}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-visual-policy-runs/gciql-chunk-awr-500k-3seeds}
