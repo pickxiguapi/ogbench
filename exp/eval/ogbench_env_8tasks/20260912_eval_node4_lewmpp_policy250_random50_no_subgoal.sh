@@ -36,6 +36,8 @@ TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260912-po
 WAIT_REQUIRED_GPUS=${WAIT_REQUIRED_GPUS:-6}
 WAIT_POLL_SECONDS=${WAIT_POLL_SECONDS:-60}
 FREE_GPU_MEMORY_MIB=${FREE_GPU_MEMORY_MIB:-500}
+FREE_STABLE_CHECKS=${FREE_STABLE_CHECKS:-3}
+FREE_STABLE_INTERVAL_SECONDS=${FREE_STABLE_INTERVAL_SECONDS:-10}
 
 envs=(
   visual-cube-single-play-v0 visual-cube-double-play-v0
@@ -173,11 +175,31 @@ free_gpu_ids() {
 wait_for_gpu_count() {
   local required=$1
   local -a available=()
+  local -a selected=()
+  local -a current=()
+  local check gpu found stable
   while true; do
     mapfile -t available < <(free_gpu_ids)
     if (( ${#available[@]} >= required )); then
-      printf '%s\n' "${available[@]:0:required}"
-      return 0
+      selected=("${available[@]:0:required}")
+      stable=1
+      for (( check=1; check<FREE_STABLE_CHECKS; check++ )); do
+        sleep "$FREE_STABLE_INTERVAL_SECONDS"
+        mapfile -t current < <(free_gpu_ids)
+        for gpu in "${selected[@]}"; do
+          found=0
+          for current_gpu in "${current[@]}"; do
+            if [[ "$current_gpu" == "$gpu" ]]; then found=1; break; fi
+          done
+          if (( found == 0 )); then stable=0; break; fi
+        done
+        if (( stable == 0 )); then break; fi
+      done
+      if (( stable == 1 )); then
+        printf '%s\n' "${selected[@]}"
+        return 0
+      fi
+      echo "GPU_FREE_CHECK_UNSTABLE candidates=${selected[*]}" >&2
     fi
     echo "WAITING_FOR_GPUS required=$required available=${#available[@]} threshold_mib=$FREE_GPU_MEMORY_MIB" >&2
     sleep "$WAIT_POLL_SECONDS"
@@ -188,6 +210,10 @@ wait_launch() {
   validate
   if (( WAIT_REQUIRED_GPUS < 1 )); then
     echo "WAIT_REQUIRED_GPUS must be positive." >&2
+    exit 2
+  fi
+  if (( FREE_STABLE_CHECKS < 1 || FREE_STABLE_INTERVAL_SECONDS < 1 )); then
+    echo "Stable GPU checks and their interval must be positive." >&2
     exit 2
   fi
   local -a smoke_gpu=()
