@@ -5,7 +5,9 @@ set -euo pipefail
 # Every one of five CEM iterations contains 250 policy-guided candidates and
 # 50 local Gaussian candidates.  At least 25/30 elites are policy-guided, the
 # first-block refit is anchored halfway to policy mode, and execution uses an
-# actually scored final-pool trajectory.  No subgoal generator is used.
+# actually scored final-pool trajectory.  By default no subgoal generator is
+# used; USE_SUBGOAL=1 enables the checkpoint-matched general-uniform-future
+# K5/K10 LatentPathFlow while keeping policy guidance on the final goal.
 CLIENT_ID=node4
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -29,8 +31,12 @@ POLICY_TEMPERATURE=${POLICY_TEMPERATURE:-0.05}
 RANDOM_FIRST_BLOCK_STD=${RANDOM_FIRST_BLOCK_STD:-0.05}
 RANDOM_ELITE_CAP=${RANDOM_ELITE_CAP:-5}
 MEAN_RESIDUAL_WEIGHT=${MEAN_RESIDUAL_WEIGHT:-0.5}
+USE_SUBGOAL=${USE_SUBGOAL:-0}
+SUBGOAL_FAMILY=${SUBGOAL_FAMILY:-general_uniform_future}
+SUBGOAL_NUM_SAMPLES=${SUBGOAL_NUM_SAMPLES:-1}
 LEWM_ROOT=${LEWM_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-ogbench8-node3-evaluated-mirror}
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-visual-policy-runs/gciql-chunk-awr-500k-3seeds}
+SUBGOAL_ROOT=${SUBGOAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/latent-path-flow-ogbench8-k10}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/ogbench-env-8tasks}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260912-policy250-random50}
 WAIT_REQUIRED_GPUS=${WAIT_REQUIRED_GPUS:-6}
@@ -56,11 +62,20 @@ read -r -a gpus <<< "$GPU_IDS"
 read -r -a task_indices <<< "$TASK_INDICES"
 random_population=$((CEM_NUM_SAMPLES - POLICY_POPULATION))
 
-output_root="$EVAL_ROOT/20260912_lewmpp_no_subgoal_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h${CEM_HORIZON}_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+if (( USE_SUBGOAL == 1 )); then
+  output_root="$EVAL_ROOT/20260912_lewmpp_subgoal_${SUBGOAL_FAMILY}_k10_ns${SUBGOAL_NUM_SAMPLES}_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h2_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+else
+  output_root="$EVAL_ROOT/20260912_lewmpp_no_subgoal_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h${CEM_HORIZON}_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+fi
 
 lewm_checkpoint() {
   local tag=$1
   printf '%s/lewm_ogbench8_%s_e10_bs128_s3072/weights_epoch_10.msgpack' "$LEWM_ROOT" "$tag"
+}
+
+subgoal_checkpoint() {
+  local tag=$1
+  printf '%s/latent_pathflow_ogbench8_%s_node3lewm3072e10_hist3_sg10_ab5_uniform_ns1_n200000_b1024_s0/checkpoint_200000.msgpack' "$SUBGOAL_ROOT" "$tag"
 }
 
 validate() {
@@ -80,6 +95,20 @@ validate() {
     echo "This experiment requires topk=30 and random_elite_cap=5." >&2
     exit 2
   fi
+  if (( USE_SUBGOAL != 0 && USE_SUBGOAL != 1 )); then
+    echo "USE_SUBGOAL must be 0 or 1." >&2
+    exit 2
+  fi
+  if (( USE_SUBGOAL == 1 )); then
+    if [[ "$SUBGOAL_FAMILY" != general_uniform_future ]]; then
+      echo "This launcher requires the general_uniform_future generator family." >&2
+      exit 2
+    fi
+    if (( SUBGOAL_NUM_SAMPLES != 1 )); then
+      echo "This paired evaluation is fixed to one subgoal sample." >&2
+      exit 2
+    fi
+  fi
   for index in "${task_indices[@]}"; do
     if (( index < 0 || index >= ${#envs[@]} )); then
       echo "Invalid TASK_INDICES entry: $index" >&2
@@ -96,8 +125,65 @@ validate() {
         exit 2
       fi
     done
+    if (( USE_SUBGOAL == 1 )) && [[ ! -s "$(subgoal_checkpoint "${tags[$index]}")" ]]; then
+      echo "Missing required subgoal checkpoint: $(subgoal_checkpoint "${tags[$index]}")" >&2
+      exit 2
+    fi
   done
-  echo "VALIDATION_OK tasks=${#task_indices[@]} no_subgoal=1 cost=moh cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
+  if (( USE_SUBGOAL == 1 )); then
+    local -a subgoal_checkpoints=()
+    local -a lewm_checkpoints=()
+    for index in "${task_indices[@]}"; do
+      subgoal_checkpoints+=("$(subgoal_checkpoint "${tags[$index]}")")
+      lewm_checkpoints+=("$(lewm_checkpoint "${tags[$index]}")")
+    done
+    "$PYTHON_BIN" - "$ACTION_BLOCK" "${subgoal_checkpoints[@]}" -- "${lewm_checkpoints[@]}" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+action_block = int(sys.argv[1])
+separator = sys.argv.index('--')
+subgoal_checkpoints = [pathlib.Path(value) for value in sys.argv[2:separator]]
+lewm_checkpoints = [pathlib.Path(value) for value in sys.argv[separator + 1:]]
+if len(subgoal_checkpoints) != len(lewm_checkpoints):
+    raise SystemExit('Subgoal and LeWM checkpoint counts differ.')
+
+expected = {
+    'architecture': 'latent_path_flow_transformer_encoder',
+    'goal_sampling': 'hiql_uniform_future_same_trajectory',
+    'max_goal_steps': None,
+    'subgoal_steps': 10,
+    'action_block': action_block,
+    'history_size': 3,
+    'flow_sampling_steps': 16,
+    'flow_solver': 'euler',
+    'train_steps': 200000,
+    'num_samples': 1,
+}
+for subgoal_checkpoint, lewm_checkpoint in zip(subgoal_checkpoints, lewm_checkpoints):
+    config_path = subgoal_checkpoint.parent / 'config.json'
+    if not config_path.is_file():
+        raise SystemExit(f'Missing subgoal config: {config_path}')
+    config = json.loads(config_path.read_text())
+    for key, value in expected.items():
+        if config.get(key) != value:
+            raise SystemExit(
+                f'Wrong general generator config at {config_path}: '
+                f'{key}={config.get(key)!r}, expected {value!r}'
+            )
+    digest = hashlib.sha256(lewm_checkpoint.read_bytes()).hexdigest()
+    if config.get('lewm_checkpoint_sha256') != digest:
+        raise SystemExit(
+            f'LeWM SHA mismatch between {config_path} and {lewm_checkpoint}'
+        )
+    print(f'verified general_uniform_future generator: {subgoal_checkpoint.parent.name}')
+PY
+    echo "VALIDATION_OK tasks=${#task_indices[@]} subgoal=general_uniform_future_k10_ns1 effective_horizon=2 cost=moh cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
+  else
+    echo "VALIDATION_OK tasks=${#task_indices[@]} no_subgoal=1 cost=moh cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
+  fi
   echo "OUTPUT_ROOT=$output_root"
 }
 
@@ -110,6 +196,14 @@ run_one() {
   local output="$output_dir/result.json"
   local policy_dir="$POLICY_ROOT/seed-$POLICY_SEED/$dataset"
   local task_tmp="$TMP_ROOT/policy${POLICY_SEED}/eval${EVAL_SEED}/$tag"
+  local -a subgoal_args=()
+  if (( USE_SUBGOAL == 1 )); then
+    subgoal_args=(
+      --use-subgoal
+      --latent-subgoal-checkpoint="$(subgoal_checkpoint "$tag")"
+      --num-samples="$SUBGOAL_NUM_SAMPLES"
+    )
+  fi
   if [[ -s "$output" ]]; then
     echo "Skipping complete result: $output"
     return 0
@@ -133,6 +227,7 @@ run_one() {
       --guidance-random-elite-cap="$RANDOM_ELITE_CAP" \
       --guidance-mean-residual-weight="$MEAN_RESIDUAL_WEIGHT" \
       --guidance-goal-mode=final \
+      "${subgoal_args[@]}" \
       --lewm-checkpoint="$(lewm_checkpoint "$tag")" \
       --policy-checkpoint-dir="$policy_dir" \
       --policy-checkpoint-step="$POLICY_STEPS" \
@@ -157,7 +252,7 @@ status() {
     local result="$output_root/${tags[$index]}/result.json"
     local log="$output_root/${tags[$index]}/eval.log"
     if [[ -s "$result" ]]; then
-      "$PYTHON_BIN" -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d["policy_guidance_config"]; print(sys.argv[2], "DONE", "overall_success=", d["overall_success"], "seconds=", round(d["evaluation_time"], 1), "use_subgoal=", d["use_subgoal"], "mix=", (c["population_size"], c["random_size"]), "per_iteration=", c["refreshes_policy_population_each_iteration"])' "$result" "${tags[$index]}"
+      "$PYTHON_BIN" -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d["policy_guidance_config"]; s=d["latent_subgoal"]; print(sys.argv[2], "DONE", "overall_success=", d["overall_success"], "seconds=", round(d["evaluation_time"], 1), "use_subgoal=", d["use_subgoal"], "selected_step=", None if s is None else s["selected_waypoint_step"], "mix=", (c["population_size"], c["random_size"]), "per_iteration=", c["refreshes_policy_population_each_iteration"])' "$result" "${tags[$index]}"
     elif [[ -s "$log" ]]; then
       echo "${tags[$index]} RUNNING_OR_FAILED log=$log"
     else
