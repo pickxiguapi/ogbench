@@ -169,7 +169,7 @@ status() {
 free_gpu_ids() {
   nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits \
     | awk -F, -v limit="$FREE_GPU_MEMORY_MIB" \
-      '{gsub(/[[:space:]]/, "", $1); gsub(/[[:space:]]/, "", $2); if ($2 < limit) print $1}'
+      '{gsub(/[[:space:]]/, "", $1); gsub(/[[:space:]]/, "", $2); if (($2 + 0) < (limit + 0)) print $1}'
 }
 
 wait_for_gpu_count() {
