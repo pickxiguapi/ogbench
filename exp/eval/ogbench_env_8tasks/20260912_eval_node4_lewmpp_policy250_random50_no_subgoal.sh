@@ -14,6 +14,7 @@ export OGBENCH_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 source "$OGBENCH_ROOT/scripts/client_env.sh"
 
 MODE=${MODE:-run}
+RUN_DATE=${RUN_DATE:-20260912}
 GPU_IDS=${GPU_IDS:-"0 1 2 3 4 5"}
 TASK_INDICES=${TASK_INDICES:-"0 1 2 3 4 5 6 7"}
 POLICY_SEED=${POLICY_SEED:-0}
@@ -63,9 +64,9 @@ read -r -a task_indices <<< "$TASK_INDICES"
 random_population=$((CEM_NUM_SAMPLES - POLICY_POPULATION))
 
 if (( USE_SUBGOAL == 1 )); then
-  output_root="$EVAL_ROOT/20260912_lewmpp_subgoal_${SUBGOAL_FAMILY}_k10_ns${SUBGOAL_NUM_SAMPLES}_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h2_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+  output_root="$EVAL_ROOT/${RUN_DATE}_lewmpp_subgoal_${SUBGOAL_FAMILY}_k10_ns${SUBGOAL_NUM_SAMPLES}_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h2_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
 else
-  output_root="$EVAL_ROOT/20260912_lewmpp_no_subgoal_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h${CEM_HORIZON}_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+  output_root="$EVAL_ROOT/${RUN_DATE}_lewmpp_no_subgoal_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h${CEM_HORIZON}_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
 fi
 
 lewm_checkpoint() {
