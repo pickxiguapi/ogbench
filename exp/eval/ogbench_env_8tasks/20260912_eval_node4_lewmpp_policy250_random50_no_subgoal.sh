@@ -33,6 +33,9 @@ LEWM_ROOT=${LEWM_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/lewm-ogbench8
 POLICY_ROOT=${POLICY_ROOT:-/data-training/yyf/ogbench-visual-policy-runs/gciql-chunk-awr-500k-3seeds}
 EVAL_ROOT=${EVAL_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/evals/ogbench-env-8tasks}
 TMP_ROOT=${TMP_ROOT:-/data-training/yyf/ogbench-lewm-policy-runs/tmp/20260912-policy250-random50}
+WAIT_REQUIRED_GPUS=${WAIT_REQUIRED_GPUS:-6}
+WAIT_POLL_SECONDS=${WAIT_POLL_SECONDS:-60}
+FREE_GPU_MEMORY_MIB=${FREE_GPU_MEMORY_MIB:-500}
 
 envs=(
   visual-cube-single-play-v0 visual-cube-double-play-v0
@@ -161,6 +164,46 @@ status() {
   done
 }
 
+free_gpu_ids() {
+  nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits \
+    | awk -F, -v limit="$FREE_GPU_MEMORY_MIB" \
+      '{gsub(/[[:space:]]/, "", $1); gsub(/[[:space:]]/, "", $2); if ($2 < limit) print $1}'
+}
+
+wait_for_gpu_count() {
+  local required=$1
+  local -a available=()
+  while true; do
+    mapfile -t available < <(free_gpu_ids)
+    if (( ${#available[@]} >= required )); then
+      printf '%s\n' "${available[@]:0:required}"
+      return 0
+    fi
+    echo "WAITING_FOR_GPUS required=$required available=${#available[@]} threshold_mib=$FREE_GPU_MEMORY_MIB" >&2
+    sleep "$WAIT_POLL_SECONDS"
+  done
+}
+
+wait_launch() {
+  validate
+  if (( WAIT_REQUIRED_GPUS < 1 )); then
+    echo "WAIT_REQUIRED_GPUS must be positive." >&2
+    exit 2
+  fi
+  local -a smoke_gpu=()
+  mapfile -t smoke_gpu < <(wait_for_gpu_count 1)
+  echo "SMOKE_START gpu=${smoke_gpu[0]}"
+  MODE=run TASK_INDICES=0 GPU_IDS="${smoke_gpu[0]}" \
+    NUM_EVAL=1 EVAL_SEED=42012 bash "$BASH_SOURCE"
+  echo "SMOKE_OK gpu=${smoke_gpu[0]}"
+
+  local -a launch_gpus=()
+  mapfile -t launch_gpus < <(wait_for_gpu_count "$WAIT_REQUIRED_GPUS")
+  local launch_gpu_string="${launch_gpus[*]}"
+  echo "FULL_RUN_START gpus=$launch_gpu_string episodes_per_task=$NUM_EVAL"
+  MODE=run GPU_IDS="$launch_gpu_string" bash "$BASH_SOURCE"
+}
+
 case "$MODE" in
   validate)
     validate
@@ -185,8 +228,11 @@ case "$MODE" in
     status
     exit "$failed"
     ;;
+  wait-launch)
+    wait_launch
+    ;;
   *)
-    echo "MODE must be validate, run, or status" >&2
+    echo "MODE must be validate, run, wait-launch, or status" >&2
     exit 2
     ;;
 esac
