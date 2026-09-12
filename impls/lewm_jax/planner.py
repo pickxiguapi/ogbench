@@ -32,6 +32,21 @@ def reduce_rollout_costs(distances, mode):
     raise ValueError(f'Unsupported CEM cost mode: {mode!r}.')
 
 
+def policy_random_mixture_elites(costs, policy_count, topk, random_elite_cap):
+    """Select CEM elites while capping random candidates.
+
+    The first ``policy_count`` candidates are policy-guided.  We first retain
+    ``topk - random_elite_cap`` of those candidates, then fill the remaining
+    slots from the best still-unselected candidates.  This guarantees that no
+    more than ``random_elite_cap`` random candidates can influence the refit.
+    """
+    policy_floor = topk - random_elite_cap
+    _, policy_indices = jax.lax.top_k(-costs[:policy_count], policy_floor)
+    remaining_costs = costs.at[policy_indices].set(jnp.inf)
+    _, extra_indices = jax.lax.top_k(-remaining_costs, random_elite_cap)
+    return jnp.concatenate((policy_indices, extra_indices), axis=0)
+
+
 class JAXLeWMCEMPolicy:
     """Closed-loop LeWM-CEM with optional deterministic policy initialization."""
 
@@ -55,6 +70,8 @@ class JAXLeWMCEMPolicy:
         guidance_temperature=1.0,
         guidance_elite_size=8,
         guidance_first_block_std=None,
+        guidance_random_elite_cap=0,
+        guidance_mean_residual_weight=1.0,
         guidance_goal_mode='subgoal',
         guidance_action_space='planner',
         paired_plan_keys=False,
@@ -86,7 +103,12 @@ class JAXLeWMCEMPolicy:
             raise ValueError(
                 'Guidance goal mode must be either subgoal or final.'
             )
-        population_modes = ('population', 'lewm_select', 'lewm_elite')
+        population_modes = (
+            'population',
+            'policy_random_mixture',
+            'lewm_select',
+            'lewm_elite',
+        )
         if guidance_mode not in (
             'none',
             'mode',
@@ -115,6 +137,42 @@ class JAXLeWMCEMPolicy:
             raise ValueError('Guidance elite size must fit inside the population.')
         if float(guidance_temperature) < 0:
             raise ValueError('Guidance temperature must be non-negative.')
+        if int(guidance_random_elite_cap) < 0:
+            raise ValueError('Guidance random elite cap must be non-negative.')
+        if guidance_mode == 'policy_random_mixture':
+            random_count = int(num_samples) - int(guidance_population_size)
+            if random_count <= 0:
+                raise ValueError(
+                    'Policy/random mixture requires at least one random candidate.'
+                )
+            if not 0 < int(guidance_random_elite_cap) < int(topk):
+                raise ValueError(
+                    'Policy/random mixture random elite cap must be in [1, topk).'
+                )
+            if int(guidance_random_elite_cap) > random_count:
+                raise ValueError(
+                    'Random elite cap cannot exceed the number of random candidates.'
+                )
+            if int(topk) - int(guidance_random_elite_cap) > int(
+                guidance_population_size
+            ):
+                raise ValueError(
+                    'Policy population is too small for the requested elite floor.'
+                )
+        elif int(guidance_random_elite_cap) != 0:
+            raise ValueError(
+                'Guidance random elite cap only applies to policy_random_mixture.'
+            )
+        if not 0.0 <= float(guidance_mean_residual_weight) <= 1.0:
+            raise ValueError('Guidance mean residual weight must be in [0, 1].')
+        if (
+            guidance_mode != 'policy_random_mixture'
+            and float(guidance_mean_residual_weight) != 1.0
+        ):
+            raise ValueError(
+                'Guidance mean residual weight only applies to '
+                'policy_random_mixture.'
+            )
         if guidance_first_block_std is not None and float(guidance_first_block_std) <= 0:
             raise ValueError('Guidance first-block std must be positive.')
         if guidance_action_space == 'environment' and not hasattr(
@@ -156,6 +214,10 @@ class JAXLeWMCEMPolicy:
         self.guidance_population_size = int(guidance_population_size)
         self.guidance_temperature = float(guidance_temperature)
         self.guidance_elite_size = int(guidance_elite_size)
+        self.guidance_random_elite_cap = int(guidance_random_elite_cap)
+        self.guidance_mean_residual_weight = float(
+            guidance_mean_residual_weight
+        )
         self.guidance_first_block_std = (
             None
             if guidance_first_block_std is None
@@ -324,9 +386,12 @@ class JAXLeWMCEMPolicy:
         guidance_mode = self.guidance_mode
         guidance_population_size = (
             self.guidance_population_size
-            if self.guidance_mode == 'population'
+            if self.guidance_mode in ('population', 'policy_random_mixture')
             else 0
         )
+        mixture_mode = guidance_mode == 'policy_random_mixture'
+        guidance_random_elite_cap = self.guidance_random_elite_cap
+        guidance_mean_residual_weight = self.guidance_mean_residual_weight
         guidance_first_block_std = self.guidance_first_block_std
         planner_action_low = (
             None
@@ -357,6 +422,8 @@ class JAXLeWMCEMPolicy:
             def optimizer_step(iteration, carry):
                 if trace_candidates:
                     key, mean, std, _, _, _ = carry
+                elif mixture_mode:
+                    key, mean, std, _ = carry
                 else:
                     key, mean, std = carry
                 key, sample_key = jax.random.split(key)
@@ -372,7 +439,14 @@ class JAXLeWMCEMPolicy:
                 candidates = candidates.at[0].set(mean)
                 if guidance_mode == 'mode_anchor':
                     candidates = candidates.at[1].set(initial_mean)
-                if guidance_population_size:
+                if mixture_mode:
+                    candidates = candidates.at[
+                        :guidance_population_size, 0
+                    ].set(guidance_blocks[iteration])
+                    # Candidate zero is the exact deterministic policy-mode plan;
+                    # the remaining policy candidates keep stochastic CEM tails.
+                    candidates = candidates.at[0].set(initial_mean)
+                elif guidance_population_size:
                     candidates = jax.lax.cond(
                         iteration == 0,
                         lambda value: value.at[
@@ -411,15 +485,34 @@ class JAXLeWMCEMPolicy:
                     target = goal_embeddings[:, None, None]
                 distances = jnp.sum((predictions - target) ** 2, axis=-1)[0]
                 costs = reduce_rollout_costs(distances, cost_mode)
-                _, elite_indices = jax.lax.top_k(-costs, topk)
+                if mixture_mode:
+                    elite_indices = policy_random_mixture_elites(
+                        costs,
+                        guidance_population_size,
+                        topk,
+                        guidance_random_elite_cap,
+                    )
+                else:
+                    _, elite_indices = jax.lax.top_k(-costs, topk)
                 elites = candidates[elite_indices]
-                output = (key, elites.mean(axis=0), elites.std(axis=0, ddof=1))
+                elite_mean = elites.mean(axis=0)
+                if mixture_mode:
+                    # Only the executable first block is anchored to the policy
+                    # mode.  Future CEM blocks remain free to model the tail.
+                    anchored_first = initial_mean[0] + (
+                        guidance_mean_residual_weight
+                        * (elite_mean[0] - initial_mean[0])
+                    )
+                    elite_mean = elite_mean.at[0].set(anchored_first)
+                output = (key, elite_mean, elites.std(axis=0, ddof=1))
                 if trace_candidates:
                     output += (
                         candidates,
                         predictions[0].astype(jnp.float32),
                         costs,
                     )
+                elif mixture_mode:
+                    output += (candidates[jnp.argmin(costs)],)
                 return output
 
             if trace_candidates:
@@ -436,6 +529,19 @@ class JAXLeWMCEMPolicy:
                 _, mean, std, candidates, predictions, costs = jax.lax.fori_loop(
                     0, iterations, optimizer_step, initial_carry
                 )
+            elif mixture_mode:
+                _, mean, std, best_candidate = jax.lax.fori_loop(
+                    0,
+                    iterations,
+                    optimizer_step,
+                    (
+                        key,
+                        initial_mean,
+                        initial_std,
+                        jnp.zeros_like(initial_mean),
+                    ),
+                )
+                mean = best_candidate
             else:
                 _, mean, std = jax.lax.fori_loop(
                     0,
@@ -443,6 +549,10 @@ class JAXLeWMCEMPolicy:
                     optimizer_step,
                     (key, initial_mean, initial_std),
                 )
+            if mixture_mode and trace_candidates:
+                # Execute an actually evaluated final-pool trajectory rather than
+                # the refitted mean, which may itself be off policy support.
+                mean = candidates[jnp.argmin(costs)]
             if planner_action_low is not None:
                 mean = jnp.clip(mean, planner_action_low, planner_action_high)
             if trace_candidates:
@@ -573,8 +683,12 @@ class JAXLeWMCEMPolicy:
         self, pixels, goals, key, target_embedding=None
     ):
         count = self.guidance_population_size
+        per_iteration = self.guidance_mode == 'policy_random_mixture'
+        total_count = count * self.iterations if per_iteration else count
         sample_key, mode_key = jax.random.split(key)
-        observations = np.repeat(np.asarray(pixels[-1:]), count, axis=0)
+        observations = np.repeat(
+            np.asarray(pixels[-1:]), total_count, axis=0
+        )
         if (
             self.subgoal_generator is None
             or self.guidance_goal_mode == 'final'
@@ -582,7 +696,9 @@ class JAXLeWMCEMPolicy:
             blocks = np.asarray(
                 self.guidance_policy.sample_actions(
                     observations=observations,
-                    goals=np.repeat(np.asarray(goals[-1:]), count, axis=0),
+                    goals=np.repeat(
+                        np.asarray(goals[-1:]), total_count, axis=0
+                    ),
                     seed=sample_key,
                     temperature=self.guidance_temperature,
                 )
@@ -595,28 +711,36 @@ class JAXLeWMCEMPolicy:
                 self.guidance_policy.sample_actions_with_latent_goal(
                     observations=observations,
                     latent_goals=np.repeat(
-                        latent_goal[None], count, axis=0
+                        latent_goal[None], total_count, axis=0
                     ),
                     seed=sample_key,
                     temperature=self.guidance_temperature,
                 )
             )
-        if blocks.shape != (count, self.block_action_dim):
+        if blocks.shape != (total_count, self.block_action_dim):
             raise ValueError(
                 f'Guidance population returned {blocks.shape}; expected '
-                f'({count}, {self.block_action_dim}).'
+                f'({total_count}, {self.block_action_dim}).'
             )
         if self.guidance_action_space == 'environment':
             atomic = blocks.reshape(-1, self.atomic_action_dim)
             blocks = self.scaler.transform(atomic).reshape(blocks.shape)
-        blocks = blocks.copy()
-        blocks[0] = self._guidance_block(
+        blocks = blocks.reshape(
+            (self.iterations, count, self.block_action_dim)
+            if per_iteration
+            else (count, self.block_action_dim)
+        ).copy()
+        mode = self._guidance_block(
             pixels,
             goals,
             mode_key,
             target_embedding=target_embedding,
             temperature=0.0,
         )
+        if per_iteration:
+            blocks[:, 0] = mode
+        else:
+            blocks[0] = mode
         return blocks
 
     def _initial_mean(
@@ -672,6 +796,7 @@ class JAXLeWMCEMPolicy:
                 )
             if self.guidance_mode in (
                 'population',
+                'policy_random_mixture',
                 'lewm_select',
                 'lewm_elite',
             ):
@@ -681,7 +806,11 @@ class JAXLeWMCEMPolicy:
                     guidance_key,
                     target_embedding=target_embedding,
                 )
-                guidance_block = guidance_blocks[0]
+                guidance_block = (
+                    guidance_blocks[0, 0]
+                    if self.guidance_mode == 'policy_random_mixture'
+                    else guidance_blocks[0]
+                )
                 if self.guidance_mode in ('lewm_select', 'lewm_elite'):
                     proposal_plans = np.repeat(
                         self._initial_mean(

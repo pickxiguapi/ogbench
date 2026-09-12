@@ -9,6 +9,7 @@ from latent_subgoal_runtime import LatentSubgoalGenerator
 from lewm_jax.planner import (
     JAXLeWMCEMPolicy,
     StagedLeWMCEMPolicy,
+    policy_random_mixture_elites,
     reduce_rollout_costs,
     subgoal_planning_horizon,
 )
@@ -46,6 +47,15 @@ class FakeLatentPopulationAgent(FakeChunkAgent):
         self, observations, latent_goals, seed, temperature
     ):
         assert observations.shape[0] == latent_goals.shape[0]
+        return jnp.full(
+            (observations.shape[0], 10), temperature, dtype=jnp.float32
+        )
+
+
+class FakeFinalGoalPopulationAgent(FakeChunkAgent):
+    def sample_actions(self, observations, goals, seed, temperature):
+        del seed
+        assert observations.shape[0] == goals.shape[0]
         return jnp.full(
             (observations.shape[0], 10), temperature, dtype=jnp.float32
         )
@@ -97,6 +107,8 @@ def guidance_policy():
     policy.atomic_action_dim = 2
     policy.block_action_dim = 10
     policy.guidance_policy = FakeChunkAgent()
+    policy.guidance_mode = 'population'
+    policy.iterations = 1
     policy.subgoal_generator = None
     policy.guidance_goal_mode = 'subgoal'
     policy.guidance_action_space = 'planner'
@@ -119,6 +131,8 @@ class PlannerTest(unittest.TestCase):
         policy.guidance_mode = 'none'
         policy.guidance_population_size = 0
         policy.guidance_first_block_std = None
+        policy.guidance_random_elite_cap = 0
+        policy.guidance_mean_residual_weight = 1.0
         policy.planner_action_low = None
         policy.planner_action_high = None
         policy.trace_candidates = True
@@ -186,6 +200,84 @@ class PlannerTest(unittest.TestCase):
 
         np.testing.assert_array_equal(blocks[0], np.zeros(10, dtype=np.float32))
         np.testing.assert_allclose(blocks[1:], 0.3)
+
+    def test_mixture_population_has_fresh_policy_blocks_for_every_iteration(self):
+        policy = guidance_policy()
+        policy.guidance_policy = FakeFinalGoalPopulationAgent()
+        policy.guidance_mode = 'policy_random_mixture'
+        policy.guidance_population_size = 4
+        policy.guidance_temperature = 0.3
+        policy.iterations = 3
+        pixels = np.zeros((1, 16, 16, 3), dtype=np.uint8)
+
+        blocks = policy._guidance_population(
+            pixels,
+            pixels,
+            jax.random.PRNGKey(0),
+        )
+
+        self.assertEqual(blocks.shape, (3, 4, 10))
+        np.testing.assert_array_equal(blocks[:, 0], np.zeros((3, 10)))
+        np.testing.assert_allclose(blocks[:, 1:], 0.3)
+
+    def test_mixture_elites_cap_random_candidates(self):
+        costs = jnp.asarray([10.0, 11.0, 12.0, 13.0, 0.0, 1.0])
+
+        indices = np.asarray(
+            policy_random_mixture_elites(
+                costs,
+                policy_count=4,
+                topk=3,
+                random_elite_cap=1,
+            )
+        )
+
+        self.assertEqual(indices.shape, (3,))
+        self.assertLessEqual(int(np.sum(indices >= 4)), 1)
+        self.assertEqual(set(indices[:2]), {0, 1})
+
+    def test_mixture_reinjects_policy_blocks_in_final_cem_round(self):
+        policy = object.__new__(JAXLeWMCEMPolicy)
+        policy.model = FakeWorldModel()
+        policy.variables = {}
+        policy.num_samples = 6
+        policy.iterations = 2
+        policy.topk = 3
+        policy.var_scale = 1.0
+        policy.cost_mode = 'last'
+        policy.subgoal_generator = None
+        policy.guidance_mode = 'policy_random_mixture'
+        policy.guidance_population_size = 4
+        policy.guidance_first_block_std = 0.05
+        policy.guidance_random_elite_cap = 1
+        policy.guidance_mean_residual_weight = 0.5
+        policy.planner_action_low = None
+        policy.planner_action_high = None
+        policy.trace_candidates = True
+        policy.lewm_config = {'embed_dim': 3}
+        policy.horizon = 2
+        plan_one = jax.jit(policy._build_plan_one())
+        guidance_blocks = np.stack(
+            (
+                np.full((4, 4), 1.0, dtype=np.float32),
+                np.full((4, 4), 2.0, dtype=np.float32),
+            )
+        )
+        guidance_blocks[:, 0] = 0.0
+
+        output = plan_one(
+            jax.random.PRNGKey(0),
+            jnp.zeros((1, 4, 4, 3), dtype=jnp.uint8),
+            jnp.zeros((1, 4, 4, 3), dtype=jnp.uint8),
+            jnp.zeros((3,), dtype=jnp.float32),
+            jnp.zeros((2, 4), dtype=jnp.float32),
+            jnp.asarray(guidance_blocks),
+        )
+
+        np.testing.assert_array_equal(output[2][0, 0], np.zeros(4))
+        np.testing.assert_array_equal(
+            output[2][1:4, 0], np.full((3, 4), 2.0)
+        )
 
     def test_staged_planner_switches_on_an_action_block_boundary(self):
         local = FakePlanner(1.0, use_subgoal=True)

@@ -85,8 +85,15 @@ def parse_args():
         '--controller', choices=('direct_policy', 'lewm_cem'), required=True
     )
     parser.add_argument(
-        '--policy-guidance', choices=('none', 'mode'), default='none'
+        '--policy-guidance',
+        choices=('none', 'mode', 'policy_random_mixture'),
+        default='none',
     )
+    parser.add_argument('--guidance-population-size', type=int, default=0)
+    parser.add_argument('--guidance-temperature', type=float, default=1.0)
+    parser.add_argument('--guidance-first-block-std', type=float)
+    parser.add_argument('--guidance-random-elite-cap', type=int, default=0)
+    parser.add_argument('--guidance-mean-residual-weight', type=float, default=1.0)
     parser.add_argument(
         '--guidance-goal-mode', choices=('subgoal', 'final'), default='subgoal'
     )
@@ -176,6 +183,19 @@ def main():
         raise ValueError('--num-samples must be positive.')
     if not needs_subgoal and args.num_samples != 1:
         raise ValueError('--num-samples only applies when --use-subgoal is set.')
+    if args.guidance_population_size < 0:
+        raise ValueError('--guidance-population-size must be non-negative.')
+    if args.guidance_temperature < 0:
+        raise ValueError('--guidance-temperature must be non-negative.')
+    if (
+        args.guidance_first_block_std is not None
+        and args.guidance_first_block_std <= 0
+    ):
+        raise ValueError('--guidance-first-block-std must be positive.')
+    if args.guidance_random_elite_cap < 0:
+        raise ValueError('--guidance-random-elite-cap must be non-negative.')
+    if not 0.0 <= args.guidance_mean_residual_weight <= 1.0:
+        raise ValueError('--guidance-mean-residual-weight must be in [0, 1].')
 
     np.random.seed(args.seed)
     env = ogbench.make_env_and_datasets(args.env_name, env_only=True)
@@ -211,6 +231,11 @@ def main():
             cost_mode=args.cem_cost_mode,
             guidance_policy=policy_agent,
             guidance_mode=args.policy_guidance,
+            guidance_population_size=args.guidance_population_size,
+            guidance_temperature=args.guidance_temperature,
+            guidance_first_block_std=args.guidance_first_block_std,
+            guidance_random_elite_cap=args.guidance_random_elite_cap,
+            guidance_mean_residual_weight=args.guidance_mean_residual_weight,
             guidance_goal_mode=args.guidance_goal_mode,
             guidance_action_space=args.policy_action_space,
             paired_plan_keys=True,
@@ -266,6 +291,24 @@ def main():
         'environment': args.env_name,
         'controller': args.controller,
         'policy_guidance': args.policy_guidance,
+        'policy_guidance_config': {
+            'population_size': args.guidance_population_size,
+            'random_size': (
+                args.cem_num_samples - args.guidance_population_size
+                if args.policy_guidance == 'policy_random_mixture'
+                else 0
+            ),
+            'temperature': args.guidance_temperature,
+            'first_block_std': args.guidance_first_block_std,
+            'random_elite_cap': args.guidance_random_elite_cap,
+            'mean_residual_weight': args.guidance_mean_residual_weight,
+            'refreshes_policy_population_each_iteration': (
+                args.policy_guidance == 'policy_random_mixture'
+            ),
+            'executes_best_final_candidate': (
+                args.policy_guidance == 'policy_random_mixture'
+            ),
+        },
         'guidance_goal_mode': args.guidance_goal_mode,
         'use_subgoal': args.use_subgoal,
         'representation_mode': representation_mode,
