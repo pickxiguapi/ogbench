@@ -27,6 +27,7 @@ ACTION_BLOCK=${ACTION_BLOCK:-5}
 CEM_NUM_SAMPLES=${CEM_NUM_SAMPLES:-300}
 CEM_ITERATIONS=${CEM_ITERATIONS:-5}
 CEM_TOPK=${CEM_TOPK:-30}
+CEM_COST_MODE=${CEM_COST_MODE:-moh}
 POLICY_POPULATION=${POLICY_POPULATION:-250}
 POLICY_TEMPERATURE=${POLICY_TEMPERATURE:-0.05}
 RANDOM_FIRST_BLOCK_STD=${RANDOM_FIRST_BLOCK_STD:-0.05}
@@ -64,9 +65,9 @@ read -r -a task_indices <<< "$TASK_INDICES"
 random_population=$((CEM_NUM_SAMPLES - POLICY_POPULATION))
 
 if (( USE_SUBGOAL == 1 )); then
-  output_root="$EVAL_ROOT/${RUN_DATE}_lewmpp_subgoal_${SUBGOAL_FAMILY}_k10_ns${SUBGOAL_NUM_SAMPLES}_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h2_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+  output_root="$EVAL_ROOT/${RUN_DATE}_lewmpp_subgoal_${SUBGOAL_FAMILY}_k10_ns${SUBGOAL_NUM_SAMPLES}_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_${CEM_COST_MODE}_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h2_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
 else
-  output_root="$EVAL_ROOT/${RUN_DATE}_lewmpp_no_subgoal_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_moh_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h${CEM_HORIZON}_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
+  output_root="$EVAL_ROOT/${RUN_DATE}_lewmpp_no_subgoal_policytrain${POLICY_SEED}_policy${POLICY_POPULATION}_random${random_population}_eachiter_temp005_randelitecap${RANDOM_ELITE_CAP}_residual05_finalcandidate_finalgoal_${CEM_COST_MODE}_cem${CEM_NUM_SAMPLES}x${CEM_ITERATIONS}_h${CEM_HORIZON}_rh${CEM_RECEDING_HORIZON}_ep${NUM_EVAL}_evalseed${EVAL_SEED}"
 fi
 
 lewm_checkpoint() {
@@ -94,6 +95,10 @@ validate() {
   fi
   if (( CEM_TOPK != 30 || RANDOM_ELITE_CAP != 5 )); then
     echo "This experiment requires topk=30 and random_elite_cap=5." >&2
+    exit 2
+  fi
+  if [[ "$CEM_COST_MODE" != moh && "$CEM_COST_MODE" != last ]]; then
+    echo "CEM_COST_MODE must be moh or last." >&2
     exit 2
   fi
   if (( USE_SUBGOAL != 0 && USE_SUBGOAL != 1 )); then
@@ -181,9 +186,9 @@ for subgoal_checkpoint, lewm_checkpoint in zip(subgoal_checkpoints, lewm_checkpo
         )
     print(f'verified general_uniform_future generator: {subgoal_checkpoint.parent.name}')
 PY
-    echo "VALIDATION_OK tasks=${#task_indices[@]} subgoal=general_uniform_future_k10_ns1 effective_horizon=2 cost=moh cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
+    echo "VALIDATION_OK tasks=${#task_indices[@]} subgoal=general_uniform_future_k10_ns1 effective_horizon=2 cost=$CEM_COST_MODE cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
   else
-    echo "VALIDATION_OK tasks=${#task_indices[@]} no_subgoal=1 cost=moh cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
+    echo "VALIDATION_OK tasks=${#task_indices[@]} no_subgoal=1 cost=$CEM_COST_MODE cem=300x5 policy=250 random=50 per_iteration=1 topk=30 random_elite_cap=5"
   fi
   echo "OUTPUT_ROOT=$output_root"
 }
@@ -242,7 +247,7 @@ run_one() {
       --cem-iterations="$CEM_ITERATIONS" \
       --cem-topk="$CEM_TOPK" \
       --cem-var-scale=1.0 \
-      --cem-cost-mode=moh \
+      --cem-cost-mode="$CEM_COST_MODE" \
       --output="$output" >"$output_dir/eval.log" 2>&1
   )
 }
