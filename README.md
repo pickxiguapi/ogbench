@@ -103,6 +103,35 @@ bash experiments/train/train_latent_path_flow_visual_ogbench8.sh
 
 Visual OGBench artifacts are written below `EXPERIMENT_ROOT` and consumed automatically by its evaluation launchers. Each launcher contains an editable `GPU_IDS` array and runs all eight datasets.
 
+## Pretrained artifacts
+
+The data and exact checkpoints selected for the release evaluation are stored in
+[`IffYuan/leworldmodel-pp-artifacts`](https://huggingface.co/datasets/IffYuan/leworldmodel-pp-artifacts).
+To download only the checkpoints:
+
+```bash
+uvx --from huggingface_hub hf download IffYuan/leworldmodel-pp-artifacts \
+  --repo-type dataset --include "*/checkpoints/**" --local-dir artifacts
+```
+
+The complete bundle, including prepared datasets, has this layout:
+
+```text
+artifacts/
+├── lewm-control-suite/
+│   ├── data/
+│   └── checkpoints/
+│       ├── lewm/{cube,pusht,reacher,tworoom}/
+│       ├── action-prior/{cube,pusht,reacher,tworoom}/
+│       └── latent-path-flow/{h25,longh}/{cube,pusht,reacher,tworoom}/
+└── visual-ogbench/
+    ├── data/
+    └── checkpoints/{lewm,action-prior,latent-path-flow}/<dataset-tag>/
+```
+
+Point the corresponding root variables at these directories. `manifest.json`
+records the size and SHA-256 digest of every released file.
+
 
 ## Evaluation
 
