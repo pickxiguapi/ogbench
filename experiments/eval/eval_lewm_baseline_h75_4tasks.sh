@@ -42,8 +42,8 @@ for index in "${!TASKS[@]}"; do
         --seed="$seed"
         --goal-offset-steps=75
         --eval-budget=150
-        --cem-horizon=2
-        --cem-receding-horizon=1
+        --cem-horizon=5
+        --cem-receding-horizon=5
         --action-block=5
         --cem-num-samples=300
         --cem-iterations=30

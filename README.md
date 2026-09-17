@@ -106,12 +106,12 @@ Visual OGBench artifacts are written below `EXPERIMENT_ROOT` and consumed automa
 ## Pretrained artifacts
 
 The data and exact checkpoints selected for the release evaluation are stored in
-[`IffYuan/leworldmodel-pp-artifacts`](https://huggingface.co/datasets/IffYuan/leworldmodel-pp-artifacts).
+[`IffYuan/LeWorldModelplusplus`](https://huggingface.co/IffYuan/LeWorldModelplusplus).
 To download only the checkpoints:
 
 ```bash
-uvx --from huggingface_hub hf download IffYuan/leworldmodel-pp-artifacts \
-  --repo-type dataset --include "*/checkpoints/**" --local-dir artifacts
+uvx --from huggingface_hub hf download IffYuan/LeWorldModelplusplus \
+  --include "*/checkpoints/**" --local-dir artifacts
 ```
 
 The complete bundle, including prepared datasets, has this layout:
@@ -138,6 +138,9 @@ records the size and SHA-256 digest of every released file.
 ### Planning effectiveness and long-horizon scaling (LeWM Control Suite)
 
 Evaluate LeWM++ and the LeWM baseline on H25, H50, H75, and H100, then collect the results into one CSV file:
+
+The LeWM baseline follows the official CEM300x30, H5/RH5 protocol with an
+action block of 5. LeWM++ uses CEM300x5 and H2/RH1 with the same action block.
 
 ```bash
 for horizon in 25 50 75 100; do

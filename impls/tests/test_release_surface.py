@@ -118,12 +118,20 @@ def test_paper_evaluations_explicitly_require_all_representation_sharing():
             assert '--action-prior-representation-mode=all' in text
 
 
-def test_control_suite_launchers_use_paper_cem_iterations():
+def test_control_suite_launchers_use_paper_cem_protocols():
     eval_root = ROOT / 'experiments' / 'eval'
     for path in eval_root.glob('eval_lewmpp_h*_4tasks.sh'):
-        assert '--cem-iterations=5' in path.read_text()
+        text = path.read_text()
+        assert '--cem-iterations=5' in text
+        assert '--cem-horizon=2' in text
+        assert '--cem-receding-horizon=1' in text
+        assert '--action-block=5' in text
     for path in eval_root.glob('eval_lewm_baseline_h*_4tasks.sh'):
-        assert '--cem-iterations=30' in path.read_text()
+        text = path.read_text()
+        assert '--cem-iterations=30' in text
+        assert '--cem-horizon=5' in text
+        assert '--cem-receding-horizon=5' in text
+        assert '--action-block=5' in text
 
 
 def test_generator_launchers_record_and_validate_family_invariants():
