@@ -260,6 +260,7 @@ class LeWMPPController:
         if self.action_prior is not None and int(self.action_prior.action_horizon) != self.action_block:
             raise ValueError('Action-prior horizon must equal the LeWM action block.')
         self.buffers = [deque() for _ in range(num_envs)]
+        self.warm_starts = [None] * num_envs
         self.plan_counts = np.zeros(num_envs, dtype=np.int64)
         if self.subgoal_generator is not None:
             self.subgoal_generator.reset(num_envs)
@@ -276,8 +277,11 @@ class LeWMPPController:
         self.rng, prior_key, plan_key = jax.random.split(self.rng, 3)
         return prior_key, plan_key
 
-    def _initial_mean(self, pixels, goals, prior_key):
+    def _initial_mean(self, env_index, pixels, goals, prior_key):
         mean = np.zeros((self.horizon, self.block_action_dim), dtype=np.float32)
+        warm_start = self.warm_starts[env_index]
+        if warm_start is not None:
+            mean[: len(warm_start)] = warm_start
         if self.action_prior is not None:
             block = np.asarray(
                 self.action_prior.sample_actions(
@@ -303,7 +307,7 @@ class LeWMPPController:
             target_embedding = np.zeros(int(self.lewm_config['embed_dim']), dtype=np.float32)
             if self.subgoal_generator is not None:
                 target_embedding = self.subgoal_generator.predict_path(env_index, np.asarray(goals[env_index, -1]))[-1]
-            initial_mean = self._initial_mean(pixels[env_index], goals[env_index], prior_key)
+            initial_mean = self._initial_mean(env_index, pixels[env_index], goals[env_index], prior_key)
             normalized_blocks = np.asarray(
                 self._plan_one(
                     plan_key,
@@ -314,6 +318,7 @@ class LeWMPPController:
                 )
             )
             keep = normalized_blocks[: self.receding_horizon]
+            self.warm_starts[env_index] = normalized_blocks[self.receding_horizon :].copy()
             self.buffers[env_index].extend(self.scaler.inverse_transform(keep.reshape(-1, self.atomic_action_dim)))
 
         actions = np.full((len(alive), self.atomic_action_dim), np.nan, dtype=np.float32)

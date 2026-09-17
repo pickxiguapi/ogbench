@@ -53,11 +53,26 @@ class ControllerTest(unittest.TestCase):
         controller.horizon = 3
         controller.block_action_dim = 10
         controller.action_prior = FakePrior()
+        controller.warm_starts = [None]
         pixels = np.zeros((1, 4, 4, 3), dtype=np.uint8)
         goals = np.full((1, 4, 4, 3), 9, dtype=np.uint8)
-        mean = controller._initial_mean(pixels, goals, jax.random.PRNGKey(0))
+        mean = controller._initial_mean(0, pixels, goals, jax.random.PRNGKey(0))
         np.testing.assert_array_equal(mean[0], np.arange(10, dtype=np.float32))
         np.testing.assert_array_equal(mean[1:], np.zeros((2, 10), dtype=np.float32))
+
+    def test_unexecuted_plan_suffix_warm_starts_the_next_plan(self):
+        controller = object.__new__(LeWMPPController)
+        controller.horizon = 3
+        controller.block_action_dim = 2
+        controller.action_prior = None
+        controller.warm_starts = [np.asarray([[3.0, 4.0], [5.0, 6.0]])]
+        mean = controller._initial_mean(
+            0,
+            np.zeros((1, 4, 4, 3), dtype=np.uint8),
+            np.zeros((1, 4, 4, 3), dtype=np.uint8),
+            None,
+        )
+        np.testing.assert_array_equal(mean, [[3.0, 4.0], [5.0, 6.0], [0.0, 0.0]])
 
     def test_runtime_uses_consecutive_observation_history(self):
         generator = object.__new__(SubgoalGenerator)
