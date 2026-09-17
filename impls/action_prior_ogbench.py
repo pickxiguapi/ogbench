@@ -78,9 +78,9 @@ def load_agent_config(checkpoint_dir):
     saved_agent = saved.get('agent', {})
     name = saved_agent.get('agent_name')
     if name == 'gciql_chunk':
-        from agents.gciql_chunk import get_config
+        from agents.action_prior_chunk_ogbench import get_config
     elif name == 'gciql_chunk_lewm':
-        from agents.gciql_chunk_lewm import get_config
+        from agents.action_prior_chunk_lewm_ogbench import get_config
     else:
         raise ValueError(f'Expected a final GCIQL-Chunk checkpoint, got {name!r}.')
 
@@ -93,8 +93,8 @@ def load_agent_config(checkpoint_dir):
 
 def load_lance_policy(lance_path, checkpoint_dir, checkpoint_step):
     """Load a final policy using one LeWM-4Tasks Lance shape sample."""
-    from agents import agents
     from agents.action_prior_chunk_lewm_ogbench import LeWMGCIQLChunkAgent
+    from agents.action_prior_chunk_ogbench import GCIQLChunkAgent
     from utils.datasets import GCChunkDataset
     from utils.flax_utils import restore_agent
     from utils.lewm_dataset import LeWMLanceDataset
@@ -105,7 +105,7 @@ def load_lance_policy(lance_path, checkpoint_dir, checkpoint_step):
     example = dataset.sample(1, evaluation=True)
 
     if name == 'gciql_chunk':
-        agent = agents[name].create(
+        agent = GCIQLChunkAgent.create(
             0,
             example['observations'],
             example['actions'],

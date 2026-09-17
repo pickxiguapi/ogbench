@@ -3,8 +3,22 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from action_prior_ogbench import load_agent_config
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize('agent_name', ('gciql_chunk', 'gciql_chunk_lewm'))
+def test_public_action_prior_names_restore_their_configs(tmp_path, agent_name):
+    checkpoint_dir = tmp_path / agent_name
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / 'flags.json').write_text(
+        json.dumps({'agent': {'agent_name': agent_name, 'chunk_size': 5}})
+    )
+    restored_name, config, _ = load_agent_config(checkpoint_dir)
+    assert restored_name == agent_name
+    assert config.agent_name == agent_name
+    assert config.chunk_size == 5
 
 
 def test_visual_ogbench8_pipeline_is_path_connected():

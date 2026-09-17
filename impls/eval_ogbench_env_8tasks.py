@@ -120,8 +120,8 @@ def parse_args():
 
 
 def load_policy(env, checkpoint_dir, checkpoint_step):
-    from agents import agents
-    from agents.gciql_chunk_lewm import LeWMGCIQLChunkAgent
+    from agents.action_prior_chunk_lewm_ogbench import LeWMGCIQLChunkAgent
+    from agents.action_prior_chunk_ogbench import GCIQLChunkAgent
     from utils.flax_utils import restore_agent
 
     name, config, saved = load_agent_config(checkpoint_dir)
@@ -131,7 +131,7 @@ def load_policy(env, checkpoint_dir, checkpoint_step):
     action_width = int(np.prod(env.action_space.shape)) * int(config.chunk_size)
     actions = np.zeros((1, action_width), dtype=np.float32)
     if name == 'gciql_chunk':
-        agent = agents[name].create(0, observation, actions, config)
+        agent = GCIQLChunkAgent.create(0, observation, actions, config)
         return restore_agent(agent, checkpoint_dir, checkpoint_step), saved
 
     lewm_checkpoint = saved.get('lewm_checkpoint')
