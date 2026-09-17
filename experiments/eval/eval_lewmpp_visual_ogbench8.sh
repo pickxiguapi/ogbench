@@ -4,7 +4,9 @@ set -euo pipefail
 # Fill in these paths before running this script.
 OGBENCH_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
-VISUAL_OGBENCH_EXPERIMENT_ROOT="$EXPERIMENT_ROOT/visual-ogbench8"
+LEWM_CHECKPOINT_ROOT=""
+ACTION_PRIOR_CHECKPOINT_ROOT=""
+LATENT_PATH_FLOW_CHECKPOINT_ROOT=""
 EVAL_ROOT="$EXPERIMENT_ROOT/evals/visual-ogbench8/lewmpp"
 ENVS=(
   visual-cube-single-play-v0
@@ -23,8 +25,8 @@ export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless
 
 for index in "${!ENVS[@]}"; do
   tag=${TAGS[$index]}
-  lewm="$VISUAL_OGBENCH_EXPERIMENT_ROOT/lewm/$tag/weights_epoch_10.msgpack"
-  generator="$VISUAL_OGBENCH_EXPERIMENT_ROOT/subgoal/$tag/checkpoint_200000.msgpack"
+  lewm="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack"
+  generator="$LATENT_PATH_FLOW_CHECKPOINT_ROOT/$tag/checkpoint_200000.msgpack"
   python experiments/eval/validate_visual_ogbench8_checkpoint.py \
     --generator="$generator" --lewm="$lewm"
 done
@@ -41,9 +43,9 @@ eval_one() {
       --guidance-population-size=250 --guidance-temperature=0.05 \
       --guidance-first-block-std=0.05 --guidance-random-elite-cap=5 \
       --guidance-mean-residual-weight=0.5 --guidance-goal-mode=final \
-      --use-subgoal --latent-subgoal-checkpoint="$VISUAL_OGBENCH_EXPERIMENT_ROOT/subgoal/$tag/checkpoint_200000.msgpack" \
-      --num-samples=1 --lewm-checkpoint="$VISUAL_OGBENCH_EXPERIMENT_ROOT/lewm/$tag/weights_epoch_10.msgpack" \
-      --policy-checkpoint-dir="$VISUAL_OGBENCH_EXPERIMENT_ROOT/action-prior/$tag" --policy-checkpoint-step=500000 \
+      --use-subgoal --latent-subgoal-checkpoint="$LATENT_PATH_FLOW_CHECKPOINT_ROOT/$tag/checkpoint_200000.msgpack" \
+      --num-samples=1 --lewm-checkpoint="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack" \
+      --policy-checkpoint-dir="$ACTION_PRIOR_CHECKPOINT_ROOT/$tag" --policy-checkpoint-step=500000 \
       --policy-action-space=environment --num-eval=50 --seed="$CURRENT_EVAL_SEED" \
       --cem-horizon=2 --cem-receding-horizon=1 --action-block=5 \
       --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 \

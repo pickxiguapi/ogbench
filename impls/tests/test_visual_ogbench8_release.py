@@ -28,8 +28,10 @@ def test_visual_ogbench8_pipeline_is_path_connected():
         'train_lewm_visual_ogbench8.sh'
     ]
     for name in scripts:
-        assert 'VISUAL_OGBENCH_EXPERIMENT_ROOT="$EXPERIMENT_ROOT/visual-ogbench8"' in scripts[name]
         assert 'GPU_IDS=(0 1 2 3 4 5 6 7)' in scripts[name]
+    assert 'LEWM_CHECKPOINT_ROOT=""' in scripts['eval_lewmpp_visual_ogbench8.sh']
+    assert 'ACTION_PRIOR_CHECKPOINT_ROOT=""' in scripts['eval_lewmpp_visual_ogbench8.sh']
+    assert 'LATENT_PATH_FLOW_CHECKPOINT_ROOT=""' in scripts['eval_lewmpp_visual_ogbench8.sh']
     assert 'checkpoint_200000.msgpack' in scripts['eval_lewmpp_visual_ogbench8.sh']
     assert '--policy-checkpoint-step=500000' in scripts['eval_lewmpp_visual_ogbench8.sh']
 

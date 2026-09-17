@@ -26,11 +26,10 @@ def main():
         raise ValueError(f'Invalid protocol requested for family {args.family}.')
 
     checkpoint = Path(args.checkpoint).expanduser().resolve()
+    checkpoint.stat()
     config_path = checkpoint.parent / 'config.json'
     config = json.loads(config_path.read_text())
     expected = {
-        'generator_family': args.family,
-        'generator_type': args.generator_type,
         'goal_sampling': args.goal_sampling,
         'max_goal_steps': args.max_goal_steps,
     }
@@ -39,6 +38,21 @@ def main():
         for key, value in expected.items()
         if config.get(key) != value
     }
+    if config.get('generator_family') not in (None, args.family):
+        mismatches['generator_family'] = {
+            'actual': config.get('generator_family'),
+            'expected': args.family,
+        }
+    if config.get('generator_type') not in (None, args.generator_type):
+        mismatches['generator_type'] = {
+            'actual': config.get('generator_type'),
+            'expected': args.generator_type,
+        }
+    if config.get('architecture') != 'latent_path_flow_transformer_encoder':
+        mismatches['architecture'] = {
+            'actual': config.get('architecture'),
+            'expected': 'latent_path_flow_transformer_encoder',
+        }
     config_task = config.get('task')
     latent_dataset = Path(config.get('latent_dataset') or '')
     if config_task not in (None, args.task):

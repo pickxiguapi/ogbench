@@ -4,7 +4,7 @@ set -euo pipefail
 # Fill in these paths before running this script.
 OGBENCH_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
-VISUAL_OGBENCH_EXPERIMENT_ROOT="$EXPERIMENT_ROOT/visual-ogbench8"
+LEWM_CHECKPOINT_ROOT=""
 EVAL_ROOT="$EXPERIMENT_ROOT/evals/visual-ogbench8/lewm"
 ENVS=(
   visual-cube-single-play-v0
@@ -30,7 +30,7 @@ eval_one() {
     python impls/eval_ogbench_env_8tasks.py \
       --env-name="$env_name" --dataset-path="$OGBENCH_DATA_ROOT/$env_name.npz" \
       --controller=lewm_cem --policy-guidance=none \
-      --lewm-checkpoint="$VISUAL_OGBENCH_EXPERIMENT_ROOT/lewm/$tag/weights_epoch_10.msgpack" \
+      --lewm-checkpoint="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack" \
       --num-eval=50 --seed="$CURRENT_EVAL_SEED" --cem-horizon=5 \
       --cem-receding-horizon=1 --action-block=5 --cem-num-samples=300 \
       --cem-iterations=30 --cem-topk=30 --cem-var-scale=1.0 \
