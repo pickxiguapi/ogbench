@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$REPO_ROOT/configs/lewmpp_paths.env"
+# Fill in these paths before running this script.
+LEWM_DATA_ROOT=""
+EXPERIMENT_ROOT="outputs"
+LEWM_CHECKPOINT_ROOT=""
 
 TASKS=(cube pusht reacher tworoom)
 GPU_IDS=(0 1 2 3)
@@ -13,26 +15,24 @@ DATASETS=(
   "$LEWM_DATA_ROOT/tworoom.lance"
 )
 LEWM_CHECKPOINTS=(
-  "$LEWM_CUBE_CHECKPOINT"
-  "$LEWM_PUSHT_CHECKPOINT"
-  "$LEWM_REACHER_CHECKPOINT"
-  "$LEWM_TWOROOM_CHECKPOINT"
+  "$LEWM_CHECKPOINT_ROOT/cube/weights_epoch_10.msgpack"
+  "$LEWM_CHECKPOINT_ROOT/pusht/weights_epoch_10.msgpack"
+  "$LEWM_CHECKPOINT_ROOT/reacher/weights_epoch_10.msgpack"
+  "$LEWM_CHECKPOINT_ROOT/tworoom/weights_epoch_10.msgpack"
 )
 
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-export PYTHONPATH="$REPO_ROOT:$REPO_ROOT/impls${PYTHONPATH:+:$PYTHONPATH}"
-cd "$REPO_ROOT/impls"
 
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
-  save_dir="$EXPERIMENT_ROOT/open-source-retrain/action-prior-chunk/$task"
+  save_dir="$EXPERIMENT_ROOT/action-prior-chunk/$task"
   log_file="$save_dir/train.log"
   mkdir -p "$save_dir"
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
-    "$PYTHON_BIN" action-prior-chunk.py \
+    python impls/action-prior-chunk.py \
       --dataset_path="${DATASETS[$index]}" \
       --lewm_checkpoint="${LEWM_CHECKPOINTS[$index]}" \
       --save_dir="$save_dir" \

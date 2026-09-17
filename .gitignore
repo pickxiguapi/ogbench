@@ -12,5 +12,4 @@ dist/
 /logs/
 /wandb/
 /reports/
-/configs/*.env
-!/configs/*.example.env
+/outputs/

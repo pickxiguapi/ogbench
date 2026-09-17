@@ -44,8 +44,9 @@ def parse_args():
     parser.add_argument('--save-dir', required=True)
     parser.add_argument('--exp-name', required=True)
     parser.add_argument(
-        '--generator-family',
-        choices=('goalmax25', 'general_uniform_future'),
+        '--goal-range',
+        dest='generator_family',
+        choices=('h25', 'full_future'),
         required=True,
     )
     parser.add_argument(
@@ -53,15 +54,6 @@ def parse_args():
         choices=('mlp', 'endpoint_flow', 'latent_path_flow'),
         default='latent_path_flow',
     )
-    parser.add_argument(
-        '--goal-sampling',
-        choices=(
-            'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25',
-            'hiql_uniform_future_same_trajectory',
-        ),
-        required=True,
-    )
-    parser.add_argument('--max-goal-steps', type=int)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--split-seed', type=int, default=0)
     parser.add_argument('--train-fraction', type=float, default=0.95)
@@ -70,7 +62,7 @@ def parse_args():
     parser.add_argument('--history-size', type=int, default=3)
     parser.add_argument('--train-steps', type=int, default=200_000)
     parser.add_argument('--batch-size', type=int, default=1024)
-    parser.add_argument('--hidden-dim', type=int, default=512)
+    parser.add_argument('--model-dim', dest='hidden_dim', type=int, default=512)
     parser.add_argument('--hidden-dims', type=int, nargs='+', default=(512, 512, 512))
     parser.add_argument('--depth', type=int, default=4)
     parser.add_argument('--num-heads', type=int, default=8)
@@ -137,18 +129,16 @@ def validate_args(args):
             raise ValueError('time_dim must be even.')
     if args.history_size <= 1:
         raise ValueError('Release generators require history_size greater than one.')
-    if args.generator_family == 'goalmax25':
+    if args.generator_family == 'h25':
         if args.action_block != 5 or args.subgoal_steps != 10:
-            raise ValueError('goalmax25 requires action_block=5 and subgoal_steps=10.')
-        if args.goal_sampling != 'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25':
-            raise ValueError('goalmax25 requires bounded, stride-5 distance-first goal sampling.')
-        if args.max_goal_steps != 25:
-            raise ValueError('goalmax25 requires max_goal_steps=25.')
-    if args.generator_family == 'general_uniform_future':
-        if args.goal_sampling != 'hiql_uniform_future_same_trajectory':
-            raise ValueError('general_uniform_future requires uniform future sampling.')
-        if args.max_goal_steps is not None:
-            raise ValueError('general_uniform_future must not set a finite max_goal_steps.')
+            raise ValueError('h25 requires action_block=5 and subgoal_steps=10.')
+        args.generator_family = 'goalmax25'
+        args.goal_sampling = 'uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25'
+        args.max_goal_steps = 25
+    else:
+        args.generator_family = 'general_uniform_future'
+        args.goal_sampling = 'hiql_uniform_future_same_trajectory'
+        args.max_goal_steps = None
 
 
 class FlowTrainState(train_state.TrainState):
@@ -491,8 +481,11 @@ def main():
     )
     fixed_val = (fixed_val[0], fixed_val[1], target_indices)
 
+    config_args = vars(args).copy()
+    if args.generator_type != 'mlp':
+        config_args.pop('hidden_dims')
     config = {
-        **vars(args),
+        **config_args,
         'latent_dataset': str(Path(args.latent_dataset).expanduser().resolve()),
         'save_dir': str(output_dir),
         'task': cache.metadata.get('task'),
@@ -521,7 +514,6 @@ def main():
             else 'conditional_path_flow_matching_mse'
         ),
         'flow_solver': None if args.generator_type == 'mlp' else 'euler',
-        'hidden_dims': list(args.hidden_dims),
         'max_goal_steps': max_goal_steps,
         'goal_sampling': args.goal_sampling,
     }

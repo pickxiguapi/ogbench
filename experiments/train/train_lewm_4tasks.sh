@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$REPO_ROOT/configs/lewmpp_paths.env"
+# Fill in these paths before running this script.
+LEWM_DATA_ROOT="path/to/data"
+EXPERIMENT_ROOT="outputs"
 
 TASKS=(cube pusht reacher tworoom)
 GPU_IDS=(0 1 2 3)
-SEEDS=(3072 666 3072 3072)
+SEEDS=(0 666 3072 1)
 DATASETS=(
   "$LEWM_DATA_ROOT/cube_single_expert.lance"
   "$LEWM_DATA_ROOT/pusht_expert_train.lance"
@@ -15,27 +16,24 @@ DATASETS=(
 )
 
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-export PYTHONPATH="$REPO_ROOT:$REPO_ROOT/impls${PYTHONPATH:+:$PYTHONPATH}"
-cd "$REPO_ROOT/impls"
 
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
   seed=${SEEDS[$index]}
-  save_dir="$EXPERIMENT_ROOT/open-source-retrain/lewm/$task"
+  save_dir="$EXPERIMENT_ROOT/lewm/$task"
   log_file="$save_dir/train.log"
   mkdir -p "$save_dir"
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
-    "$PYTHON_BIN" train_lewm_jax.py \
+    python impls/train_lewm_jax.py \
       --dataset_path="${DATASETS[$index]}" \
       --save_dir="$save_dir" \
       --exp_name="lewm_${task}_seed${seed}" \
       --decode_workers=6 \
       --seed="$seed" \
       --epochs=10 \
-      --save_interval_steps=100000 \
       --batch_size=128 \
       --frameskip=5 \
       --image_size=224 \
