@@ -79,7 +79,6 @@ for index in "${!TASKS[@]}"; do
         --cem-iterations=5
         --cem-topk=30
         --cem-var-scale=1.0
-        --cem-min-std=0.001
         --cem-cost-mode=moh
         --output="$result_dir/result.json"
       )

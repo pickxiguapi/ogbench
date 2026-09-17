@@ -70,7 +70,6 @@ def parse_args():
     parser.add_argument('--cem-iterations', type=int, default=DEFAULT_CEM_ITERATIONS)
     parser.add_argument('--cem-topk', type=int, default=30)
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
-    parser.add_argument('--cem-min-std', type=float, default=1e-3)
     parser.add_argument('--cem-cost-mode', choices=('last', 'moh'), default='moh')
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
@@ -107,8 +106,8 @@ def validate_args(args):
     ):
         if getattr(args, name) <= 0:
             raise ValueError(f'--{name.replace("_", "-")} must be positive.')
-    if args.cem_var_scale <= 0 or args.cem_min_std <= 0:
-        raise ValueError('CEM variance scale and minimum std must be positive.')
+    if args.cem_var_scale <= 0:
+        raise ValueError('CEM variance scale must be positive.')
 
     use_subgoal, use_prior, cost_mode, direct_policy = expected_components(args.variant)
     if use_subgoal != (args.subgoal_generator_checkpoint is not None):
@@ -283,7 +282,6 @@ def main():
                 iterations=args.cem_iterations,
                 topk=args.cem_topk,
                 var_scale=args.cem_var_scale,
-                min_std=args.cem_min_std,
                 cost_mode=args.cem_cost_mode,
                 action_prior=action_prior,
                 action_prior_mode=args.action_prior_mode,
@@ -356,7 +354,6 @@ def main():
             'cem_iterations': None if direct_policy else args.cem_iterations,
             'cem_topk': None if direct_policy else args.cem_topk,
             'cem_var_scale': None if direct_policy else args.cem_var_scale,
-            'cem_min_std': None if direct_policy else args.cem_min_std,
             'cem_cost_mode': None if direct_policy else args.cem_cost_mode,
             'flow_sampling_steps': args.flow_sampling_steps if use_subgoal else None,
             'policy_goal': 'final_goal',

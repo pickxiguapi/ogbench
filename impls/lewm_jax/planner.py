@@ -54,7 +54,6 @@ class LeWMPPController:
         iterations,
         topk,
         var_scale,
-        min_std=1e-3,
         cost_mode='moh',
         action_prior=None,
         action_prior_mode='zero',
@@ -71,8 +70,8 @@ class LeWMPPController:
             raise ValueError('CEM requires at least two samples and one iteration.')
         if not 1 < topk <= num_samples:
             raise ValueError('CEM topk must be in [2, num_samples].')
-        if var_scale <= 0 or min_std <= 0:
-            raise ValueError('CEM variance scale and minimum std must be positive.')
+        if var_scale <= 0:
+            raise ValueError('CEM variance scale must be positive.')
         if cost_mode not in ('last', 'moh'):
             raise ValueError(f'Unsupported CEM cost mode: {cost_mode!r}.')
         if action_prior_mode not in ('zero', 'policy_mode', 'policy_mode_anchor'):
@@ -96,7 +95,6 @@ class LeWMPPController:
         self.iterations = int(iterations)
         self.topk = int(topk)
         self.var_scale = float(var_scale)
-        self.min_std = float(min_std)
         self.cost_mode = str(cost_mode)
         self.action_prior = action_prior
         self.action_prior_mode = str(action_prior_mode)
@@ -186,7 +184,6 @@ class LeWMPPController:
         iterations = self.iterations
         topk = self.topk
         var_scale = self.var_scale
-        min_std = self.min_std
         cost_mode = self.cost_mode
         use_local_target = self.subgoal_generator is not None
         anchor_policy_mode = self.action_prior_mode == 'policy_mode_anchor'
@@ -229,11 +226,7 @@ class LeWMPPController:
                 costs = reduce_rollout_costs(distances, cost_mode)
                 _, elite_indices = jax.lax.top_k(-costs, topk)
                 elites = candidates[elite_indices]
-                return (
-                    key,
-                    elites.mean(axis=0),
-                    jnp.maximum(elites.std(axis=0, ddof=1), min_std),
-                )
+                return key, elites.mean(axis=0), elites.std(axis=0, ddof=1)
 
             _, mean, _ = jax.lax.fori_loop(
                 0,

@@ -46,10 +46,9 @@ for index in "${!TASKS[@]}"; do
         --cem-receding-horizon=1
         --action-block=5
         --cem-num-samples=300
-        --cem-iterations=5
+        --cem-iterations=30
         --cem-topk=30
         --cem-var-scale=1.0
-        --cem-min-std=0.001
         --cem-cost-mode=last
         --output="$result_dir/result.json"
       )
