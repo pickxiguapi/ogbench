@@ -4,6 +4,7 @@ set -euo pipefail
 # Fill in these paths before running this script.
 LEWM_DATA_ROOT=""
 LEWM_CHECKPOINT_ROOT=""
+EXPERIMENT_ROOT="outputs"
 
 TASKS=(cube pusht reacher tworoom)
 GPU_IDS=(0 1 2 3)
@@ -25,9 +26,9 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
-  output="$LEWM_DATA_ROOT/lewm-latents/$task.h5"
-  log_file="$LEWM_DATA_ROOT/lewm-latents/$task.log"
-  mkdir -p "$LEWM_DATA_ROOT/lewm-latents"
+  output="$EXPERIMENT_ROOT/train/lewm_latents/$task.h5"
+  log_file="$EXPERIMENT_ROOT/train/lewm_latents/$task.log"
+  mkdir -p "$EXPERIMENT_ROOT/train/lewm_latents"
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}

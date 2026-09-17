@@ -117,8 +117,8 @@ for horizon in 25 50 75 100; do
 done
 
 python impls/aggregate_lewmpp_results.py \
-  --results-root outputs/evals/lewm-4tasks \
-  --output outputs/evals/lewm-4tasks/summary.csv
+  --results-root outputs/eval \
+  --output outputs/eval/lewm_control_suite_summary.csv
 ```
 
 ### More challenging tasks on Visual OGBench
@@ -137,8 +137,8 @@ environments:
 
 ```bash
 python impls/aggregate_visual_ogbench8_results.py \
-  --results-root outputs/evals/visual-ogbench8/lewmpp \
-  --output outputs/evals/visual-ogbench8/lewmpp/summary.json
+  --results-root outputs/eval/visual_ogbench_lewmpp \
+  --output outputs/eval/visual_ogbench_lewmpp/summary.json
 ```
 
 ## Acknowledgments

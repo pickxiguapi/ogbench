@@ -22,7 +22,7 @@ def main():
     values = {tag: [] for tag in TAGS}
     for seed in SEEDS:
         for tag in TAGS:
-            path = root / f'seed{seed}' / tag / 'result.json'
+            path = root / tag / f'seed{seed}' / 'result.json'
             if not path.is_file():
                 raise SystemExit(f'Incomplete matrix; missing {path}')
             result = json.loads(path.read_text())

@@ -76,7 +76,7 @@ def test_visual_ogbench8_aggregator_uses_sample_standard_deviation(tmp_path):
     tags = ('cs_play', 'cd_play', 'ct_play', 'scene_play', 'cs_noisy', 'cd_noisy', 'ct_noisy', 'scene_noisy')
     for seed, value in zip((0, 1, 42), (0.4, 0.5, 0.6)):
         for tag in tags:
-            path = tmp_path / f'seed{seed}' / tag / 'result.json'
+            path = tmp_path / tag / f'seed{seed}' / 'result.json'
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
                 json.dumps(

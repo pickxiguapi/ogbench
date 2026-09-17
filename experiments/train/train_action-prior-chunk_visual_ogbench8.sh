@@ -4,7 +4,6 @@ set -euo pipefail
 # Fill in these paths before running this script.
 OGBENCH_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
-VISUAL_OGBENCH_EXPERIMENT_ROOT="$EXPERIMENT_ROOT/visual-ogbench8"
 ENVS=(
   visual-cube-single-play-v0
   visual-cube-double-play-v0
@@ -20,13 +19,13 @@ GPU_IDS=(0 1 2 3 4 5 6 7)
 
 train_one() {
   local gpu=$1 index=$2 env_name=${ENVS[$2]} tag=${TAGS[$2]}
-  local save_dir="$VISUAL_OGBENCH_EXPERIMENT_ROOT/action-prior/$tag"
+  local save_dir="$EXPERIMENT_ROOT/train/visual_ogbench_action_prior/$tag"
   mkdir -p "$save_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
     python impls/train_action_prior_ogbench.py \
       --env_name="$env_name" --dataset_path="$OGBENCH_DATA_ROOT/$env_name.npz" \
       --save_dir="$save_dir" --representation_mode=all \
-      --lewm_checkpoint="$VISUAL_OGBENCH_EXPERIMENT_ROOT/lewm/$tag/weights_epoch_10.msgpack" \
+      --lewm_checkpoint="$EXPERIMENT_ROOT/train/visual_ogbench_lewm/$tag/weights_epoch_10.msgpack" \
       --actor_loss=awr --alpha=3.0 --pixel_encoder=impala_small --p_aug=0.0 \
       --train_steps=500000 --batch_size=512 --seed=0 --chunk_size=5 \
       --lr=3e-4 --discount=0.99 --expectile=0.9 --tau=0.005 \

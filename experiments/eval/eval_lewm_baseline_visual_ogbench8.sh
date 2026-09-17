@@ -5,7 +5,7 @@ set -euo pipefail
 OGBENCH_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
 LEWM_CHECKPOINT_ROOT=""
-EVAL_ROOT="$EXPERIMENT_ROOT/evals/visual-ogbench8/lewm"
+EVAL_ROOT="$EXPERIMENT_ROOT/eval/visual_ogbench_lewm"
 ENVS=(
   visual-cube-single-play-v0
   visual-cube-double-play-v0
@@ -23,7 +23,7 @@ export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless
 
 eval_one() {
   local gpu=$1 index=$2 env_name=${ENVS[$2]} tag=${TAGS[$2]}
-  local output_dir="$EVAL_ROOT/seed$CURRENT_EVAL_SEED/$tag"
+  local output_dir="$EVAL_ROOT/$tag/seed$CURRENT_EVAL_SEED"
   local output="$output_dir/result.json"
   mkdir -p "$output_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \

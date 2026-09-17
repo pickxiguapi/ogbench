@@ -4,7 +4,6 @@ set -euo pipefail
 # Fill in these paths before running this script.
 OGBENCH_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
-VISUAL_OGBENCH_EXPERIMENT_ROOT="$EXPERIMENT_ROOT/visual-ogbench8"
 ENVS=(
   visual-cube-single-play-v0
   visual-cube-double-play-v0
@@ -20,7 +19,7 @@ GPU_IDS=(0 1 2 3 4 5 6 7)
 
 train_one() {
   local gpu=$1 index=$2 env_name=${ENVS[$2]} tag=${TAGS[$2]}
-  local save_dir="$VISUAL_OGBENCH_EXPERIMENT_ROOT/lewm/$tag"
+  local save_dir="$EXPERIMENT_ROOT/train/visual_ogbench_lewm/$tag"
   mkdir -p "$save_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
     python impls/train_lewm_ogbench.py \

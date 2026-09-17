@@ -7,7 +7,7 @@ EXPERIMENT_ROOT="outputs"
 LEWM_CHECKPOINT_ROOT=""
 ACTION_PRIOR_CHECKPOINT_ROOT=""
 LATENT_PATH_FLOW_CHECKPOINT_ROOT=""
-EVAL_ROOT="$EXPERIMENT_ROOT/evals/visual-ogbench8/lewmpp"
+EVAL_ROOT="$EXPERIMENT_ROOT/eval/visual_ogbench_lewmpp"
 ENVS=(
   visual-cube-single-play-v0
   visual-cube-double-play-v0
@@ -33,7 +33,7 @@ done
 
 eval_one() {
   local gpu=$1 index=$2 env_name=${ENVS[$2]} tag=${TAGS[$2]}
-  local output_dir="$EVAL_ROOT/seed$CURRENT_EVAL_SEED/$tag"
+  local output_dir="$EVAL_ROOT/$tag/seed$CURRENT_EVAL_SEED"
   local output="$output_dir/result.json"
   mkdir -p "$output_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \

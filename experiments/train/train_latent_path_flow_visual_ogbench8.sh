@@ -4,7 +4,6 @@ set -euo pipefail
 # Fill in these paths before running this script.
 OGBENCH_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
-VISUAL_OGBENCH_EXPERIMENT_ROOT="$EXPERIMENT_ROOT/visual-ogbench8"
 ENVS=(
   visual-cube-single-play-v0
   visual-cube-double-play-v0
@@ -20,11 +19,11 @@ GPU_IDS=(0 1 2 3 4 5 6 7)
 
 train_one() {
   local gpu=$1 index=$2 tag=${TAGS[$2]}
-  local save_dir="$VISUAL_OGBENCH_EXPERIMENT_ROOT/subgoal/$tag"
+  local save_dir="$EXPERIMENT_ROOT/train/visual_ogbench_latent_path_flow/$tag"
   mkdir -p "$save_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
     python impls/train_latent_subgoal_gcbc.py \
-      --latent-dataset="$VISUAL_OGBENCH_EXPERIMENT_ROOT/latents/$tag.h5" --save-dir="$save_dir" \
+      --latent-dataset="$EXPERIMENT_ROOT/train/visual_ogbench_latents/$tag.h5" --save-dir="$save_dir" \
       --exp-name="latent_path_flow_ogbench8_$tag" --architecture=latent_path_flow \
       --history-size=3 --hidden-dim=512 --depth=4 --num-heads=8 --ff-dim=2048 \
       --time-dim=64 --seed=0 --split-seed=0 --train-fraction=0.95 \

@@ -63,18 +63,23 @@ def test_launchers_use_inline_path_configuration():
         assert 'lewmpp_paths.env' not in text
         assert '# Fill in these paths before running this script.' in text
         assert '_ROOT=' in text
+        for line in text.splitlines():
+            if line.startswith(('LEWM_DATA_ROOT=', 'OGBENCH_DATA_ROOT=', 'LEWM_CHECKPOINT_ROOT=',
+                                'ACTION_PRIOR_CHECKPOINT_ROOT=', 'LATENT_PATH_FLOW_CHECKPOINT_ROOT=')):
+                assert line.endswith('=""')
 
 
 def test_launchers_derive_generated_paths_from_common_roots():
     scripts = '\n'.join(path.read_text() for path in (ROOT / 'experiments').rglob('*.sh'))
-    assert '$EXPERIMENT_ROOT/lewm/' in scripts
-    assert '$EXPERIMENT_ROOT/action-prior-chunk/' in scripts
-    assert '$EXPERIMENT_ROOT/latent-path-flow/h25/' in scripts
-    assert '$EXPERIMENT_ROOT/latent-path-flow/longh/' in scripts
-    assert '$EXPERIMENT_ROOT/evals/lewm-4tasks/' in scripts
-    assert '$LEWM_DATA_ROOT/lewm-latents/' in scripts
-    assert 'visual-ogbench8' in scripts
-    assert '$EXPERIMENT_ROOT/evals/visual-ogbench8/' in scripts
+    assert '$EXPERIMENT_ROOT/train/lewm/' in scripts
+    assert '$EXPERIMENT_ROOT/train/action_prior/' in scripts
+    assert '$EXPERIMENT_ROOT/train/latent_path_flow_h25/' in scripts
+    assert '$EXPERIMENT_ROOT/train/latent_path_flow_longh/' in scripts
+    assert '$EXPERIMENT_ROOT/eval/lewmpp_h25/' in scripts
+    assert '$EXPERIMENT_ROOT/eval/lewm_h25/' in scripts
+    assert '$EXPERIMENT_ROOT/train/lewm_latents/' in scripts
+    assert '$EXPERIMENT_ROOT/train' in scripts
+    assert '$EXPERIMENT_ROOT/eval/visual_ogbench_' in scripts
 
 
 def test_action_prior_training_launcher_records_release_hyperparameters():

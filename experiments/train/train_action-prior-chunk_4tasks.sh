@@ -26,7 +26,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
-  save_dir="$EXPERIMENT_ROOT/action-prior-chunk/$task"
+  save_dir="$EXPERIMENT_ROOT/train/action_prior/$task"
   log_file="$save_dir/train.log"
   mkdir -p "$save_dir"
 

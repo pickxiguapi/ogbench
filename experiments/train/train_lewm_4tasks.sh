@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Fill in these paths before running this script.
-LEWM_DATA_ROOT="path/to/data"
+LEWM_DATA_ROOT=""
 EXPERIMENT_ROOT="outputs"
 
 TASKS=(cube pusht reacher tworoom)
@@ -21,7 +21,7 @@ pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
   seed=${SEEDS[$index]}
-  save_dir="$EXPERIMENT_ROOT/lewm/$task"
+  save_dir="$EXPERIMENT_ROOT/train/lewm/$task"
   log_file="$save_dir/train.log"
   mkdir -p "$save_dir"
 
