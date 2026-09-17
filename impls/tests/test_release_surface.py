@@ -53,6 +53,14 @@ def test_release_has_only_paper_experiment_launchers():
         assert 'exit "$status"' in text
     for retired in ('backup', 'reports', 'results'):
         assert not (ROOT / retired).exists()
+    assert not list((ROOT / 'data_gen_scripts').rglob('*'))
+    for retired in (
+        'create_latent_subgoal_validation_manifest.py',
+        'hyperparameters.sh',
+        'main.py',
+        'requirements.txt',
+    ):
+        assert not (ROOT / 'impls' / retired).exists()
 
 
 def test_launchers_use_inline_path_configuration():
