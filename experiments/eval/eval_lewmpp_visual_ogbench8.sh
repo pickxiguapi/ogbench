@@ -19,8 +19,9 @@ ENVS=(
   visual-scene-noisy-v0
 )
 TAGS=(cs_play cd_play ct_play scene_play cs_noisy cd_noisy ct_noisy scene_noisy)
-GPU_IDS=(0 1 2 3 4 5 6 7)
-EVAL_SEEDS=(0 1 42)
+read -r -a GPU_IDS <<< "${GPU_IDS:-0 1 2 3 4 5 6 7}"
+read -r -a EVAL_SEEDS <<< "${EVAL_SEEDS:-0 1 42}"
+NUM_EVAL=${NUM_EVAL:-50}
 export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless
 
 for index in "${!ENVS[@]}"; do
@@ -46,7 +47,7 @@ eval_one() {
       --use-subgoal --latent-subgoal-checkpoint="$LATENT_PATH_FLOW_CHECKPOINT_ROOT/$tag/checkpoint_200000.msgpack" \
       --num-samples=1 --lewm-checkpoint="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack" \
       --policy-checkpoint-dir="$ACTION_PRIOR_CHECKPOINT_ROOT/$tag" --policy-checkpoint-step=500000 \
-      --policy-action-space=environment --num-eval=50 --seed="$CURRENT_EVAL_SEED" \
+      --policy-action-space=environment --num-eval="$NUM_EVAL" --seed="$CURRENT_EVAL_SEED" \
       --cem-horizon=2 --cem-receding-horizon=1 --action-block=5 \
       --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 \
       --cem-var-scale=1.0 --cem-cost-mode=moh --output="$output" \
@@ -67,5 +68,7 @@ for CURRENT_EVAL_SEED in "${EVAL_SEEDS[@]}"; do
   (( status == 0 )) || exit "$status"
 done
 
-python impls/aggregate_visual_ogbench8_results.py \
-  --results-root="$EVAL_ROOT" --output="$EVAL_ROOT/summary.json"
+if [[ "$NUM_EVAL" == 50 && "${EVAL_SEEDS[*]}" == "0 1 42" ]]; then
+  python impls/aggregate_visual_ogbench8_results.py \
+    --results-root="$EVAL_ROOT" --output="$EVAL_ROOT/summary.json"
+fi

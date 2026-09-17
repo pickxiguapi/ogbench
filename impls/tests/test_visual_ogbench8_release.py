@@ -42,7 +42,10 @@ def test_visual_ogbench8_pipeline_is_path_connected():
         'train_lewm_visual_ogbench8.sh'
     ]
     for name in scripts:
-        assert 'GPU_IDS=(0 1 2 3 4 5 6 7)' in scripts[name]
+        if name.startswith('eval_'):
+            assert '${GPU_IDS:-0 1 2 3 4 5 6 7}' in scripts[name]
+        else:
+            assert 'GPU_IDS=(0 1 2 3 4 5 6 7)' in scripts[name]
     assert 'LEWM_CHECKPOINT_ROOT=""' in scripts['eval_lewmpp_visual_ogbench8.sh']
     assert 'ACTION_PRIOR_CHECKPOINT_ROOT=""' in scripts['eval_lewmpp_visual_ogbench8.sh']
     assert 'LATENT_PATH_FLOW_CHECKPOINT_ROOT=""' in scripts['eval_lewmpp_visual_ogbench8.sh']
@@ -53,8 +56,9 @@ def test_visual_ogbench8_pipeline_is_path_connected():
 def test_visual_ogbench8_eval_records_paper_protocol():
     text = (ROOT / 'experiments' / 'eval' / 'eval_lewmpp_visual_ogbench8.sh').read_text()
     for fragment in (
-        'EVAL_SEEDS=(0 1 42)',
-        '--num-eval=50',
+        '${EVAL_SEEDS:-0 1 42}',
+        'NUM_EVAL=${NUM_EVAL:-50}',
+        '--num-eval="$NUM_EVAL"',
         '--cem-horizon=2',
         '--cem-receding-horizon=1',
         '--action-block=5',
@@ -67,6 +71,16 @@ def test_visual_ogbench8_eval_records_paper_protocol():
         '--cem-cost-mode=moh',
     ):
         assert fragment in text
+
+
+def test_visual_ogbench8_eval_smoke_overrides_do_not_change_paper_defaults():
+    eval_root = ROOT / 'experiments' / 'eval'
+    for name in ('eval_lewmpp_visual_ogbench8.sh', 'eval_lewm_baseline_visual_ogbench8.sh'):
+        text = (eval_root / name).read_text()
+        assert '${GPU_IDS:-0 1 2 3 4 5 6 7}' in text
+        assert '${EVAL_SEEDS:-0 1 42}' in text
+        assert 'NUM_EVAL=${NUM_EVAL:-50}' in text
+        assert '"$NUM_EVAL" == 50' in text
 
 
 def test_visual_ogbench8_aggregator_rejects_incomplete_matrix(tmp_path):
