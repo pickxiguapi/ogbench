@@ -24,14 +24,6 @@ read -r -a EVAL_SEEDS <<< "${EVAL_SEEDS:-0 1 42}"
 NUM_EVAL=${NUM_EVAL:-50}
 export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl EGL_PLATFORM=surfaceless
 
-for index in "${!ENVS[@]}"; do
-  tag=${TAGS[$index]}
-  lewm="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack"
-  generator="$LATENT_PATH_FLOW_CHECKPOINT_ROOT/$tag/checkpoint_200000.msgpack"
-  python experiments/eval/validate_visual_ogbench8_checkpoint.py \
-    --generator="$generator" --lewm="$lewm"
-done
-
 eval_one() {
   local gpu=$1 index=$2 env_name=${ENVS[$2]} tag=${TAGS[$2]}
   local output_dir="$EVAL_ROOT/$tag/seed$CURRENT_EVAL_SEED"

@@ -10,6 +10,7 @@ from eval_lewm_4tasks import (
     DEFAULT_CEM_SAMPLES,
     DEFAULT_FLOW_STEPS,
     VARIANTS,
+    expected_components,
     validate_release_files,
 )
 
@@ -154,8 +155,7 @@ def test_generator_launchers_record_and_validate_family_invariants():
     assert len(generator_evals) == 4
     for path in generator_evals:
         text = path.read_text()
-        assert text.count('validate_generator_checkpoint.py') == 1
-        assert text.index('validate_generator_checkpoint.py') < text.index('pids=()')
+        assert '--validate-only' in text
 
 
 def test_python_entrypoints_match_the_release_pipeline():
@@ -182,6 +182,17 @@ def test_release_has_exactly_three_subgoal_model_types():
 def test_evaluator_exposes_required_release_variants_and_defaults():
     assert VARIANTS == ('full', 'no_subgoal', 'no_action_prior', 'no_moh', 'lewm', 'action_prior_chunk')
     assert (DEFAULT_CEM_ITERATIONS, DEFAULT_CEM_SAMPLES, DEFAULT_FLOW_STEPS) == (5, 300, 16)
+
+
+def test_release_variants_keep_their_component_semantics():
+    assert {variant: expected_components(variant) for variant in VARIANTS} == {
+        'full': (True, True, 'moh', False),
+        'no_subgoal': (False, True, 'moh', False),
+        'no_action_prior': (True, False, 'moh', False),
+        'no_moh': (True, True, 'last', False),
+        'lewm': (False, False, 'last', False),
+        'action_prior_chunk': (False, True, None, True),
+    }
 
 
 def test_action_prior_public_surface_uses_neutral_name():

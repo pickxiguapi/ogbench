@@ -35,17 +35,6 @@ export MUJOCO_GL=egl
 export PYOPENGL_PLATFORM=egl
 export EGL_PLATFORM=surfaceless
 
-for index in "${!TASKS[@]}"; do
-  task=${TASKS[$index]}
-  python experiments/eval/validate_generator_checkpoint.py \
-    --checkpoint="${SUBGOAL_CHECKPOINTS[$index]}" \
-    --task="$task" \
-    --family=goalmax25 \
-    --generator-type=latent_path_flow \
-    --goal-sampling=uniform_distance_first_aligned_future_same_trajectory_stride_5_max_25 \
-    --max-goal-steps=25
-done
-
 pids=()
 for index in "${!TASKS[@]}"; do
   task=${TASKS[$index]}
