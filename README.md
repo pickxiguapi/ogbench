@@ -105,32 +105,29 @@ Visual OGBench artifacts are written below `EXPERIMENT_ROOT` and consumed automa
 
 ## Pretrained artifacts
 
-The data and exact checkpoints selected for the release evaluation are stored in
+The exact checkpoints selected for the release evaluation are stored in
 [`IffYuan/LeWorldModelplusplus`](https://huggingface.co/IffYuan/LeWorldModelplusplus).
-To download only the checkpoints:
+Download them with:
 
 ```bash
 uvx --from huggingface_hub hf download IffYuan/LeWorldModelplusplus \
   --include "*/checkpoints/**" --local-dir artifacts
 ```
 
-The complete bundle, including prepared datasets, has this layout:
+The checkpoint repository uses this layout:
 
 ```text
 artifacts/
 ├── lewm-control-suite/
-│   ├── data/
 │   └── checkpoints/
 │       ├── lewm/{cube,pusht,reacher,tworoom}/
 │       ├── action-prior/{cube,pusht,reacher,tworoom}/
 │       └── latent-path-flow/{h25,longh}/{cube,pusht,reacher,tworoom}/
 └── visual-ogbench/
-    ├── data/
     └── checkpoints/{lewm,action-prior,latent-path-flow}/<dataset-tag>/
 ```
 
-Point the corresponding root variables at these directories. `manifest.json`
-records the size and SHA-256 digest of every released file.
+Point the corresponding checkpoint-root variables at these directories.
 
 
 ## Evaluation
