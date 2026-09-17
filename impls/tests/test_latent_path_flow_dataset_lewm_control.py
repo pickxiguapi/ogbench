@@ -1,5 +1,5 @@
 import numpy as np
-from utils.subgoal_generator_dataset import (
+from utils.latent_path_flow_dataset_lewm_control import (
     build_distance_balanced_transition_tables,
     build_fixed_offset_validation_manifest,
     build_history_indices,

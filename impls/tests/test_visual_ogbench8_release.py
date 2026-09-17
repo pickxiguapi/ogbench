@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from action_prior_ogbench import load_agent_config
+from action_prior_runtime_ogbench import load_agent_config
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -67,7 +67,6 @@ def test_visual_ogbench8_eval_records_paper_protocol():
         '--cem-topk=30',
         '--guidance-population-size=250',
         '--guidance-random-elite-cap=5',
-        '--guidance-goal-mode=final',
         '--cem-cost-mode=moh',
     ):
         assert fragment in text
@@ -88,7 +87,7 @@ def test_visual_ogbench8_aggregator_rejects_incomplete_matrix(tmp_path):
     result = subprocess.run(
         [
             str(ROOT / '.venv' / 'bin' / 'python'),
-            str(ROOT / 'impls' / 'aggregate_visual_ogbench8_results.py'),
+            str(ROOT / 'impls' / 'aggregate_visual_ogbench_results.py'),
             f'--results-root={tmp_path}',
             f'--output={output}',
         ],
@@ -121,7 +120,7 @@ def test_visual_ogbench8_aggregator_uses_sample_standard_deviation(tmp_path):
     subprocess.run(
         [
             str(ROOT / '.venv' / 'bin' / 'python'),
-            str(ROOT / 'impls' / 'aggregate_visual_ogbench8_results.py'),
+            str(ROOT / 'impls' / 'aggregate_visual_ogbench_results.py'),
             f'--results-root={tmp_path}',
             f'--output={output}',
         ],

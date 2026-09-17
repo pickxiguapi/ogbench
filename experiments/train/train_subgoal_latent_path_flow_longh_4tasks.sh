@@ -15,7 +15,7 @@ for index in "${!TASKS[@]}"; do
   mkdir -p "$save_dir"
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
-    python impls/train_subgoal_generator.py \
+    python impls/train_latent_path_flow_lewm_control.py \
       --latent-dataset="$EXPERIMENT_ROOT/train/lewm_latents/$task.h5" \
       --save-dir="$save_dir" \
       --exp-name="lewmpp_general_uniform_future_latent_path_flow_${task}_seed0" \
@@ -34,7 +34,6 @@ for index in "${!TASKS[@]}"; do
       --ff-dim=2048 \
       --time-dim=64 \
       --flow-sampling-steps=16 \
-      --num-samples=8 \
       --ema-decay=0.9999 \
       --learning-rate=1e-4 \
       --final-learning-rate=1e-5 \

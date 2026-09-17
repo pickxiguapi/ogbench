@@ -48,7 +48,6 @@ for index in "${!TASKS[@]}"; do
         --variant=full
         --experiment-group=lewmpp_h100
         --generator-family=general_uniform_future
-        --generator-type=latent_path_flow
         --data-root="$LEWM_DATA_ROOT"
         --lewm-checkpoint="${LEWM_CHECKPOINTS[$index]}"
         --action-prior-checkpoint-dir="${ACTION_PRIOR_CHECKPOINTS[$index]}"
@@ -57,7 +56,6 @@ for index in "${!TASKS[@]}"; do
         --action-prior-representation-mode=all
         --subgoal-generator-checkpoint="${SUBGOAL_CHECKPOINTS[$index]}"
         --flow-sampling-steps=16
-        --generator-num-samples=1
         --num-eval=50
         --seed="$seed"
         --goal-offset-steps=100
@@ -72,8 +70,8 @@ for index in "${!TASKS[@]}"; do
         --cem-cost-mode=moh
         --output="$result_dir/result.json"
       )
-      python impls/eval_lewm_4tasks.py "${args[@]}" --validate-only
-      python impls/eval_lewm_4tasks.py "${args[@]}" 2>&1 | tee "$result_dir/eval.log"
+      python impls/eval_lewm_control_suite.py "${args[@]}" --validate-only
+      python impls/eval_lewm_control_suite.py "${args[@]}" 2>&1 | tee "$result_dir/eval.log"
     done
   ) &
   pids+=("$!")

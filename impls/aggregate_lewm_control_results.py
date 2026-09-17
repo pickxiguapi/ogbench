@@ -25,6 +25,8 @@ def main():
     rows = []
     for path in Path(args.results_root).rglob('result.json'):
         result = json.loads(path.read_text())
+        if result.get('suite') != 'lewm_4tasks':
+            continue
         protocol = result['protocol']
         components = result['components']
         representation_mode = components.get('action_prior_representation_mode')

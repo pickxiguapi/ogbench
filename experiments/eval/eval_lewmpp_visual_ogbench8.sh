@@ -30,16 +30,16 @@ eval_one() {
   local output="$output_dir/result.json"
   mkdir -p "$output_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    python impls/eval_ogbench_env_8tasks.py \
+    python impls/eval_visual_ogbench.py \
       --env-name="$env_name" --dataset-path="$OGBENCH_DATA_ROOT/$env_name.npz" \
-      --controller=lewm_cem --policy-guidance=policy_random_mixture \
+      --policy-guidance=policy_random_mixture \
       --guidance-population-size=250 --guidance-temperature=0.05 \
       --guidance-first-block-std=0.05 --guidance-random-elite-cap=5 \
-      --guidance-mean-residual-weight=0.5 --guidance-goal-mode=final \
+      --guidance-mean-residual-weight=0.5 \
       --use-subgoal --latent-subgoal-checkpoint="$LATENT_PATH_FLOW_CHECKPOINT_ROOT/$tag/checkpoint_200000.msgpack" \
-      --num-samples=1 --lewm-checkpoint="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack" \
+      --lewm-checkpoint="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack" \
       --policy-checkpoint-dir="$ACTION_PRIOR_CHECKPOINT_ROOT/$tag" --policy-checkpoint-step=500000 \
-      --policy-action-space=environment --num-eval="$NUM_EVAL" --seed="$CURRENT_EVAL_SEED" \
+      --num-eval="$NUM_EVAL" --seed="$CURRENT_EVAL_SEED" \
       --cem-horizon=2 --cem-receding-horizon=1 --action-block=5 \
       --cem-num-samples=300 --cem-iterations=5 --cem-topk=30 \
       --cem-var-scale=1.0 --cem-cost-mode=moh --output="$output" \
@@ -61,6 +61,6 @@ for CURRENT_EVAL_SEED in "${EVAL_SEEDS[@]}"; do
 done
 
 if [[ "$NUM_EVAL" == 50 && "${EVAL_SEEDS[*]}" == "0 1 42" ]]; then
-  python impls/aggregate_visual_ogbench8_results.py \
+  python impls/aggregate_visual_ogbench_results.py \
     --results-root="$EVAL_ROOT" --output="$EVAL_ROOT/summary.json"
 fi

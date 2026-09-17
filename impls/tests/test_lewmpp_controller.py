@@ -6,13 +6,13 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-from lewm_jax.planner import (
+from latent_path_flow_runtime_lewm_control import SubgoalGenerator
+from lewm_jax.planner_lewm_control import (
     LeWMPPController,
     _set_cem_anchors,
     reduce_rollout_costs,
     subgoal_planning_horizon,
 )
-from subgoal_generator_runtime import SubgoalGenerator
 
 
 class FakePrior:
@@ -28,7 +28,7 @@ class FakePrior:
 
 class ControllerTest(unittest.TestCase):
     def test_public_planner_surface_has_no_legacy_controller(self):
-        path = Path(__file__).parents[1] / 'lewm_jax' / 'planner.py'
+        path = Path(__file__).parents[1] / 'lewm_jax' / 'planner_lewm_control.py'
         tree = ast.parse(path.read_text())
         public = {
             node.name

@@ -1,4 +1,4 @@
-"""Unified inference runtime for all public LeWM++ subgoal generators."""
+"""Inference runtime for the public LeWM++ LatentPathFlow generator."""
 
 from __future__ import annotations
 
@@ -9,20 +9,15 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-from subgoal_generators import (
-    DIRECT_MLP_ARCHITECTURE,
-    ENDPOINT_FLOW_ARCHITECTURE,
-    LATENT_PATH_FLOW_ARCHITECTURE,
-    MLP_ARCHITECTURE,
+from latent_path_flow_lewm_control import (
     load_checkpoint,
-    sample_path_candidates,
-    select_path_medoid,
+    sample_path,
     waypoint_steps,
 )
 
 
 class SubgoalGenerator:
-    """Load one MLP, Endpoint Flow, or LatentPath Flow checkpoint."""
+    """Load one LatentPathFlow checkpoint and predict one path per replan."""
 
     def __init__(
         self,
@@ -31,12 +26,9 @@ class SubgoalGenerator:
         *,
         seed,
         action_block,
-        num_samples=1,
         lewm_checkpoint,
         flow_sampling_steps=16,
     ):
-        if int(num_samples) <= 0:
-            raise ValueError('Subgoal-generator sample count must be positive.')
         if int(flow_sampling_steps) <= 0:
             raise ValueError('Flow sampling steps must be positive.')
 
@@ -54,53 +46,32 @@ class SubgoalGenerator:
             raise ValueError(
                 f'Generator and controller action blocks must match: {trained_action_block} != {action_block}.'
             )
-        architecture = config['architecture']
-        steps = (
-            waypoint_steps(config['subgoal_steps'], trained_action_block)
-            if architecture == LATENT_PATH_FLOW_ARCHITECTURE
-            else (int(config['subgoal_steps']),)
-        )
+        steps = waypoint_steps(config['subgoal_steps'], trained_action_block)
 
         self.checkpoint = str(Path(checkpoint).expanduser().resolve())
         self.checkpoint_step = int(checkpoint_step)
         self.config = config
-        self.generator_type = (
-            'mlp'
-            if architecture in (MLP_ARCHITECTURE, DIRECT_MLP_ARCHITECTURE)
-            else 'endpoint_flow'
-            if architecture == ENDPOINT_FLOW_ARCHITECTURE
-            else 'latent_path_flow'
-        )
+        self.generator_type = 'latent_path_flow'
         self.encode_pixels = encode_pixels
         self.seed = int(seed)
-        self.num_samples = int(num_samples)
+        self.num_samples = 1
         self.embed_dim = int(config['embed_dim'])
         self.waypoint_step = int(config['subgoal_steps'])
         self.waypoint_index = steps.index(self.waypoint_step)
         self.path_length = len(steps)
         self.history_size = int(config.get('history_size', 1))
-        if self.generator_type == 'mlp':
-            if self.num_samples != 1:
-                raise ValueError('The deterministic MLP generator requires num_samples=1.')
-            self.sample_selection = 'deterministic'
-            self.flow_sampling_steps = None
-            self._predict = jax.jit(lambda history, goal, rng: model.apply({'params': params}, history, goal)[:, None])
-        else:
-            self.sample_selection = 'single_sample' if self.num_samples == 1 else 'path_medoid'
-            self.flow_sampling_steps = int(flow_sampling_steps)
-            self._predict = jax.jit(
-                lambda history, goal, rng: select_path_medoid(
-                    sample_path_candidates(
-                        model,
-                        params,
-                        history,
-                        goal,
-                        rng,
-                        num_samples=self.num_samples,
-                        num_steps=self.flow_sampling_steps,
-                    )
-                )
+        self.sample_selection = 'single_sample'
+        self.flow_sampling_steps = int(flow_sampling_steps)
+        self._predict = jax.jit(
+            lambda history, goal, rng: sample_path(
+                model,
+                params,
+                history,
+                goal,
+                rng,
+                num_steps=self.flow_sampling_steps,
             )
+        )
         self.histories = []
         self.generation_counts = np.zeros(0, dtype=np.int64)
 

@@ -1,4 +1,4 @@
-"""The three checkpoint-compatible subgoal generators used by LeWM++."""
+"""Checkpoint-compatible LatentPathFlow used by LeWM++ Control Suite."""
 
 from __future__ import annotations
 
@@ -10,34 +10,8 @@ import flax.linen as nn
 import jax
 import jax.numpy as jnp
 
-MLP_ARCHITECTURE = 'history_latent_mlp'
-DIRECT_MLP_ARCHITECTURE = 'direct_latent_mlp_512x3'
-ENDPOINT_FLOW_ARCHITECTURE = 'latent_endpoint_flow_transformer_encoder'
 LATENT_PATH_FLOW_ARCHITECTURE = 'latent_path_flow_transformer_encoder'
 FLOW_CONDITIONING = 'history_goal_time_adaln'
-
-GENERATOR_ARCHITECTURES = {
-    'mlp': (MLP_ARCHITECTURE, DIRECT_MLP_ARCHITECTURE),
-    'endpoint_flow': (ENDPOINT_FLOW_ARCHITECTURE,),
-    'latent_path_flow': (LATENT_PATH_FLOW_ARCHITECTURE,),
-}
-
-
-class LatentSubgoalMLP(nn.Module):
-    """Predict one endpoint latent from observation history and final goal."""
-
-    embed_dim: int
-    hidden_dims: tuple[int, ...] = (512, 512, 512)
-
-    @nn.compact
-    def __call__(self, history_latents, goal_latents):
-        history_latents = history_latents.reshape(history_latents.shape[0], -1)
-        features = jnp.concatenate((history_latents, goal_latents), axis=-1)
-        for hidden_dim in self.hidden_dims:
-            features = nn.Dense(hidden_dim)(features)
-            features = nn.LayerNorm()(features)
-            features = nn.silu(features)
-        return nn.Dense(self.embed_dim)(features)
 
 
 def waypoint_steps(subgoal_steps, action_block):
@@ -56,7 +30,11 @@ def sinusoidal_time_embedding(times, dim):
     if dim <= 0 or dim % 2:
         raise ValueError('The flow-time embedding dimension must be positive and even.')
     times = jnp.asarray(times, dtype=jnp.float32).reshape(-1, 1)
-    frequencies = jnp.exp(-jnp.log(10_000.0) * jnp.arange(dim // 2, dtype=jnp.float32) / max(dim // 2 - 1, 1))
+    frequencies = jnp.exp(
+        -jnp.log(10_000.0)
+        * jnp.arange(dim // 2, dtype=jnp.float32)
+        / max(dim // 2 - 1, 1)
+    )
     angles = times * frequencies[None]
     return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)), axis=-1)
 
@@ -152,7 +130,7 @@ class LatentPathFlow(nn.Module):
 
 
 def sample_path(model, params, history_latents, goal_latents, rng, *, num_steps=16):
-    """Integrate the learned flow from Gaussian noise with Euler steps."""
+    """Integrate one learned path from Gaussian noise with Euler steps."""
     if num_steps <= 0:
         raise ValueError('Flow sampling steps must be positive.')
     history_latents = jnp.asarray(history_latents, dtype=jnp.float32)
@@ -173,51 +151,8 @@ def sample_path(model, params, history_latents, goal_latents, rng, *, num_steps=
     return jax.lax.fori_loop(0, num_steps, integrate_step, samples)
 
 
-def sample_path_candidates(
-    model,
-    params,
-    history_latents,
-    goal_latents,
-    rng,
-    *,
-    num_samples,
-    num_steps=16,
-):
-    """Draw multiple complete paths for every conditioning pair."""
-    if num_samples <= 0:
-        raise ValueError('Latent path sample count must be positive.')
-    history_latents = jnp.asarray(history_latents, dtype=jnp.float32)
-    goal_latents = jnp.asarray(goal_latents, dtype=jnp.float32)
-    batch_size = history_latents.shape[0]
-    paths = sample_path(
-        model,
-        params,
-        jnp.repeat(history_latents, num_samples, axis=0),
-        jnp.repeat(goal_latents, num_samples, axis=0),
-        rng,
-        num_steps=num_steps,
-    )
-    return paths.reshape(
-        batch_size,
-        num_samples,
-        int(model.num_waypoints),
-        history_latents.shape[-1],
-    )
-
-
-def select_path_medoid(candidate_paths):
-    """Select the sampled path nearest to all samples in squared distance."""
-    candidate_paths = jnp.asarray(candidate_paths, dtype=jnp.float32)
-    if candidate_paths.ndim != 4:
-        raise ValueError('Candidate paths must have shape [B, num_samples, waypoints, D].')
-    flat_paths = candidate_paths.reshape(candidate_paths.shape[0], candidate_paths.shape[1], -1)
-    distances = jnp.sum(jnp.square(flat_paths[:, :, None] - flat_paths[:, None, :]), axis=-1)
-    medoid_indices = jnp.argmin(jnp.mean(distances, axis=-1), axis=-1)
-    return jnp.take_along_axis(candidate_paths, medoid_indices[:, None, None, None], axis=1)[:, 0]
-
-
 def load_checkpoint(path):
-    """Load an MLP, Endpoint Flow, or LatentPath Flow checkpoint."""
+    """Load and validate one LatentPathFlow checkpoint."""
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f'Subgoal-generator checkpoint not found: {path}')
@@ -225,46 +160,28 @@ def load_checkpoint(path):
     if not config_path.is_file():
         raise FileNotFoundError(f'Subgoal-generator config must be adjacent to its checkpoint: {config_path}')
     config = json.loads(config_path.read_text())
-    architecture = config.get('architecture')
+    if config.get('architecture') != LATENT_PATH_FLOW_ARCHITECTURE:
+        raise ValueError(f'Unsupported generator architecture: {config.get("architecture")!r}.')
+    if config.get('loss') != 'conditional_path_flow_matching_mse':
+        raise ValueError('LatentPathFlow checkpoint must use conditional path flow matching.')
+    if config.get('conditioning') != FLOW_CONDITIONING:
+        raise ValueError('LatentPathFlow checkpoint conditioning does not match the release architecture.')
+    if config.get('flow_solver') != 'euler':
+        raise ValueError('LeWM++ flow checkpoints must use Euler integration.')
     history_size = int(config.get('history_size', 1))
     if history_size <= 0:
         raise ValueError('Generator history size must be positive.')
-    if architecture in (MLP_ARCHITECTURE, DIRECT_MLP_ARCHITECTURE):
-        if config.get('loss') != 'raw_latent_mse':
-            raise ValueError('MLP checkpoints must use raw_latent_mse.')
-        if architecture == MLP_ARCHITECTURE and config.get('conditioning') != 'history_goal':
-            raise ValueError('History MLP checkpoints must use history_goal conditioning.')
-        model = LatentSubgoalMLP(
-            embed_dim=int(config['embed_dim']),
-            hidden_dims=tuple(int(value) for value in config['hidden_dims']),
-        )
-    elif architecture in (ENDPOINT_FLOW_ARCHITECTURE, LATENT_PATH_FLOW_ARCHITECTURE):
-        expected_loss = (
-            'conditional_endpoint_flow_matching_mse'
-            if architecture == ENDPOINT_FLOW_ARCHITECTURE
-            else 'conditional_path_flow_matching_mse'
-        )
-        if config.get('loss') != expected_loss or config.get('conditioning') != FLOW_CONDITIONING:
-            raise ValueError('Flow checkpoint loss/conditioning does not match its architecture.')
-        if config.get('flow_solver') != 'euler':
-            raise ValueError('LeWM++ flow checkpoints must use Euler integration.')
-        steps = (
-            (int(config['subgoal_steps']),)
-            if architecture == ENDPOINT_FLOW_ARCHITECTURE
-            else waypoint_steps(config['subgoal_steps'], config['action_block'])
-        )
-        model = LatentPathFlow(
-            embed_dim=int(config['embed_dim']),
-            num_waypoints=len(steps),
-            hidden_dim=int(config['hidden_dim']),
-            depth=int(config['depth']),
-            num_heads=int(config['num_heads']),
-            ff_dim=int(config['ff_dim']),
-            time_dim=int(config['time_dim']),
-            history_size=history_size,
-        )
-    else:
-        raise ValueError(f'Unsupported generator architecture: {architecture!r}.')
+    steps = waypoint_steps(config['subgoal_steps'], config['action_block'])
+    model = LatentPathFlow(
+        embed_dim=int(config['embed_dim']),
+        num_waypoints=len(steps),
+        hidden_dim=int(config['hidden_dim']),
+        depth=int(config['depth']),
+        num_heads=int(config['num_heads']),
+        ff_dim=int(config['ff_dim']),
+        time_dim=int(config['time_dim']),
+        history_size=history_size,
+    )
 
     payload = flax.serialization.msgpack_restore(path.read_bytes())
     if set(payload) != {'rng', 'step', 'train_state'}:

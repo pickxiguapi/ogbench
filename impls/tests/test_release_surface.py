@@ -5,16 +5,25 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from eval_lewm_4tasks import (
+from eval_lewm_control_suite import (
     DEFAULT_CEM_ITERATIONS,
     DEFAULT_CEM_SAMPLES,
     DEFAULT_FLOW_STEPS,
     VARIANTS,
     expected_components,
+    validate_args,
     validate_release_files,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_readme_documents_only_full_evaluation_protocols():
+    text = (ROOT / 'README.md').read_text()
+    assert '50 episodes per task and three evaluation seeds' in text
+    assert '50 episodes per official task and three evaluation' in text
+    assert 'NUM_EVAL=' not in text
+    assert 'quick check' not in text.lower()
 
 
 def test_release_has_only_paper_experiment_launchers():
@@ -160,23 +169,22 @@ def test_generator_launchers_record_and_validate_family_invariants():
 
 def test_python_entrypoints_match_the_release_pipeline():
     names = {path.name for path in (ROOT / 'impls').glob('*.py') if path.name.startswith(('train_', 'eval_'))}
-    names.add('action-prior-chunk.py')
     assert names == {
-        'action-prior-chunk.py',
-        'train_lewm_jax.py',
-        'train_subgoal_generator.py',
-        'eval_lewm_4tasks.py',
+        'train_action_prior_chunk.py',
+        'train_lewm_control.py',
+        'train_latent_path_flow_lewm_control.py',
+        'eval_lewm_control_suite.py',
         'train_lewm_ogbench.py',
         'train_action_prior_ogbench.py',
-        'train_latent_subgoal_gcbc.py',
-        'eval_ogbench_env_8tasks.py',
+        'train_latent_path_flow_ogbench.py',
+        'eval_visual_ogbench.py',
     }
 
 
-def test_release_has_exactly_three_subgoal_model_types():
-    tree = ast.parse((ROOT / 'impls' / 'subgoal_generators.py').read_text())
+def test_release_has_only_latent_path_flow_model_types():
+    tree = ast.parse((ROOT / 'impls' / 'latent_path_flow_lewm_control.py').read_text())
     classes = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
-    assert classes == ['LatentSubgoalMLP', 'AdaLNTransformerBlock', 'LatentPathFlow']
+    assert classes == ['AdaLNTransformerBlock', 'LatentPathFlow']
 
 
 def test_evaluator_exposes_required_release_variants_and_defaults():
@@ -195,14 +203,64 @@ def test_release_variants_keep_their_component_semantics():
     }
 
 
+@pytest.mark.parametrize('variant', VARIANTS)
+def test_every_release_variant_has_a_valid_runtime_configuration(variant):
+    use_subgoal, use_prior, cost_mode, direct_policy = expected_components(variant)
+    args = SimpleNamespace(
+        variant=variant,
+        action_prior_checkpoint_step=100_000,
+        flow_sampling_steps=16,
+        num_eval=1,
+        goal_offset_steps=25,
+        eval_budget=50,
+        cem_horizon=2,
+        cem_receding_horizon=1,
+        action_block=5,
+        cem_num_samples=300,
+        cem_iterations=5,
+        cem_topk=30,
+        cem_var_scale=1.0,
+        subgoal_generator_checkpoint='generator.msgpack' if use_subgoal else None,
+        action_prior_checkpoint_dir='action_prior' if use_prior else None,
+        action_prior_mode='policy_mode' if use_prior else 'zero',
+        cem_cost_mode='moh' if direct_policy else cost_mode,
+        generator_family='goalmax25' if use_subgoal else 'no_generator',
+    )
+    validate_args(args)
+
+
+def test_full_variant_accepts_policy_mode_anchor():
+    args = SimpleNamespace(
+        variant='full',
+        action_prior_checkpoint_step=100_000,
+        flow_sampling_steps=16,
+        num_eval=1,
+        goal_offset_steps=25,
+        eval_budget=50,
+        cem_horizon=2,
+        cem_receding_horizon=1,
+        action_block=5,
+        cem_num_samples=300,
+        cem_iterations=5,
+        cem_topk=30,
+        cem_var_scale=1.0,
+        subgoal_generator_checkpoint='generator.msgpack',
+        action_prior_checkpoint_dir='action_prior',
+        action_prior_mode='policy_mode_anchor',
+        cem_cost_mode='moh',
+        generator_family='goalmax25',
+    )
+    validate_args(args)
+
+
 def test_action_prior_public_surface_uses_neutral_name():
     retired_method_name = 'gci' + 'ql'
     retired_loss_name = 'a' + 'wr'
     paths = [
-        ROOT / 'impls' / 'action-prior-chunk.py',
-        ROOT / 'impls' / 'action_prior_chunk.py',
+        ROOT / 'impls' / 'train_action_prior_chunk.py',
+        ROOT / 'impls' / 'action_prior_runtime_lewm_control.py',
         ROOT / 'impls' / 'agents' / 'action_prior_chunk.py',
-        ROOT / 'impls' / 'eval_lewm_4tasks.py',
+        ROOT / 'impls' / 'eval_lewm_control_suite.py',
     ]
     paths.extend((ROOT / 'configs').glob('*.example.env'))
     paths.extend((ROOT / 'experiments').rglob('*.sh'))

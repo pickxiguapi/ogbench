@@ -32,7 +32,7 @@ for index in "${!TASKS[@]}"; do
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
-    python impls/action-prior-chunk.py \
+    python impls/train_action_prior_chunk.py \
       --dataset_path="${DATASETS[$index]}" \
       --lewm_checkpoint="${LEWM_CHECKPOINTS[$index]}" \
       --save_dir="$save_dir" \

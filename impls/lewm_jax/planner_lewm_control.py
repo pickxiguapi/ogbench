@@ -7,7 +7,7 @@ from collections import deque
 import jax
 import jax.numpy as jnp
 import numpy as np
-from subgoal_generator_runtime import SubgoalGenerator
+from latent_path_flow_runtime_lewm_control import SubgoalGenerator
 
 from lewm_jax import load_frozen_lewm
 
@@ -61,7 +61,6 @@ class LeWMPPController:
         action_low=None,
         action_high=None,
         subgoal_generator_checkpoint=None,
-        subgoal_generator_num_samples=1,
         flow_sampling_steps=16,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
@@ -117,7 +116,6 @@ class LeWMPPController:
                 self.encode_pixels,
                 seed=self.seed,
                 action_block=self.action_block,
-                num_samples=subgoal_generator_num_samples,
                 lewm_checkpoint=self.lewm_checkpoint,
                 flow_sampling_steps=flow_sampling_steps,
             )
@@ -162,10 +160,6 @@ class LeWMPPController:
     @property
     def subgoal_generator_config(self):
         return None if self.subgoal_generator is None else self.subgoal_generator.config
-
-    @property
-    def subgoal_generator_num_samples(self):
-        return 0 if self.subgoal_generator is None else self.subgoal_generator.num_samples
 
     @property
     def flow_sampling_steps(self):

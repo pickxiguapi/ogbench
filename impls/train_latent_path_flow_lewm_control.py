@@ -1,4 +1,4 @@
-"""Train an MLP, Endpoint Flow, or LatentPath Flow subgoal generator."""
+"""Train the LatentPathFlow subgoal generator for LeWM Control Suite."""
 
 from __future__ import annotations
 
@@ -16,18 +16,14 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.training import train_state
-from subgoal_generators import (
-    ENDPOINT_FLOW_ARCHITECTURE,
+from latent_path_flow_lewm_control import (
     FLOW_CONDITIONING,
     LATENT_PATH_FLOW_ARCHITECTURE,
-    MLP_ARCHITECTURE,
     LatentPathFlow,
-    LatentSubgoalMLP,
-    sample_path_candidates,
-    select_path_medoid,
+    sample_path,
     waypoint_steps,
 )
-from utils.subgoal_generator_dataset import (
+from utils.latent_path_flow_dataset_lewm_control import (
     build_distance_balanced_transition_tables,
     build_history_indices,
     build_valid_transitions,
@@ -49,11 +45,6 @@ def parse_args():
         choices=('h25', 'full_future'),
         required=True,
     )
-    parser.add_argument(
-        '--generator-type',
-        choices=('mlp', 'endpoint_flow', 'latent_path_flow'),
-        default='latent_path_flow',
-    )
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--split-seed', type=int, default=0)
     parser.add_argument('--train-fraction', type=float, default=0.95)
@@ -63,13 +54,11 @@ def parse_args():
     parser.add_argument('--train-steps', type=int, default=200_000)
     parser.add_argument('--batch-size', type=int, default=1024)
     parser.add_argument('--model-dim', dest='hidden_dim', type=int, default=512)
-    parser.add_argument('--hidden-dims', type=int, nargs='+', default=(512, 512, 512))
     parser.add_argument('--depth', type=int, default=4)
     parser.add_argument('--num-heads', type=int, default=8)
     parser.add_argument('--ff-dim', type=int, default=2048)
     parser.add_argument('--time-dim', type=int, default=64)
     parser.add_argument('--flow-sampling-steps', type=int, default=16)
-    parser.add_argument('--num-samples', type=int, default=8)
     parser.add_argument('--ema-decay', type=float, default=0.9999)
     parser.add_argument('--learning-rate', type=float, default=1e-4)
     parser.add_argument('--final-learning-rate', type=float, default=1e-5)
@@ -98,7 +87,6 @@ def validate_args(args):
         'ff_dim',
         'time_dim',
         'flow_sampling_steps',
-        'num_samples',
         'warmup_steps',
         'validation_pairs',
         'eval_batch_size',
@@ -119,14 +107,11 @@ def validate_args(args):
         raise ValueError('Invalid weight decay or gradient clip.')
     if not 0.0 <= args.ema_decay < 1.0:
         raise ValueError('ema_decay must be in [0, 1).')
-    if not args.hidden_dims or any(value <= 0 for value in args.hidden_dims):
-        raise ValueError('hidden_dims must contain positive integers.')
-    if args.generator_type != 'mlp':
-        waypoint_steps(args.subgoal_steps, args.action_block)
-        if args.hidden_dim % args.num_heads:
-            raise ValueError('hidden_dim must be divisible by num_heads.')
-        if args.time_dim % 2:
-            raise ValueError('time_dim must be even.')
+    waypoint_steps(args.subgoal_steps, args.action_block)
+    if args.hidden_dim % args.num_heads:
+        raise ValueError('hidden_dim must be divisible by num_heads.')
+    if args.time_dim % 2:
+        raise ValueError('time_dim must be even.')
     if args.history_size <= 1:
         raise ValueError('Release generators require history_size greater than one.')
     if args.generator_family == 'h25':
@@ -218,7 +203,6 @@ def make_train_step(
     learning_rate_schedule,
     batch_size,
     *,
-    generator_type,
     waypoint_offsets,
     goal_stride,
     goal_steps,
@@ -256,21 +240,6 @@ def make_train_step(
         target_latents = z[target_idxs]
 
         def loss_fn(params):
-            if generator_type == 'mlp':
-                endpoint_targets = target_latents[:, 0]
-                predictions = model.apply({'params': params}, history_latents, goal_latents)
-                loss = jnp.mean(jnp.square(predictions - endpoint_targets))
-                cosine = jnp.mean(
-                    jnp.sum(predictions * endpoint_targets, axis=-1)
-                    / (jnp.linalg.norm(predictions, axis=-1) * jnp.linalg.norm(endpoint_targets, axis=-1) + 1e-8)
-                )
-                return loss, {
-                    'mse': loss,
-                    'cosine_similarity': cosine,
-                    'prediction_norm': jnp.mean(jnp.linalg.norm(predictions, axis=-1)),
-                    'target_norm': jnp.mean(jnp.linalg.norm(endpoint_targets, axis=-1)),
-                }
-
             noise = jax.random.normal(noise_key, target_latents.shape)
             flow_times = jax.random.uniform(time_key, (batch_size,), minval=0.0, maxval=1.0)
             time_broadcast = flow_times[:, None, None]
@@ -313,26 +282,18 @@ def make_train_step(
 def make_predict_indices(
     model,
     *,
-    generator_type,
     flow_sampling_steps,
-    num_samples,
 ):
     @jax.jit
     def predict_indices(params, z, current_idxs, history_idxs, goal_idxs, rng):
         del current_idxs
-        if generator_type == 'mlp':
-            prediction = model.apply({'params': params}, z[history_idxs], z[goal_idxs])
-            return prediction[:, None]
-        return select_path_medoid(
-            sample_path_candidates(
-                model,
-                params,
-                z[history_idxs],
-                z[goal_idxs],
-                rng,
-                num_samples=num_samples,
-                num_steps=flow_sampling_steps,
-            )
+        return sample_path(
+            model,
+            params,
+            z[history_idxs],
+            z[goal_idxs],
+            rng,
+            num_steps=flow_sampling_steps,
         )
 
     return predict_indices
@@ -419,11 +380,7 @@ def main():
     embed_dim = int(cache.z.shape[1])
     max_goal_steps = args.max_goal_steps
     goal_stride = args.action_block if max_goal_steps is not None else 1
-    offsets = (
-        waypoint_steps(args.subgoal_steps, args.action_block)
-        if args.generator_type == 'latent_path_flow'
-        else (args.subgoal_steps,)
-    )
+    offsets = waypoint_steps(args.subgoal_steps, args.action_block)
     train_episodes, val_episodes = split_episodes(len(cache.episode_offsets), args.train_fraction, args.split_seed)
     train_t, train_final = build_valid_transitions(
         cache.episode_offsets,
@@ -482,8 +439,6 @@ def main():
     fixed_val = (fixed_val[0], fixed_val[1], target_indices)
 
     config_args = vars(args).copy()
-    if args.generator_type != 'mlp':
-        config_args.pop('hidden_dims')
     config = {
         **config_args,
         'latent_dataset': str(Path(args.latent_dataset).expanduser().resolve()),
@@ -498,22 +453,10 @@ def main():
         'num_train_transitions': len(train_t),
         'num_val_transitions': len(val_t),
         'lewm_checkpoint_sha256': cache.metadata.get('checkpoint_sha256'),
-        'architecture': (
-            MLP_ARCHITECTURE
-            if args.generator_type == 'mlp'
-            else ENDPOINT_FLOW_ARCHITECTURE
-            if args.generator_type == 'endpoint_flow'
-            else LATENT_PATH_FLOW_ARCHITECTURE
-        ),
-        'conditioning': 'history_goal' if args.generator_type == 'mlp' else FLOW_CONDITIONING,
-        'loss': (
-            'raw_latent_mse'
-            if args.generator_type == 'mlp'
-            else 'conditional_endpoint_flow_matching_mse'
-            if args.generator_type == 'endpoint_flow'
-            else 'conditional_path_flow_matching_mse'
-        ),
-        'flow_solver': None if args.generator_type == 'mlp' else 'euler',
+        'architecture': LATENT_PATH_FLOW_ARCHITECTURE,
+        'conditioning': FLOW_CONDITIONING,
+        'loss': 'conditional_path_flow_matching_mse',
+        'flow_solver': 'euler',
         'max_goal_steps': max_goal_steps,
         'goal_sampling': args.goal_sampling,
     }
@@ -543,33 +486,25 @@ def main():
         train_history_device = jax.device_put(train_history)
         train_final_device = jax.device_put(train_final)
 
-    model = (
-        LatentSubgoalMLP(embed_dim=embed_dim, hidden_dims=tuple(args.hidden_dims))
-        if args.generator_type == 'mlp'
-        else LatentPathFlow(
-            embed_dim=embed_dim,
-            num_waypoints=len(offsets),
-            hidden_dim=args.hidden_dim,
-            depth=args.depth,
-            num_heads=args.num_heads,
-            ff_dim=args.ff_dim,
-            time_dim=args.time_dim,
-            history_size=args.history_size,
-        )
+    model = LatentPathFlow(
+        embed_dim=embed_dim,
+        num_waypoints=len(offsets),
+        hidden_dim=args.hidden_dim,
+        depth=args.depth,
+        num_heads=args.num_heads,
+        ff_dim=args.ff_dim,
+        time_dim=args.time_dim,
+        history_size=args.history_size,
     )
     init_rng, train_rng = jax.random.split(jax.random.PRNGKey(args.seed))
     empty_history = jnp.zeros((1, args.history_size, embed_dim), dtype=jnp.float32)
     empty_goal = jnp.zeros((1, embed_dim), dtype=jnp.float32)
-    variables = (
-        model.init(init_rng, empty_history, empty_goal)
-        if args.generator_type == 'mlp'
-        else model.init(
-            init_rng,
-            jnp.zeros((1, len(offsets), embed_dim), dtype=jnp.float32),
-            empty_history,
-            empty_goal,
-            jnp.zeros((1,), dtype=jnp.float32),
-        )
+    variables = model.init(
+        init_rng,
+        jnp.zeros((1, len(offsets), embed_dim), dtype=jnp.float32),
+        empty_history,
+        empty_goal,
+        jnp.zeros((1,), dtype=jnp.float32),
     )
     learning_rate_schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0,
@@ -606,7 +541,6 @@ def main():
         model,
         learning_rate_schedule,
         args.batch_size,
-        generator_type=args.generator_type,
         waypoint_offsets=offsets,
         goal_stride=goal_stride,
         goal_steps=goal_steps,
@@ -614,9 +548,7 @@ def main():
     )
     predict_indices = make_predict_indices(
         model,
-        generator_type=args.generator_type,
         flow_sampling_steps=args.flow_sampling_steps,
-        num_samples=args.num_samples,
     )
     current_step = int(jax.device_get(state.step))
     if current_step > args.train_steps:

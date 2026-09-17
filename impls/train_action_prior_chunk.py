@@ -139,7 +139,7 @@ def main():
         return batch
 
     metadata = {
-        'entrypoint': 'action-prior-chunk.py',
+        'entrypoint': 'train_action_prior_chunk.py',
         'env_name': args.env_name,
         'dataset_path': args.dataset_path,
         'lewm_checkpoint': lewm_metadata['path'],

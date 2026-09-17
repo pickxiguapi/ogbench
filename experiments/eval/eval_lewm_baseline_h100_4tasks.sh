@@ -37,7 +37,6 @@ for index in "${!TASKS[@]}"; do
         --data-root="$LEWM_DATA_ROOT"
         --lewm-checkpoint="${LEWM_CHECKPOINTS[$index]}"
         --action-prior-mode=zero
-        --generator-num-samples=1
         --num-eval=50
         --seed="$seed"
         --goal-offset-steps=100
@@ -52,8 +51,8 @@ for index in "${!TASKS[@]}"; do
         --cem-cost-mode=last
         --output="$result_dir/result.json"
       )
-      python impls/eval_lewm_4tasks.py "${args[@]}" --validate-only
-      python impls/eval_lewm_4tasks.py "${args[@]}" 2>&1 | tee "$result_dir/eval.log"
+      python impls/eval_lewm_control_suite.py "${args[@]}" --validate-only
+      python impls/eval_lewm_control_suite.py "${args[@]}" 2>&1 | tee "$result_dir/eval.log"
     done
   ) &
   pids+=("$!")

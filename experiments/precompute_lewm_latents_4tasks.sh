@@ -32,7 +32,7 @@ for index in "${!TASKS[@]}"; do
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
-    python impls/precompute_lewm_latents.py \
+    python impls/precompute_lewm_lance_latents.py \
       --task="$task" \
       --lance-path="${DATASETS[$index]}" \
       --checkpoint="${LEWM_CHECKPOINTS[$index]}" \

@@ -7,7 +7,7 @@ from collections import deque
 import jax
 import jax.numpy as jnp
 import numpy as np
-from latent_subgoal_runtime import LatentSubgoalGenerator
+from latent_path_flow_runtime_ogbench import LatentSubgoalGenerator
 
 from lewm_jax import load_frozen_lewm
 
@@ -68,19 +68,14 @@ class JAXLeWMCEMPolicy:
         guidance_mode='none',
         guidance_population_size=0,
         guidance_temperature=1.0,
-        guidance_elite_size=8,
         guidance_first_block_std=None,
         guidance_random_elite_cap=0,
         guidance_mean_residual_weight=1.0,
-        guidance_goal_mode='subgoal',
-        guidance_action_space='planner',
-        paired_plan_keys=False,
         trace_candidates=False,
         collect_traces=True,
         action_low=None,
         action_high=None,
         latent_subgoal_checkpoint=None,
-        latent_subgoal_num_samples=1,
         latent_subgoal_flow_sampling_steps=None,
     ):
         if horizon <= 0 or receding_horizon <= 0 or action_block <= 0:
@@ -95,26 +90,7 @@ class JAXLeWMCEMPolicy:
             raise ValueError('CEM variance scale must be positive.')
         if cost_mode not in ('last', 'moh', 'path_mean'):
             raise ValueError(f'Unsupported CEM cost mode: {cost_mode!r}.')
-        if guidance_action_space not in ('planner', 'environment'):
-            raise ValueError(
-                'Guidance action space must be either planner or environment.'
-            )
-        if guidance_goal_mode not in ('subgoal', 'final'):
-            raise ValueError(
-                'Guidance goal mode must be either subgoal or final.'
-            )
-        population_modes = (
-            'population',
-            'policy_random_mixture',
-            'lewm_select',
-            'lewm_elite',
-        )
-        if guidance_mode not in (
-            'none',
-            'mode',
-            'mode_anchor',
-            *population_modes,
-        ):
+        if guidance_mode not in ('none', 'policy_random_mixture'):
             raise ValueError(f'Unsupported policy guidance mode: {guidance_mode!r}.')
         if (guidance_policy is None) != (guidance_mode == 'none'):
             raise ValueError(
@@ -122,19 +98,12 @@ class JAXLeWMCEMPolicy:
             )
         if not 0 <= int(guidance_population_size) <= int(num_samples):
             raise ValueError('Guidance population size must be in [0, CEM samples].')
-        if guidance_mode in population_modes and int(guidance_population_size) < 2:
+        if guidance_mode == 'policy_random_mixture' and int(guidance_population_size) < 2:
             raise ValueError('Population-based guidance requires at least two proposals.')
-        if guidance_mode not in population_modes and int(guidance_population_size) != 0:
+        if guidance_mode == 'none' and int(guidance_population_size) != 0:
             raise ValueError(
                 'Guidance population size only applies to population-based guidance.'
             )
-        if int(guidance_elite_size) <= 0:
-            raise ValueError('Guidance elite size must be positive.')
-        if (
-            guidance_mode == 'lewm_elite'
-            and int(guidance_elite_size) > int(guidance_population_size)
-        ):
-            raise ValueError('Guidance elite size must fit inside the population.')
         if float(guidance_temperature) < 0:
             raise ValueError('Guidance temperature must be non-negative.')
         if int(guidance_random_elite_cap) < 0:
@@ -175,23 +144,10 @@ class JAXLeWMCEMPolicy:
             )
         if guidance_first_block_std is not None and float(guidance_first_block_std) <= 0:
             raise ValueError('Guidance first-block std must be positive.')
-        if guidance_action_space == 'environment' and not hasattr(
-            scaler, 'transform'
-        ):
-            raise ValueError(
-                'Environment-space guidance requires a scaler with transform().'
-            )
+        if not hasattr(scaler, 'transform'):
+            raise ValueError('Visual OGBench guidance requires a bidirectional action scaler.')
         if (action_low is None) != (action_high is None):
             raise ValueError('Action low and high bounds must be provided together.')
-        if (
-            latent_subgoal_checkpoint is not None
-            and guidance_policy is not None
-            and guidance_goal_mode == 'subgoal'
-            and not hasattr(guidance_policy, 'sample_actions_with_latent_goal')
-        ):
-            raise ValueError(
-                'Subgoal-guided CEM requires a policy that accepts latent goals.'
-            )
 
         model, variables, metadata = load_frozen_lewm(checkpoint)
         config = metadata['config']
@@ -213,7 +169,6 @@ class JAXLeWMCEMPolicy:
         self.guidance_mode = str(guidance_mode)
         self.guidance_population_size = int(guidance_population_size)
         self.guidance_temperature = float(guidance_temperature)
-        self.guidance_elite_size = int(guidance_elite_size)
         self.guidance_random_elite_cap = int(guidance_random_elite_cap)
         self.guidance_mean_residual_weight = float(
             guidance_mean_residual_weight
@@ -223,9 +178,6 @@ class JAXLeWMCEMPolicy:
             if guidance_first_block_std is None
             else float(guidance_first_block_std)
         )
-        self.guidance_goal_mode = str(guidance_goal_mode)
-        self.guidance_action_space = str(guidance_action_space)
-        self.paired_plan_keys = bool(paired_plan_keys)
         self.trace_candidates = bool(trace_candidates)
         self.collect_traces = bool(collect_traces)
 
@@ -244,7 +196,6 @@ class JAXLeWMCEMPolicy:
                 self.encode_pixels,
                 seed=self.seed,
                 action_block=self.action_block,
-                num_samples=latent_subgoal_num_samples,
                 lewm_checkpoint=self.lewm_checkpoint,
                 flow_sampling_steps=latent_subgoal_flow_sampling_steps,
             )
@@ -293,7 +244,6 @@ class JAXLeWMCEMPolicy:
             ).astype(np.float32)
 
         self._plan_one = jax.jit(self._build_plan_one())
-        self._score_guidance_plans = jax.jit(self._build_guidance_scorer())
 
         model = self.model
         variables = self.variables
@@ -328,18 +278,6 @@ class JAXLeWMCEMPolicy:
     @property
     def latent_subgoal_config(self):
         return None if self.subgoal_generator is None else self.subgoal_generator.config
-
-    @property
-    def latent_subgoal_num_samples(self):
-        return 0 if self.subgoal_generator is None else self.subgoal_generator.num_samples
-
-    @property
-    def latent_subgoal_sample_selection(self):
-        return (
-            None
-            if self.subgoal_generator is None
-            else self.subgoal_generator.sample_selection
-        )
 
     @property
     def latent_subgoal_flow_sampling_steps(self):
@@ -383,13 +321,8 @@ class JAXLeWMCEMPolicy:
         var_scale = self.var_scale
         cost_mode = self.cost_mode
         use_subgoal = self.subgoal_generator is not None
-        guidance_mode = self.guidance_mode
-        guidance_population_size = (
-            self.guidance_population_size
-            if self.guidance_mode in ('population', 'policy_random_mixture')
-            else 0
-        )
-        mixture_mode = guidance_mode == 'policy_random_mixture'
+        mixture_mode = self.guidance_mode == 'policy_random_mixture'
+        guidance_population_size = self.guidance_population_size if mixture_mode else 0
         guidance_random_elite_cap = self.guidance_random_elite_cap
         guidance_mean_residual_weight = self.guidance_mean_residual_weight
         guidance_first_block_std = self.guidance_first_block_std
@@ -437,8 +370,6 @@ class JAXLeWMCEMPolicy:
                     + mean[None]
                 )
                 candidates = candidates.at[0].set(mean)
-                if guidance_mode == 'mode_anchor':
-                    candidates = candidates.at[1].set(initial_mean)
                 if mixture_mode:
                     candidates = candidates.at[
                         :guidance_population_size, 0
@@ -446,21 +377,6 @@ class JAXLeWMCEMPolicy:
                     # Candidate zero is the exact deterministic policy-mode plan;
                     # the remaining policy candidates keep stochastic CEM tails.
                     candidates = candidates.at[0].set(initial_mean)
-                elif guidance_population_size:
-                    candidates = jax.lax.cond(
-                        iteration == 0,
-                        lambda value: value.at[
-                            :guidance_population_size, 0
-                        ].set(guidance_blocks),
-                        lambda value: value,
-                        candidates,
-                    )
-                    candidates = jax.lax.cond(
-                        iteration == 0,
-                        lambda value: value.at[0].set(initial_mean),
-                        lambda value: value,
-                        candidates,
-                    )
                 if planner_action_low is not None:
                     candidates = jnp.clip(
                         candidates,
@@ -561,33 +477,6 @@ class JAXLeWMCEMPolicy:
 
         return plan_one
 
-    def _build_guidance_scorer(self):
-        model = self.model
-        variables = self.variables
-        cost_mode = self.cost_mode
-        use_subgoal = self.subgoal_generator is not None
-
-        def score(pixels, goals, target_embedding, plans):
-            goal_embeddings, predictions = model.apply(
-                variables,
-                pixels[None, None],
-                goals[None, None],
-                plans[None],
-                method=model._rollout_predictions,
-            )
-            if use_subgoal:
-                target = (
-                    target_embedding[None, None]
-                    if cost_mode == 'path_mean'
-                    else target_embedding[None, None, None]
-                )
-            else:
-                target = goal_embeddings[:, None, None]
-            distances = jnp.sum((predictions - target) ** 2, axis=-1)
-            return reduce_rollout_costs(distances, cost_mode)[0]
-
-        return score
-
     def reset(self, action_space, num_envs):
         action_dim = int(np.prod(action_space.shape))
         if action_dim != self.scaler.action_dim:
@@ -615,132 +504,68 @@ class JAXLeWMCEMPolicy:
             self.subgoal_generator.reset(num_envs)
 
     def _next_plan_keys(self, env_index):
-        if self.paired_plan_keys:
-            plan_key = jax.random.fold_in(
-                jax.random.PRNGKey(self.seed), int(env_index)
-            )
-            plan_key = jax.random.fold_in(
-                plan_key, int(self.plan_counts[env_index])
-            )
-            self.plan_counts[env_index] += 1
-            return jax.random.fold_in(plan_key, 1), plan_key
-
-        if self.guidance_policy is None:
-            self.rng, plan_key = jax.random.split(self.rng)
-            return None, plan_key
-        self.rng, guidance_key, plan_key = jax.random.split(self.rng, 3)
-        return guidance_key, plan_key
+        plan_key = jax.random.fold_in(jax.random.PRNGKey(self.seed), int(env_index))
+        plan_key = jax.random.fold_in(plan_key, int(self.plan_counts[env_index]))
+        self.plan_counts[env_index] += 1
+        return jax.random.fold_in(plan_key, 1), plan_key
 
     def _guidance_block(
         self,
         pixels,
         goals,
         key,
-        target_embedding=None,
         temperature=0.0,
     ):
         observations = np.asarray(pixels[-1:])
-        if (
-            self.subgoal_generator is None
-            or self.guidance_goal_mode == 'final'
-        ):
-            block = np.asarray(
-                self.guidance_policy.sample_actions(
-                    observations=observations,
-                    goals=np.asarray(goals[-1:]),
-                    seed=key,
-                    temperature=temperature,
-                )
+        block = np.asarray(
+            self.guidance_policy.sample_actions(
+                observations=observations,
+                goals=np.asarray(goals[-1:]),
+                seed=key,
+                temperature=temperature,
             )
-        else:
-            if target_embedding is None:
-                raise ValueError(
-                    'Subgoal-guided policy initialization requires a latent target.'
-                )
-            latent_goal = np.asarray(target_embedding)
-            if latent_goal.ndim == 2:
-                latent_goal = latent_goal[-1]
-            block = np.asarray(
-                self.guidance_policy.sample_actions_with_latent_goal(
-                    observations=observations,
-                    latent_goals=latent_goal[None],
-                    seed=key,
-                    temperature=temperature,
-                )
-            )
+        )
         if block.shape != (1, self.block_action_dim):
             raise ValueError(
                 f'Guidance policy returned {block.shape}; expected '
                 f'(1, {self.block_action_dim}).'
             )
         block = block[0]
-        if self.guidance_action_space == 'planner':
-            return block
         atomic = block.reshape(-1, self.atomic_action_dim)
         return self.scaler.transform(atomic).reshape(-1)
 
     def _guidance_population(
-        self, pixels, goals, key, target_embedding=None
+        self, pixels, goals, key
     ):
         count = self.guidance_population_size
-        per_iteration = self.guidance_mode == 'policy_random_mixture'
-        total_count = count * self.iterations if per_iteration else count
+        total_count = count * self.iterations
         sample_key, mode_key = jax.random.split(key)
         observations = np.repeat(
             np.asarray(pixels[-1:]), total_count, axis=0
         )
-        if (
-            self.subgoal_generator is None
-            or self.guidance_goal_mode == 'final'
-        ):
-            blocks = np.asarray(
-                self.guidance_policy.sample_actions(
-                    observations=observations,
-                    goals=np.repeat(
-                        np.asarray(goals[-1:]), total_count, axis=0
-                    ),
-                    seed=sample_key,
-                    temperature=self.guidance_temperature,
-                )
+        blocks = np.asarray(
+            self.guidance_policy.sample_actions(
+                observations=observations,
+                goals=np.repeat(np.asarray(goals[-1:]), total_count, axis=0),
+                seed=sample_key,
+                temperature=self.guidance_temperature,
             )
-        else:
-            latent_goal = np.asarray(target_embedding)
-            if latent_goal.ndim == 2:
-                latent_goal = latent_goal[-1]
-            blocks = np.asarray(
-                self.guidance_policy.sample_actions_with_latent_goal(
-                    observations=observations,
-                    latent_goals=np.repeat(
-                        latent_goal[None], total_count, axis=0
-                    ),
-                    seed=sample_key,
-                    temperature=self.guidance_temperature,
-                )
-            )
+        )
         if blocks.shape != (total_count, self.block_action_dim):
             raise ValueError(
                 f'Guidance population returned {blocks.shape}; expected '
                 f'({total_count}, {self.block_action_dim}).'
             )
-        if self.guidance_action_space == 'environment':
-            atomic = blocks.reshape(-1, self.atomic_action_dim)
-            blocks = self.scaler.transform(atomic).reshape(blocks.shape)
-        blocks = blocks.reshape(
-            (self.iterations, count, self.block_action_dim)
-            if per_iteration
-            else (count, self.block_action_dim)
-        ).copy()
+        atomic = blocks.reshape(-1, self.atomic_action_dim)
+        blocks = self.scaler.transform(atomic).reshape(blocks.shape)
+        blocks = blocks.reshape(self.iterations, count, self.block_action_dim).copy()
         mode = self._guidance_block(
             pixels,
             goals,
             mode_key,
-            target_embedding=target_embedding,
             temperature=0.0,
         )
-        if per_iteration:
-            blocks[:, 0] = mode
-        else:
-            blocks[0] = mode
+        blocks[:, 0] = mode
         return blocks
 
     def _initial_mean(
@@ -766,7 +591,6 @@ class JAXLeWMCEMPolicy:
                     pixels,
                     goals,
                     guidance_key,
-                    target_embedding=target_embedding,
                 )
             )
         return initial
@@ -794,61 +618,15 @@ class JAXLeWMCEMPolicy:
                     if self.cost_mode == 'path_mean'
                     else predicted_path[-1]
                 )
-            if self.guidance_mode in (
-                'population',
-                'policy_random_mixture',
-                'lewm_select',
-                'lewm_elite',
-            ):
+            if self.guidance_mode == 'policy_random_mixture':
                 guidance_blocks = self._guidance_population(
                     pixels[env_index],
                     goals[env_index],
                     guidance_key,
-                    target_embedding=target_embedding,
                 )
-                guidance_block = (
-                    guidance_blocks[0, 0]
-                    if self.guidance_mode == 'policy_random_mixture'
-                    else guidance_blocks[0]
-                )
-                if self.guidance_mode in ('lewm_select', 'lewm_elite'):
-                    proposal_plans = np.repeat(
-                        self._initial_mean(
-                            env_index,
-                            pixels[env_index],
-                            goals[env_index],
-                            guidance_key,
-                            target_embedding=target_embedding,
-                            guidance_block=guidance_block,
-                        )[None],
-                        self.guidance_population_size,
-                        axis=0,
-                    )
-                    proposal_plans[:, 0] = guidance_blocks
-                    proposal_costs = np.asarray(
-                        self._score_guidance_plans(
-                            jnp.asarray(pixels[env_index]),
-                            jnp.asarray(goals[env_index]),
-                            jnp.asarray(target_embedding),
-                            jnp.asarray(proposal_plans),
-                        )
-                    )
-                    if self.guidance_mode == 'lewm_select':
-                        guidance_block = guidance_blocks[
-                            int(np.argmin(proposal_costs))
-                        ]
-                    else:
-                        elite_indices = np.argsort(proposal_costs)[
-                            : self.guidance_elite_size
-                        ]
-                        guidance_block = guidance_blocks[elite_indices].mean(
-                            axis=0
-                        )
+                guidance_block = guidance_blocks[0, 0]
             else:
-                guidance_blocks = np.zeros(
-                    (max(self.guidance_population_size, 1), self.block_action_dim),
-                    dtype=np.float32,
-                )
+                guidance_blocks = np.zeros((1, self.block_action_dim), dtype=np.float32)
                 guidance_block = None
             initial_mean = self._initial_mean(
                 env_index,
@@ -930,49 +708,4 @@ class JAXLeWMCEMPolicy:
         for env_index in np.flatnonzero(alive):
             actions[env_index] = self.buffers[env_index].popleft()
             self.environment_steps[env_index] += 1
-        return actions
-
-
-class StagedLeWMCEMPolicy:
-    """Use local-subgoal CEM first, then final-goal CEM near the goal."""
-
-    def __init__(self, local_policy, final_policy, switch_after_steps):
-        if local_policy.subgoal_generator is None:
-            raise ValueError('The local stage requires a latent subgoal generator.')
-        if final_policy.subgoal_generator is not None:
-            raise ValueError('The final stage must plan directly to the final goal.')
-        if int(switch_after_steps) < 0:
-            raise ValueError('Stage switch step must be non-negative.')
-        if local_policy.action_block != final_policy.action_block:
-            raise ValueError('Local and final planners must share one action block.')
-        if int(switch_after_steps) % local_policy.action_block:
-            raise ValueError('Stage switch step must align with the action block.')
-        if local_policy.lewm_checkpoint != final_policy.lewm_checkpoint:
-            raise ValueError('Local and final planners must use the same LeWM.')
-
-        self.local_policy = local_policy
-        self.final_policy = final_policy
-        self.switch_after_steps = int(switch_after_steps)
-        self.horizon = local_policy.horizon
-        self.final_goal_horizon = final_policy.horizon
-        self.elapsed_steps = 0
-
-    def __getattr__(self, name):
-        # Evaluation metadata for the predictor belongs to the local stage.
-        return getattr(self.local_policy, name)
-
-    def reset(self, action_space, num_envs):
-        self.local_policy.reset(action_space, num_envs)
-        self.final_policy.reset(action_space, num_envs)
-        self.elapsed_steps = 0
-
-    def get_actions(self, pixels, goals, alive):
-        planner = (
-            self.local_policy
-            if self.elapsed_steps < self.switch_after_steps
-            else self.final_policy
-        )
-        actions = planner.get_actions(pixels, goals, alive)
-        if np.any(alive):
-            self.elapsed_steps += 1
         return actions

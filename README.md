@@ -85,6 +85,11 @@ bash experiments/train/train_subgoal_latent_path_flow_longh_4tasks.sh
 
 ### Visual OGBench
 
+The Action Chunk Prior uses an independent `impala_small` pixel encoder with
+`p_aug=0.5`, matching the released checkpoints. It does not share LeWM features
+and can be trained directly from the NPZ datasets without LeWM checkpoints or
+latent caches. The precomputed latents below are used to train LatentPathFlow.
+
 Expected filenames under `OGBENCH_DATA_ROOT` are the eight environment names ending in `.npz`, plus matching `-val.npz` files, such as `visual-cube-single-play-v0.npz` and `visual-cube-single-play-v0-val.npz`.
 
 ```bash
@@ -101,7 +106,9 @@ bash experiments/train/train_action-prior-chunk_visual_ogbench8.sh
 bash experiments/train/train_latent_path_flow_visual_ogbench8.sh
 ```
 
-Visual OGBench artifacts are written below `EXPERIMENT_ROOT` and consumed automatically by its evaluation launchers. Each launcher contains an editable `GPU_IDS` array and runs all eight datasets.
+Visual OGBench training artifacts are written below `EXPERIMENT_ROOT/train/`.
+Set the evaluation launchers' checkpoint-root variables to the corresponding
+training directories when evaluating your own models.
 
 ## Pretrained artifacts
 
@@ -127,17 +134,57 @@ artifacts/
     └── checkpoints/{lewm,action-prior,latent-path-flow}/<dataset-tag>/
 ```
 
-Point the corresponding checkpoint-root variables at these directories.
+Datasets are not included. Prepare them as described in Training above.
+Keep the downloaded `config.json` and `flags.json` files beside their weights;
+they are required to restore the models.
+
+LeWM weights are named `weights_epoch_10.msgpack`, and LatentPathFlow weights
+are named `checkpoint_200000.msgpack`. Action Prior weights are
+`params_100000.pkl` for the Control Suite and `params_500000.pkl` for Visual OGBench.
 
 
 ## Evaluation
 
+Activate the installed environment and run all commands from the repository root:
+
+```bash
+source .venv/bin/activate
+```
+
+Edit the path assignments **inside each bash launcher** before running it.
+The examples below assume checkpoints were downloaded to `artifacts/` in the
+repository root. Set dataset paths to your local data directories and choose
+`GPU_IDS` for your machine. Evaluation with pretrained checkpoints does not
+require training or latent-cache precomputation.
+
 ### Planning effectiveness and long-horizon scaling (LeWM Control Suite)
 
-Evaluate LeWM++ and the LeWM baseline on H25, H50, H75, and H100, then collect the results into one CSV file:
+In each `eval_lewmpp_h{25,50,75,100}_4tasks.sh`, set:
+
+```bash
+LEWM_DATA_ROOT="/absolute/path/to/lewm-control-suite"
+EXPERIMENT_ROOT="outputs"
+LEWM_CHECKPOINT_ROOT="artifacts/lewm-control-suite/checkpoints/lewm"
+ACTION_PRIOR_CHECKPOINT_ROOT="artifacts/lewm-control-suite/checkpoints/action-prior"
+```
+
+Set `LATENT_PATH_FLOW_CHECKPOINT_ROOT` according to the launcher:
+
+| Launcher | `LATENT_PATH_FLOW_CHECKPOINT_ROOT` |
+| --- | --- |
+| `eval_lewmpp_h25_4tasks.sh` | `artifacts/lewm-control-suite/checkpoints/latent-path-flow/h25` |
+| `eval_lewmpp_h50_4tasks.sh`, `eval_lewmpp_h75_4tasks.sh`, `eval_lewmpp_h100_4tasks.sh` | `artifacts/lewm-control-suite/checkpoints/latent-path-flow/longh` |
+
+These roots contain the four task directories; do not append a task name or
+checkpoint filename. `LEWM_DATA_ROOT` must contain the four HDF5 files and their
+converted Lance tables shown in Training above. In each
+`eval_lewm_baseline_h{25,50,75,100}_4tasks.sh`, fill in only `LEWM_DATA_ROOT`,
+`EXPERIMENT_ROOT`, and `LEWM_CHECKPOINT_ROOT`; the baseline requires only the HDF5 data.
 
 The LeWM baseline follows the official CEM300x30, H5/RH5 protocol with an
 action block of 5. LeWM++ uses CEM300x5 and H2/RH1 with the same action block.
+
+Run all four evaluation horizons (50 episodes per task and three evaluation seeds):
 
 ```bash
 for horizon in 25 50 75 100; do
@@ -145,16 +192,35 @@ for horizon in 25 50 75 100; do
   bash "experiments/eval/eval_lewm_baseline_h${horizon}_4tasks.sh"
 done
 
-python impls/aggregate_lewmpp_results.py \
+python impls/aggregate_lewm_control_results.py \
   --results-root outputs/eval \
   --output outputs/eval/lewm_control_suite_summary.csv
 ```
 
+Results are written to `outputs/eval/{lewmpp,lewm}_h<horizon>/<task>/seed<seed>/`.
+If you change `EXPERIMENT_ROOT`, adjust the aggregation paths accordingly.
+
 ### More challenging tasks on Visual OGBench
 
-Evaluate LeWM++ and the LeWM baseline on all eight datasets. Each launcher runs
-the complete three-run evaluation and the LeWM++ launcher writes its aggregate
-summary automatically:
+In `eval_lewmpp_visual_ogbench8.sh`, set:
+
+```bash
+OGBENCH_DATA_ROOT="/absolute/path/to/visual-ogbench-data"
+EXPERIMENT_ROOT="outputs"
+LEWM_CHECKPOINT_ROOT="artifacts/visual-ogbench/checkpoints/lewm"
+ACTION_PRIOR_CHECKPOINT_ROOT="artifacts/visual-ogbench/checkpoints/action-prior"
+LATENT_PATH_FLOW_CHECKPOINT_ROOT="artifacts/visual-ogbench/checkpoints/latent-path-flow"
+```
+
+The checkpoint roots contain `cs_play`, `cd_play`, `ct_play`, `scene_play`,
+`cs_noisy`, `cd_noisy`, `ct_noisy`, and `scene_noisy`. `OGBENCH_DATA_ROOT` must
+contain the eight training NPZ files named after the environments, such as
+`visual-cube-single-play-v0.npz`; these are used for action normalization.
+In `eval_lewm_baseline_visual_ogbench8.sh`, set only `OGBENCH_DATA_ROOT`,
+`EXPERIMENT_ROOT`, and `LEWM_CHECKPOINT_ROOT`.
+
+Run all eight datasets with 50 episodes per official task and three evaluation
+seeds. Both launchers write an aggregate summary automatically:
 
 ```bash
 bash experiments/eval/eval_lewmpp_visual_ogbench8.sh
@@ -162,10 +228,10 @@ bash experiments/eval/eval_lewm_baseline_visual_ogbench8.sh
 ```
 
 To regenerate the LeWM++ summary from completed results without rerunning the
-environments:
+environments (the full 50-episode, three-seed evaluation):
 
 ```bash
-python impls/aggregate_visual_ogbench8_results.py \
+python impls/aggregate_visual_ogbench_results.py \
   --results-root outputs/eval/visual_ogbench_lewmpp \
   --output outputs/eval/visual_ogbench_lewmpp/summary.json
 ```

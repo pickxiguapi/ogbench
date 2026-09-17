@@ -22,7 +22,7 @@ Training:
 
 ```bash
 cd impls
-python train_lewm_jax.py \
+python train_lewm_control.py \
   --dataset_path=/path/to/task.lance \
   --save_dir=/path/to/run \
   --exp_name=LeWMJAX_impala_task_bs128_e10

@@ -22,14 +22,14 @@ train_one() {
   local save_dir="$EXPERIMENT_ROOT/train/visual_ogbench_latent_path_flow/$tag"
   mkdir -p "$save_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    python impls/train_latent_subgoal_gcbc.py \
+    python impls/train_latent_path_flow_ogbench.py \
       --latent-dataset="$EXPERIMENT_ROOT/train/visual_ogbench_latents/$tag.h5" --save-dir="$save_dir" \
-      --exp-name="latent_path_flow_ogbench8_$tag" --architecture=latent_path_flow \
+      --exp-name="latent_path_flow_ogbench8_$tag" \
       --history-size=3 --hidden-dim=512 --depth=4 --num-heads=8 --ff-dim=2048 \
       --time-dim=64 --seed=0 --split-seed=0 --train-fraction=0.95 \
       --subgoal-steps=10 --action-block=5 --goal-sampling=uniform_future \
       --train-steps=200000 --batch-size=1024 --flow-sampling-steps=16 \
-      --flow-solver=euler --num-samples=1 --ema-decay=0.9999 \
+      --ema-decay=0.9999 \
       --learning-rate=1e-4 --final-learning-rate=1e-5 --warmup-steps=5000 \
       --weight-decay=1e-4 --gradient-clip=1.0 --validation-pairs=10000 \
       --eval-batch-size=1024 --log-interval=1000 --eval-interval=10000 \

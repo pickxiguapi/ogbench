@@ -28,9 +28,9 @@ eval_one() {
   local output="$output_dir/result.json"
   mkdir -p "$output_dir"
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    python impls/eval_ogbench_env_8tasks.py \
+    python impls/eval_visual_ogbench.py \
       --env-name="$env_name" --dataset-path="$OGBENCH_DATA_ROOT/$env_name.npz" \
-      --controller=lewm_cem --policy-guidance=none \
+      --policy-guidance=none \
       --lewm-checkpoint="$LEWM_CHECKPOINT_ROOT/$tag/weights_epoch_10.msgpack" \
       --num-eval="$NUM_EVAL" --seed="$CURRENT_EVAL_SEED" --cem-horizon=5 \
       --cem-receding-horizon=1 --action-block=5 --cem-num-samples=300 \
@@ -53,6 +53,6 @@ for CURRENT_EVAL_SEED in "${EVAL_SEEDS[@]}"; do
 done
 
 if [[ "$NUM_EVAL" == 50 && "${EVAL_SEEDS[*]}" == "0 1 42" ]]; then
-  python impls/aggregate_visual_ogbench8_results.py \
+  python impls/aggregate_visual_ogbench_results.py \
     --method=lewm --results-root="$EVAL_ROOT" --output="$EVAL_ROOT/summary.json"
 fi

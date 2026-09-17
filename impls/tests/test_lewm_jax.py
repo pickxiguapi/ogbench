@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from lewm_jax import ARCHITECTURE, LeWM, lewm_loss
-from train_lewm_jax import LeWMConfig
+from train_lewm_control import LeWMConfig
 
 
 def test_training_defaults_match_lewm_with_impala_encoder():

@@ -24,9 +24,8 @@ train_one() {
   CUDA_VISIBLE_DEVICES="$gpu" XLA_PYTHON_CLIENT_PREALLOCATE=false \
     python impls/train_action_prior_ogbench.py \
       --env_name="$env_name" --dataset_path="$OGBENCH_DATA_ROOT/$env_name.npz" \
-      --save_dir="$save_dir" --representation_mode=all \
-      --lewm_checkpoint="$EXPERIMENT_ROOT/train/visual_ogbench_lewm/$tag/weights_epoch_10.msgpack" \
-      --actor_loss=awr --alpha=3.0 --pixel_encoder=impala_small --p_aug=0.0 \
+      --save_dir="$save_dir" --representation_mode=independent \
+      --actor_loss=awr --alpha=3.0 --pixel_encoder=impala_small --p_aug=0.5 \
       --train_steps=500000 --batch_size=512 --seed=0 --chunk_size=5 \
       --lr=3e-4 --discount=0.99 --expectile=0.9 --tau=0.005 \
       --log_interval=5000 --save_interval=100000 \

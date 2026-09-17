@@ -1,17 +1,16 @@
-"""Evaluate policy-only, LeWM-only, and guided control on OGBench-Env-8Tasks."""
+"""Evaluate LeWM and LeWM++ on the eight Visual OGBench datasets."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import time
-from collections import deque
 from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from action_prior_ogbench import LeWMEncodedAgent, load_agent_config
+from action_prior_runtime_ogbench import LeWMEncodedAgent, load_agent_config
 from lewm_jax import load_frozen_lewm
 from lewm_jax.planner_ogbench import JAXLeWMCEMPolicy
 from tqdm import trange
@@ -41,52 +40,13 @@ class NPZActionScaler:
         return (np.asarray(value) - self.mean) / self.scale
 
 
-class OGBenchChunkPolicy:
-    """Execute a GCIQL-Chunk policy directly in an OGBench environment."""
-
-    def __init__(self, agent, scaler, action_space, seed):
-        self.agent = agent
-        self.scaler = scaler
-        self.action_space = action_space
-        self.rng = jax.random.PRNGKey(seed)
-        self.action_horizon = int(agent.action_horizon)
-
-    def reset(self, action_space, num_envs):
-        self.action_dim = int(np.prod(action_space.shape))
-        self.buffers = [deque() for _ in range(num_envs)]
-
-    def get_actions(self, pixels, goals, alive):
-        for index in np.flatnonzero(alive):
-            if self.buffers[index]:
-                continue
-            self.rng, key = jax.random.split(self.rng)
-            chunk = np.asarray(
-                self.agent.sample_actions(
-                    observations=np.asarray(pixels[index, -1:]),
-                    goals=np.asarray(goals[index, -1:]),
-                    seed=key,
-                    temperature=0.0,
-                )
-            )[0].reshape(self.action_horizon, self.action_dim)
-            if self.action_space == 'planner':
-                chunk = self.scaler.inverse_transform(chunk)
-            self.buffers[index].extend(chunk)
-        actions = np.full((len(alive), self.action_dim), np.nan, dtype=np.float32)
-        for index in np.flatnonzero(alive):
-            actions[index] = self.buffers[index].popleft()
-        return actions
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env-name', required=True)
     parser.add_argument('--dataset-path', required=True)
     parser.add_argument(
-        '--controller', choices=('direct_policy', 'lewm_cem'), required=True
-    )
-    parser.add_argument(
         '--policy-guidance',
-        choices=('none', 'mode', 'policy_random_mixture'),
+        choices=('none', 'policy_random_mixture'),
         default='none',
     )
     parser.add_argument('--guidance-population-size', type=int, default=0)
@@ -94,14 +54,10 @@ def parse_args():
     parser.add_argument('--guidance-first-block-std', type=float)
     parser.add_argument('--guidance-random-elite-cap', type=int, default=0)
     parser.add_argument('--guidance-mean-residual-weight', type=float, default=1.0)
-    parser.add_argument(
-        '--guidance-goal-mode', choices=('subgoal', 'final'), default='subgoal'
-    )
     parser.add_argument('--use-subgoal', action='store_true')
-    parser.add_argument('--lewm-checkpoint')
+    parser.add_argument('--lewm-checkpoint', required=True)
     parser.add_argument('--policy-checkpoint-dir')
     parser.add_argument('--policy-checkpoint-step', type=int, default=500_000)
-    parser.add_argument('--policy-action-space', choices=('environment', 'planner'), default='environment')
     parser.add_argument('--num-eval', type=int, default=50)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--cem-horizon', type=int, default=5)
@@ -113,7 +69,6 @@ def parse_args():
     parser.add_argument('--cem-var-scale', type=float, default=1.0)
     parser.add_argument('--cem-cost-mode', choices=('last', 'moh'), default='moh')
     parser.add_argument('--latent-subgoal-checkpoint')
-    parser.add_argument('--num-samples', type=int, default=1)
     parser.add_argument('--video-dir')
     parser.add_argument('--output', required=True)
     return parser.parse_args()
@@ -164,25 +119,14 @@ def load_policy(env, checkpoint_dir, checkpoint_step):
 
 def main():
     args = parse_args()
-    needs_lewm = args.controller == 'lewm_cem'
-    needs_policy = args.controller == 'direct_policy' or args.policy_guidance != 'none'
+    needs_policy = args.policy_guidance != 'none'
     needs_subgoal = args.use_subgoal
-    if args.controller == 'direct_policy' and args.policy_guidance != 'none':
-        raise ValueError('Policy guidance only applies to the lewm_cem controller.')
-    if needs_lewm != (args.lewm_checkpoint is not None):
-        raise ValueError('Invalid controller/--lewm-checkpoint combination.')
     if needs_policy != (args.policy_checkpoint_dir is not None):
-        raise ValueError('Invalid controller/guidance policy-checkpoint combination.')
+        raise ValueError('Invalid guidance/policy-checkpoint combination.')
     if needs_subgoal != (args.latent_subgoal_checkpoint is not None):
         raise ValueError(
             'Invalid use-subgoal/--latent-subgoal-checkpoint combination.'
         )
-    if needs_subgoal and args.controller != 'lewm_cem':
-        raise ValueError('Latent subgoals require the lewm_cem controller.')
-    if args.num_samples <= 0:
-        raise ValueError('--num-samples must be positive.')
-    if not needs_subgoal and args.num_samples != 1:
-        raise ValueError('--num-samples only applies when --use-subgoal is set.')
     if args.guidance_population_size < 0:
         raise ValueError('--guidance-population-size must be non-negative.')
     if args.guidance_temperature < 0:
@@ -212,38 +156,29 @@ def main():
         representation_mode = policy_flags.get('representation', {}).get(
             'mode', 'independent'
         )
-    if args.controller == 'direct_policy':
-        policy = OGBenchChunkPolicy(
-            policy_agent, scaler, args.policy_action_space, args.seed
-        )
-    else:
-        policy = JAXLeWMCEMPolicy(
-            args.lewm_checkpoint,
-            scaler,
-            seed=args.seed,
-            horizon=args.cem_horizon,
-            receding_horizon=args.cem_receding_horizon,
-            action_block=args.action_block,
-            num_samples=args.cem_num_samples,
-            iterations=args.cem_iterations,
-            topk=args.cem_topk,
-            var_scale=args.cem_var_scale,
-            cost_mode=args.cem_cost_mode,
-            guidance_policy=policy_agent,
-            guidance_mode=args.policy_guidance,
-            guidance_population_size=args.guidance_population_size,
-            guidance_temperature=args.guidance_temperature,
-            guidance_first_block_std=args.guidance_first_block_std,
-            guidance_random_elite_cap=args.guidance_random_elite_cap,
-            guidance_mean_residual_weight=args.guidance_mean_residual_weight,
-            guidance_goal_mode=args.guidance_goal_mode,
-            guidance_action_space=args.policy_action_space,
-            paired_plan_keys=True,
-            action_low=env.action_space.low,
-            action_high=env.action_space.high,
-            latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
-            latent_subgoal_num_samples=args.num_samples,
-        )
+    policy = JAXLeWMCEMPolicy(
+        args.lewm_checkpoint,
+        scaler,
+        seed=args.seed,
+        horizon=args.cem_horizon,
+        receding_horizon=args.cem_receding_horizon,
+        action_block=args.action_block,
+        num_samples=args.cem_num_samples,
+        iterations=args.cem_iterations,
+        topk=args.cem_topk,
+        var_scale=args.cem_var_scale,
+        cost_mode=args.cem_cost_mode,
+        guidance_policy=policy_agent,
+        guidance_mode=args.policy_guidance,
+        guidance_population_size=args.guidance_population_size,
+        guidance_temperature=args.guidance_temperature,
+        guidance_first_block_std=args.guidance_first_block_std,
+        guidance_random_elite_cap=args.guidance_random_elite_cap,
+        guidance_mean_residual_weight=args.guidance_mean_residual_weight,
+        action_low=env.action_space.low,
+        action_high=env.action_space.high,
+        latent_subgoal_checkpoint=args.latent_subgoal_checkpoint,
+    )
 
     task_infos = env.unwrapped.task_infos
     metrics = {}
@@ -289,7 +224,7 @@ def main():
     result = {
         'suite': 'ogbench_env_8tasks',
         'environment': args.env_name,
-        'controller': args.controller,
+        'controller': 'lewm_cem',
         'policy_guidance': args.policy_guidance,
         'policy_guidance_config': {
             'population_size': args.guidance_population_size,
@@ -309,13 +244,13 @@ def main():
                 args.policy_guidance == 'policy_random_mixture'
             ),
         },
-        'guidance_goal_mode': args.guidance_goal_mode,
+        'guidance_goal_mode': 'final',
         'use_subgoal': args.use_subgoal,
         'representation_mode': representation_mode,
         'lewm_checkpoint': args.lewm_checkpoint,
         'policy_checkpoint_dir': args.policy_checkpoint_dir,
         'policy_checkpoint_step': args.policy_checkpoint_step if needs_policy else None,
-        'policy_action_space': args.policy_action_space if needs_policy else None,
+        'policy_action_space': 'environment' if needs_policy else None,
         'latent_subgoal': (
             None
             if not needs_subgoal
@@ -323,8 +258,8 @@ def main():
                 'checkpoint': policy.latent_subgoal_checkpoint,
                 'lewm_checkpoint': policy.lewm_checkpoint,
                 'checkpoint_step': policy.latent_subgoal_checkpoint_step,
-                'num_samples': policy.latent_subgoal_num_samples,
-                'sample_selection': policy.latent_subgoal_sample_selection,
+                'num_samples': 1,
+                'sample_selection': 'single_sample',
                 'training_subgoal_steps': int(
                     policy.latent_subgoal_config['subgoal_steps']
                 ),
@@ -337,20 +272,16 @@ def main():
                 'generation_counts': policy.latent_subgoal_generation_counts,
             }
         ),
-        'cem': (
-            None
-            if args.controller == 'direct_policy'
-            else {
-                'horizon': policy.horizon,
-                'receding_horizon': args.cem_receding_horizon,
-                'action_block': args.action_block,
-                'num_samples': args.cem_num_samples,
-                'iterations': args.cem_iterations,
-                'topk': args.cem_topk,
-                'var_scale': args.cem_var_scale,
-                'cost_mode': args.cem_cost_mode,
-            }
-        ),
+        'cem': {
+            'horizon': policy.horizon,
+            'receding_horizon': args.cem_receding_horizon,
+            'action_block': args.action_block,
+            'num_samples': args.cem_num_samples,
+            'iterations': args.cem_iterations,
+            'topk': args.cem_topk,
+            'var_scale': args.cem_var_scale,
+            'cost_mode': args.cem_cost_mode,
+        },
         'seed': args.seed,
         'episodes_per_task': args.num_eval,
         'metrics': metrics,

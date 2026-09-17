@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from precompute_lewm_latents import finalize_statistics, sha256_file
+from precompute_lewm_lance_latents import finalize_statistics, sha256_file
 
 FORMAT_VERSION = 1
 

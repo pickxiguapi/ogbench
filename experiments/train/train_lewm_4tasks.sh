@@ -27,7 +27,7 @@ for index in "${!TASKS[@]}"; do
 
   (
     export CUDA_VISIBLE_DEVICES=${GPU_IDS[$index]}
-    python impls/train_lewm_jax.py \
+    python impls/train_lewm_control.py \
       --dataset_path="${DATASETS[$index]}" \
       --save_dir="$save_dir" \
       --exp_name="lewm_${task}_seed${seed}" \

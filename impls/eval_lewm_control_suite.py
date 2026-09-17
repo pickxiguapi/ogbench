@@ -8,14 +8,14 @@ import json
 import time
 from pathlib import Path
 
-from action_prior_chunk import FinalGoalPolicy, load_action_prior
+from action_prior_runtime_lewm_control import FinalGoalPolicy, load_action_prior
 from agents.action_prior_chunk import (
     REPRESENTATION_MODES,
     resolve_representation_mode,
     validate_representation_sharing,
 )
-from lewm_jax.planner import LeWMPPController
-from subgoal_generators import GENERATOR_ARCHITECTURES
+from latent_path_flow_lewm_control import LATENT_PATH_FLOW_ARCHITECTURE
+from lewm_jax.planner_lewm_control import LeWMPPController
 
 from ogbench.lewm_envs.evaluation import (
     HDF5EvaluationDataset,
@@ -41,7 +41,6 @@ def parse_args():
         choices=('goalmax25', 'general_uniform_future', 'no_generator'),
         required=True,
     )
-    parser.add_argument('--generator-type', choices=tuple(GENERATOR_ARCHITECTURES), default='latent_path_flow')
     parser.add_argument('--data-root', required=True)
     parser.add_argument('--lewm-checkpoint', required=True)
     parser.add_argument('--action-prior-checkpoint-dir')
@@ -58,7 +57,6 @@ def parse_args():
     )
     parser.add_argument('--subgoal-generator-checkpoint')
     parser.add_argument('--flow-sampling-steps', type=int, default=DEFAULT_FLOW_STEPS)
-    parser.add_argument('--generator-num-samples', type=int, default=1)
     parser.add_argument('--num-eval', type=int, default=50)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--goal-offset-steps', type=int, default=25)
@@ -93,7 +91,6 @@ def validate_args(args):
     for name in (
         'action_prior_checkpoint_step',
         'flow_sampling_steps',
-        'generator_num_samples',
         'num_eval',
         'goal_offset_steps',
         'eval_budget',
@@ -122,8 +119,6 @@ def validate_args(args):
         raise ValueError(f'Variant {args.variant} requires CEM cost {cost_mode}.')
     if use_subgoal == (args.generator_family == 'no_generator'):
         raise ValueError('Generator-family label does not match the selected variant.')
-    if not use_subgoal and args.generator_num_samples != 1:
-        raise ValueError('--generator-num-samples only applies to a subgoal generator.')
 
 
 def require_file(path, label):
@@ -236,11 +231,10 @@ def validate_release_files(args):
             f'{expected_family} max_goal_steps mismatch: '
             f'{config.get("max_goal_steps")!r} != {expected_max_goal_steps!r}'
         )
-    expected_architectures = GENERATOR_ARCHITECTURES[args.generator_type]
-    if config.get('architecture') not in expected_architectures:
+    if config.get('architecture') != LATENT_PATH_FLOW_ARCHITECTURE:
         raise ValueError(
-            f'{args.generator_type} architecture mismatch: '
-            f'{config.get("architecture")!r} not in {expected_architectures!r}'
+            f'LatentPathFlow architecture mismatch: '
+            f'{config.get("architecture")!r} != {LATENT_PATH_FLOW_ARCHITECTURE!r}'
         )
 
 
@@ -287,15 +281,14 @@ def main():
                 action_prior_mode=args.action_prior_mode,
                 paired_plan_keys=True,
                 subgoal_generator_checkpoint=args.subgoal_generator_checkpoint,
-                subgoal_generator_num_samples=args.generator_num_samples,
                 flow_sampling_steps=args.flow_sampling_steps,
             )
             if use_subgoal:
                 actual = controller.subgoal_generator.config['architecture']
-                expected = GENERATOR_ARCHITECTURES[args.generator_type]
-                if actual not in expected:
+                if actual != LATENT_PATH_FLOW_ARCHITECTURE:
                     raise ValueError(
-                        f'Generator type mismatch: checkpoint has {actual!r}, expected one of {expected!r}.'
+                        f'Generator type mismatch: checkpoint has {actual!r}, '
+                        f'expected {LATENT_PATH_FLOW_ARCHITECTURE!r}.'
                     )
 
         started = time.time()
@@ -319,7 +312,7 @@ def main():
         'variant': args.variant,
         'experiment_group': args.experiment_group,
         'generator_family': args.generator_family,
-        'generator_type': args.generator_type if use_subgoal else None,
+        'generator_type': 'latent_path_flow' if use_subgoal else None,
         'components': {
             'subgoal_generator': use_subgoal,
             'action_prior_mode': args.action_prior_mode,
@@ -336,7 +329,7 @@ def main():
             else {
                 'checkpoint': generator.checkpoint,
                 'checkpoint_step': generator.checkpoint_step,
-                'num_samples': generator.num_samples,
+                'num_samples': 1,
                 'flow_sampling_steps': generator.flow_sampling_steps,
                 'config': generator.config,
                 'generation_counts': generator.generation_counts,

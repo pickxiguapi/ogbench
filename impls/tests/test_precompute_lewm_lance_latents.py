@@ -1,6 +1,6 @@
 import h5py
 import numpy as np
-from precompute_lewm_latents import compute_episode_layout, copy_non_pixel_hdf5
+from precompute_lewm_lance_latents import compute_episode_layout, copy_non_pixel_hdf5
 
 
 def test_compute_episode_layout():
